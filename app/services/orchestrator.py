@@ -1,10 +1,13 @@
 import json
 import time
 import uuid
+from datetime import datetime, timezone
 
 from app.core.config import get_settings
 from app.core.groq_client import get_groq_client
 from app.memory.interaction_log import fetch_recent_turns, write_interaction
+from app.memory.semantic_recall import get_relevant_context, record_interaction
+from app.memory.session_buffer import append_turn, get_recent_turns
 from app.tools.schemas import DISPATCH, TOOL_SCHEMAS
 
 MAX_ITERATIONS = 5
@@ -26,7 +29,16 @@ def run_invoke(message: str, session_id: str | None) -> dict:
     started = time.monotonic()
 
     messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.extend(fetch_recent_turns(session_id))
+
+    recall_block = get_relevant_context(message)
+    if recall_block:
+        messages.append({"role": "system", "content": recall_block})
+
+    recent_turns = get_recent_turns(session_id)
+    if not recent_turns:  # None (Redis failure) or [] (empty/expired) — fall back to Supabase
+        recent_turns = fetch_recent_turns(session_id)
+    messages.extend(recent_turns)
+
     messages.append({"role": "user", "content": message})
 
     tools_used: list[str] = []
@@ -79,8 +91,11 @@ def run_invoke(message: str, session_id: str | None) -> dict:
         final_text = "I hit my tool-call limit working on that — want me to try a narrower request?"
 
     latency_ms = int((time.monotonic() - started) * 1000)
+    interaction_id = str(uuid.uuid4())
+    created_at = datetime.now(timezone.utc).isoformat()
 
     write_interaction(
+        interaction_id=interaction_id,
         session_id=session_id,
         user_message=message,
         assistant_response=final_text,
@@ -89,5 +104,7 @@ def run_invoke(message: str, session_id: str | None) -> dict:
         model=settings.groq_model,
         latency_ms=latency_ms,
     )
+    append_turn(session_id, interaction_id, message, final_text, created_at)
+    record_interaction(interaction_id, session_id, message, final_text, tools_used, created_at)
 
     return {"response": final_text, "tools_used": tools_used, "session_id": session_id}

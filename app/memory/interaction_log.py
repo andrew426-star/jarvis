@@ -27,6 +27,7 @@ def fetch_recent_turns(session_id: str, limit: int = 5) -> list[dict[str, str]]:
 
 def write_interaction(
     *,
+    interaction_id: str,
     session_id: str,
     user_message: str,
     assistant_response: str | None,
@@ -38,6 +39,7 @@ def write_interaction(
     supabase = get_supabase_client()
     supabase.table(TABLE).insert(
         {
+            "id": interaction_id,
             "session_id": session_id,
             "user_message": user_message,
             "assistant_response": assistant_response,
