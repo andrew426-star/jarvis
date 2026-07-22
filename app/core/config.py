@@ -27,6 +27,18 @@ class Settings(BaseSettings):
     pinecone_top_k: int = 5
     pinecone_min_score: float = 0.5
 
+    # Same Google Cloud OAuth Client ID/Secret as kiv-console's registration
+    # (Andrew added Jarvis's own redirect URI to its allowed list) — a
+    # separate consent grant/refresh token from kiv-console's own, stored
+    # in jarvis_google_connection, not kiv-console's calendar_connections.
+    google_client_id: str
+    google_client_secret: str
+    google_redirect_uri: str
+    google_oauth_state_secret: str
+
+    # Same Finnhub key kiv-console already uses, reused rather than fresh.
+    finnhub_api_key: str
+
 
 @lru_cache
 def get_settings() -> Settings:
