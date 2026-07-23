@@ -1,6 +1,14 @@
+from app.tools.calculator import calculator
+from app.tools.company_financials import company_financials
 from app.tools.database_agent import database_agent
+from app.tools.github import github
 from app.tools.google_titan import google_titan
+from app.tools.kivaro_pipeline import kivaro_pipeline
 from app.tools.market_analysis import market_analysis
+from app.tools.news_feed import news_feed
+from app.tools.portfolio import portfolio
+from app.tools.spotify import spotify
+from app.tools.think import think
 from app.tools.web_research import web_research
 
 # Groq/OpenAI-shaped tool declarations for chat.completions.create(tools=...).
@@ -194,6 +202,171 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "think",
+            "description": (
+                "A reasoning scratchpad — use to plan out a multi-step request before acting, "
+                "or reflect on a result, without taking any real action. Does not search, "
+                "read, or write anything."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "thought": {"type": "string", "description": "The reasoning/plan, written out."},
+                    "thought_type": {
+                        "type": "string",
+                        "enum": ["planning", "reflection", "hypothesis", "decision", "other"],
+                    },
+                },
+                "required": ["thought"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calculator",
+            "description": (
+                "Evaluate an arithmetic or financial expression precisely — use instead of doing "
+                "math inline, especially for anything with more than one or two steps. Supports "
+                "+ - * / ** // %, and named functions: compound_interest(principal, rate, years, "
+                "periods_per_year=1), simple_interest(principal, rate, years), "
+                "percentage(part, whole), percentage_change(old, new), sqrt, round, abs, min, max."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expression": {
+                        "type": "string",
+                        "description": "e.g. '12000 * 1.08 ** 3' or 'compound_interest(12000, 0.08, 3, 12)'.",
+                    },
+                },
+                "required": ["expression"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "portfolio",
+            "description": (
+                "Get Andrew's investment account — equity, cash, buying power, and open "
+                "positions with unrealized P/L, via Alpaca. Read-only, paper-trading account."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "company_financials",
+            "description": (
+                "Get Kivaro AI's live Stripe balance (available/pending) and recent account "
+                "activity. Read-only — there is no capability to issue charges, refunds, or payouts."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "kivaro_pipeline",
+            "description": (
+                "Get Kivaro AI's current prospect and client pipeline — which companies are at "
+                "what stage in the outreach process. Covers the Autonomous Lead Engine's "
+                "automated pipeline (discovered, researched, or pitched) and existing clients "
+                "with their status (active, paused, completed)."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github",
+            "description": (
+                "Open a real GitHub issue in Jarvis's own repo proposing a workflow, feature, "
+                "fix, or improvement. This tracks the proposal as a real, actionable item — it "
+                "does not write or deploy any code itself."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "A short, clear issue title."},
+                    "body": {
+                        "type": "string",
+                        "description": "The full proposal: what to build, why, and a rough plan.",
+                    },
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "news_feed",
+            "description": (
+                "Get recent news headlines — defaults to Fintech/AI-automation/alternative-"
+                "investment topics, or pass a specific query."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query. Omit for the default Fintech/AI/alt-investment feed.",
+                    },
+                    "page_size": {"type": "integer", "description": "Number of articles to return. Default 8."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "spotify",
+            "description": (
+                "Control Andrew's Spotify playback — check what's playing, play/pause/skip, "
+                "queue a track, or search. Requires an active Spotify device to control playback "
+                "(checking now-playing/state works regardless)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": [
+                            "get_now_playing",
+                            "get_player_state",
+                            "play",
+                            "pause",
+                            "next",
+                            "previous",
+                            "queue",
+                            "search",
+                        ],
+                    },
+                    "track_uris": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Spotify track URIs to play, for the play operation. Omit to resume.",
+                    },
+                    "track_uri": {
+                        "type": "string",
+                        "description": "A single Spotify track URI, for the queue operation — from a "
+                        "prior search result.",
+                    },
+                    "query": {"type": "string", "description": "Search text, for the search operation."},
+                    "max_results": {"type": "integer", "description": "Result cap for search. Default 5."},
+                },
+                "required": ["operation"],
+            },
+        },
+    },
 ]
 
 DISPATCH = {
@@ -201,4 +374,12 @@ DISPATCH = {
     "web_research": web_research,
     "market_analysis": market_analysis,
     "google_titan": google_titan,
+    "think": think,
+    "calculator": calculator,
+    "portfolio": portfolio,
+    "company_financials": company_financials,
+    "kivaro_pipeline": kivaro_pipeline,
+    "github": github,
+    "news_feed": news_feed,
+    "spotify": spotify,
 }

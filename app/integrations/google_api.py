@@ -1,6 +1,7 @@
 import base64
 from email.message import EmailMessage
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -8,6 +9,7 @@ GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 CALENDAR_BASE = "https://www.googleapis.com/calendar/v3"
 DRIVE_BASE = "https://www.googleapis.com/drive/v3"
 DOCS_BASE = "https://docs.googleapis.com/v1/documents"
+SHEETS_BASE = "https://sheets.googleapis.com/v4/spreadsheets"
 
 
 def _headers(access_token: str) -> dict:
@@ -273,3 +275,18 @@ def docs_get_document(access_token: str, document_id: str) -> dict:
         "title": data.get("title", ""),
         "text": "".join(text_parts),
     }
+
+
+# --- Sheets (read-only) -------------------------------------------------
+
+
+def sheets_get_values(access_token: str, spreadsheet_id: str, range_or_tab_name: str) -> list[list[str]]:
+    encoded_range = quote(range_or_tab_name, safe="")
+    res = httpx.get(
+        f"{SHEETS_BASE}/{spreadsheet_id}/values/{encoded_range}",
+        headers=_headers(access_token),
+        timeout=20.0,
+    )
+    if not res.is_success:
+        raise RuntimeError(f"Sheets read failed: {res.text}")
+    return res.json().get("values", [])

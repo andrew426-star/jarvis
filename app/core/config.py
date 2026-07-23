@@ -39,6 +39,33 @@ class Settings(BaseSettings):
     # Same Finnhub key kiv-console already uses, reused rather than fresh.
     finnhub_api_key: str
 
+    # Same Alpaca paper-trading keys kiv-console already uses.
+    alpaca_api_key_id: str
+    alpaca_secret_key: str
+    alpaca_api_base_url: str = "https://paper-api.alpaca.markets"
+
+    # Same live Stripe key kiv-console already uses — read-only endpoints
+    # only (balance/balance_transactions), nothing here can charge/refund.
+    stripe_secret_key: str
+
+    # Jarvis's own real GitHub repo — config-driven (not hardcoded) since a
+    # fine-grained PAT is repo-scoped at creation and this wasn't confirmed
+    # against the token's actual scope ahead of time.
+    github_token: str
+    github_repo_owner: str = "andrew426-star"
+    github_repo_name: str = "jarvis"
+
+    # Same NewsAPI key kiv-console already uses, reused rather than fresh.
+    newsapi_key: str
+
+    # Spotify — genuinely optional. Unlike every other integration above,
+    # a missing Spotify credential must never fail the whole app's boot,
+    # so these stay Optional even though real values already exist.
+    spotify_client_id: str | None = None
+    spotify_client_secret: str | None = None
+    spotify_redirect_uri: str | None = None
+    spotify_oauth_state_secret: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:
