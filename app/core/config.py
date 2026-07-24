@@ -66,6 +66,16 @@ class Settings(BaseSettings):
     spotify_redirect_uri: str | None = None
     spotify_oauth_state_secret: str | None = None
 
+    # ElevenLabs TTS — optional for the same reason as Spotify above:
+    # credentials aren't in hand yet, and a missing one must not break the
+    # already-running app's boot. elevenlabs_voice_id has no hardcoded
+    # fallback on purpose (voice choice is Andrew's call, not a guessable
+    # default) — /speak returns a clear "not configured" error if either
+    # is unset, rather than the app failing to start.
+    elevenlabs_api_key: str | None = None
+    elevenlabs_voice_id: str | None = None
+    elevenlabs_model_id: str = "eleven_flash_v2_5"
+
 
 @lru_cache
 def get_settings() -> Settings:
