@@ -18,11 +18,12 @@ interface ChatMessageProps {
   message: ChatMessageData
   token: string
   onAuthError: () => void
+  onSpeakingChange?: (speaking: boolean) => void
 }
 
 type AudioState = "idle" | "loading" | "playing" | "error"
 
-export function ChatMessage({ message, token, onAuthError }: ChatMessageProps) {
+export function ChatMessage({ message, token, onAuthError, onSpeakingChange }: ChatMessageProps) {
   const isUser = message.role === "user"
   const [audioState, setAudioState] = useState<AudioState>("idle")
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -32,6 +33,7 @@ export function ChatMessage({ message, token, onAuthError }: ChatMessageProps) {
     if (audioState === "playing") {
       audioRef.current?.pause()
       setAudioState("idle")
+      onSpeakingChange?.(false)
       return
     }
 
@@ -44,9 +46,11 @@ export function ChatMessage({ message, token, onAuthError }: ChatMessageProps) {
       audio.onended = () => {
         URL.revokeObjectURL(url)
         setAudioState("idle")
+        onSpeakingChange?.(false)
       }
       await audio.play()
       setAudioState("playing")
+      onSpeakingChange?.(true)
     } catch (err) {
       if (err instanceof JarvisAuthError) {
         onAuthError()

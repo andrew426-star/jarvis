@@ -54,9 +54,15 @@ export async function verifyToken(token: string): Promise<void> {
   await jarvisFetch("/auth/verify", token, { method: "GET" })
 }
 
+export interface ToolResult {
+  name: string
+  result: unknown
+}
+
 export interface InvokeResult {
   response: string
   tools_used: string[]
+  tool_results: ToolResult[]
   session_id: string
 }
 
@@ -80,4 +86,103 @@ export async function speak(text: string, token: string, voiceId?: string): Prom
     body: JSON.stringify({ text, voice_id: voiceId }),
   })
   return res.blob()
+}
+
+// --- Panel data: direct REST access to the same tool functions Jarvis's
+// agent loop calls, no Groq round-trip — lets a tab show real data the
+// instant it's opened, without asking Jarvis anything first. ---
+
+export interface MarketQuote {
+  symbol: string
+  price: number
+  change: number | null
+  change_percent: number | null
+}
+
+export interface MarketSnapshot {
+  ok: boolean
+  quotes: MarketQuote[]
+  error?: string
+}
+
+export interface Candle {
+  date: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
+export interface MarketHistory {
+  ok: boolean
+  symbol: string
+  candles?: Candle[]
+  error?: string
+}
+
+export interface NewsArticle {
+  title: string
+  url: string
+  source: string
+  published_at: string
+}
+
+export interface NewsResult {
+  ok: boolean
+  query: string
+  articles?: NewsArticle[]
+  cached?: boolean
+  error?: string
+}
+
+export interface PortfolioAccount {
+  equity: number
+  cash: number
+  buying_power: number
+  portfolio_value: number
+  status: string
+}
+
+export interface PortfolioPosition {
+  symbol: string
+  qty: number
+  market_value: number
+  cost_basis: number
+  unrealized_pl: number
+  unrealized_pl_percent: number
+  current_price: number
+}
+
+export interface PortfolioResult {
+  ok: boolean
+  account?: PortfolioAccount
+  positions?: PortfolioPosition[]
+  error?: string
+}
+
+export async function getMarketSnapshot(token: string): Promise<MarketSnapshot> {
+  const res = await jarvisFetch("/panels/market", token, { method: "GET" })
+  return res.json()
+}
+
+export async function getMarketHistory(
+  symbol: string,
+  token: string,
+  days = 30
+): Promise<MarketHistory> {
+  const params = new URLSearchParams({ symbol, days: String(days) })
+  const res = await jarvisFetch(`/panels/market/history?${params}`, token, { method: "GET" })
+  return res.json()
+}
+
+export async function getNews(token: string, query?: string): Promise<NewsResult> {
+  const params = query ? `?${new URLSearchParams({ query })}` : ""
+  const res = await jarvisFetch(`/panels/news${params}`, token, { method: "GET" })
+  return res.json()
+}
+
+export async function getPortfolio(token: string): Promise<PortfolioResult> {
+  const res = await jarvisFetch("/panels/portfolio", token, { method: "GET" })
+  return res.json()
 }
