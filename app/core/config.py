@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     groq_api_key: str
     groq_model: str = "openai/gpt-oss-120b"
+    groq_whisper_model: str = "whisper-large-v3-turbo"
 
     supabase_url: str
     supabase_service_role_key: str
