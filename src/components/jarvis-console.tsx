@@ -146,7 +146,7 @@ export function JarvisConsole() {
       </header>
 
       <div className="relative flex min-h-0 flex-1 flex-col items-center px-4 pb-6 sm:px-8">
-        <div className="pointer-events-none size-48 shrink-0 sm:size-56 md:size-64">
+        <div className="pointer-events-none size-64 shrink-0 sm:size-72 md:size-80">
           <JarvisCore state={coreState} />
         </div>
 

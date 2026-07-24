@@ -88,6 +88,19 @@ export async function speak(text: string, token: string, voiceId?: string): Prom
   return res.blob()
 }
 
+export async function transcribe(audio: Blob, token: string): Promise<string> {
+  const form = new FormData()
+  form.append("file", audio, "recording.webm")
+  // No Content-Type header here on purpose — the browser sets the correct
+  // multipart boundary itself when the body is a FormData instance.
+  const res = await jarvisFetch("/transcribe", token, {
+    method: "POST",
+    body: form,
+  })
+  const data = await res.json()
+  return data.text as string
+}
+
 // --- Panel data: direct REST access to the same tool functions Jarvis's
 // agent loop calls, no Groq round-trip — lets a tab show real data the
 // instant it's opened, without asking Jarvis anything first. ---

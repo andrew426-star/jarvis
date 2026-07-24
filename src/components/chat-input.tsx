@@ -3,15 +3,18 @@
 import { useState, type KeyboardEvent } from "react"
 import { SendIcon } from "lucide-react"
 
+import { MicButton } from "@/components/mic-button"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
 interface ChatInputProps {
   disabled?: boolean
+  token: string
+  onAuthError: () => void
   onSend: (message: string) => void
 }
 
-export function ChatInput({ disabled, onSend }: ChatInputProps) {
+export function ChatInput({ disabled, token, onAuthError, onSend }: ChatInputProps) {
   const [value, setValue] = useState("")
 
   function submit() {
@@ -37,6 +40,12 @@ export function ChatInput({ disabled, onSend }: ChatInputProps) {
         placeholder="Message J.A.R.V.I.S..."
         disabled={disabled}
         className="h-10"
+      />
+      <MicButton
+        token={token}
+        disabled={disabled}
+        onAuthError={onAuthError}
+        onTranscribed={onSend}
       />
       <Button type="button" size="icon" onClick={submit} disabled={disabled || !value.trim()}>
         <SendIcon />

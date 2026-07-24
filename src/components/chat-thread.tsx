@@ -102,7 +102,12 @@ export function ChatThread({
         )}
         <div ref={bottomRef} />
       </div>
-      <ChatInput disabled={pending} onSend={handleSend} />
+      <ChatInput
+        disabled={pending}
+        token={token}
+        onAuthError={onAuthError}
+        onSend={handleSend}
+      />
     </Card>
   )
 }
