@@ -19,7 +19,8 @@ SYSTEM_PROMPT = (
     "web_research (live web search), think (a reasoning scratchpad — use it to plan out "
     "multi-step requests before acting), calculator (precise arithmetic/financial math — use it "
     "instead of doing math inline), market_analysis (live stock/crypto quotes via Finnhub), "
-    "portfolio (Andrew's Alpaca investment account, read-only), company_financials (Kivaro AI's "
+    "market_history (historical daily price bars for a single equity/ETF symbol, for chart-type "
+    "questions), portfolio (Andrew's Alpaca investment account, read-only), company_financials (Kivaro AI's "
     "Stripe balance/activity, read-only), kivaro_pipeline (Kivaro AI's prospect/client pipeline — "
     "which companies are at what outreach stage), news_feed (Fintech/AI/alt-investment news), "
     "github (open a real GitHub issue to propose work), google_titan (Andrew's connected Gmail/"
@@ -116,4 +117,11 @@ def run_invoke(message: str, session_id: str | None) -> dict:
     append_turn(session_id, interaction_id, message, final_text, created_at)
     record_interaction(interaction_id, session_id, message, final_text, tools_used, created_at)
 
-    return {"response": final_text, "tools_used": tools_used, "session_id": session_id}
+    tool_results = [{"name": t["name"], "result": t["result"]} for t in tool_call_trace]
+
+    return {
+        "response": final_text,
+        "tools_used": tools_used,
+        "tool_results": tool_results,
+        "session_id": session_id,
+    }

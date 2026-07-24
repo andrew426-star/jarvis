@@ -5,6 +5,7 @@ from app.tools.github import github
 from app.tools.google_titan import google_titan
 from app.tools.kivaro_pipeline import kivaro_pipeline
 from app.tools.market_analysis import market_analysis
+from app.tools.market_history import market_history
 from app.tools.news_feed import news_feed
 from app.tools.portfolio import portfolio
 from app.tools.spotify import spotify
@@ -79,6 +80,28 @@ TOOL_SCHEMAS = [
                     },
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "market_history",
+            "description": (
+                "Get historical daily price bars (open/high/low/close/volume) for a single "
+                "stock or ETF symbol, via Alpaca — use for 'show me a chart of X' or 'how has X "
+                "moved this month' type questions. Equities/ETFs only, not crypto."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "A single ticker symbol, e.g. 'AAPL'."},
+                    "days": {
+                        "type": "integer",
+                        "description": "How many days of history to look back. Default 30.",
+                    },
+                },
+                "required": ["symbol"],
             },
         },
     },
@@ -373,6 +396,7 @@ DISPATCH = {
     "database_agent": database_agent,
     "web_research": web_research,
     "market_analysis": market_analysis,
+    "market_history": market_history,
     "google_titan": google_titan,
     "think": think,
     "calculator": calculator,

@@ -6,7 +6,13 @@ class InvokeRequest(BaseModel):
     session_id: str | None = None
 
 
+class ToolResult(BaseModel):
+    name: str
+    result: dict
+
+
 class InvokeResponse(BaseModel):
     response: str
     tools_used: list[str]
+    tool_results: list[ToolResult]
     session_id: str
