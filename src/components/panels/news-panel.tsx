@@ -67,7 +67,7 @@ export function NewsPanel({ token, onAuthError, liveNews }: NewsPanelProps) {
   }, [liveNews])
 
   return (
-    <Card>
+    <Card className="glow-border">
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>News{news?.query ? ` — ${news.query}` : ""}</CardTitle>
         <Button type="button" variant="ghost" size="icon-sm" onClick={refreshNews} aria-label="Refresh news">

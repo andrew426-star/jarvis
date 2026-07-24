@@ -111,7 +111,7 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
 
   return (
     <div className="flex flex-col gap-4">
-      <Card>
+      <Card className="glow-border">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Watchlist</CardTitle>
           <Button
@@ -151,7 +151,7 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="glow-border">
         <CardHeader>
           <CardTitle>Price History</CardTitle>
         </CardHeader>

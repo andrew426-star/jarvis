@@ -26,23 +26,24 @@ interface PanelTabsProps {
 
 export function PanelTabs({ active, onChange }: PanelTabsProps) {
   return (
-    <div className="glow-border flex gap-1 rounded-lg p-1">
+    <nav className="flex items-center gap-7">
       {TABS.map(({ key, label, icon: Icon }) => (
         <button
           key={key}
           type="button"
           onClick={() => onChange(key)}
           className={cn(
-            "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-            active === key
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            "relative flex items-center gap-1.5 pb-2.5 text-xs font-medium tracking-[0.18em] uppercase transition-colors",
+            active === key ? "text-primary" : "text-muted-foreground hover:text-foreground"
           )}
         >
-          <Icon className="size-4" />
+          <Icon className="size-3.5" />
           {label}
+          {active === key && (
+            <span className="glow-green absolute inset-x-0 -bottom-px h-px bg-primary" />
+          )}
         </button>
       ))}
-    </div>
+    </nav>
   )
 }

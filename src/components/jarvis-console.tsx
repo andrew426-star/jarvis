@@ -38,6 +38,30 @@ const TOOL_TAB_MAP: Record<string, TabKey> = {
   portfolio: "portfolio",
 }
 
+const STATUS_LABEL = {
+  idle: "STANDING BY",
+  thinking: "PROCESSING",
+  speaking: "RESPONDING",
+} as const
+
+type BracketPosition = "tl" | "tr" | "bl" | "br"
+
+const BRACKET_STYLES: Record<BracketPosition, string> = {
+  tl: "top-4 left-4 sm:top-6 sm:left-6 border-t-2 border-l-2",
+  tr: "top-4 right-4 sm:top-6 sm:right-6 border-t-2 border-r-2",
+  bl: "bottom-4 left-4 sm:bottom-6 sm:left-6 border-b-2 border-l-2",
+  br: "bottom-4 right-4 sm:bottom-6 sm:right-6 border-b-2 border-r-2",
+}
+
+function CornerBracket({ position }: { position: BracketPosition }) {
+  return (
+    <div
+      aria-hidden
+      className={`pointer-events-none fixed z-20 size-6 border-primary/30 sm:size-8 ${BRACKET_STYLES[position]}`}
+    />
+  )
+}
+
 type Status = "resolving" | "unauthenticated" | "authenticated"
 
 export function JarvisConsole() {
@@ -105,40 +129,56 @@ export function JarvisConsole() {
   const coreState = isSpeaking ? "speaking" : isPending ? "thinking" : "idle"
 
   return (
-    <div className="mx-auto flex h-screen max-w-3xl flex-col gap-3 px-4 py-4">
-      <div className="flex flex-col items-center gap-1">
-        <div className="size-40 sm:size-48">
+    <div className="relative flex h-screen w-full flex-col overflow-hidden">
+      <CornerBracket position="tl" />
+      <CornerBracket position="tr" />
+      <CornerBracket position="bl" />
+      <CornerBracket position="br" />
+
+      <header className="flex shrink-0 items-center justify-between px-6 pt-6 sm:px-12 sm:pt-8">
+        <span className="font-heading text-sm tracking-[0.35em] text-gradient-green">J.A.R.V.I.S.</span>
+        <div className="flex items-center gap-2 text-[0.65rem] tracking-[0.2em] text-muted-foreground uppercase">
+          <span
+            className={`size-1.5 rounded-full bg-primary ${coreState !== "idle" ? "glow-green animate-pulse" : "opacity-40"}`}
+          />
+          {STATUS_LABEL[coreState]}
+        </div>
+      </header>
+
+      <div className="relative flex min-h-0 flex-1 flex-col items-center px-4 pb-6 sm:px-8">
+        <div className="pointer-events-none size-48 shrink-0 sm:size-56 md:size-64">
           <JarvisCore state={coreState} />
         </div>
-        <h1 className="font-heading text-xl text-gradient-green">J.A.R.V.I.S.</h1>
-      </div>
 
-      <PanelTabs active={activeTab} onChange={setActiveTab} />
+        <div className="flex w-full min-h-0 flex-1 flex-col items-center gap-3">
+          <PanelTabs active={activeTab} onChange={setActiveTab} />
 
-      <div className="min-h-0 flex-1">
-        <div className={activeTab === "chat" ? "h-full" : "hidden"}>
-          <ChatThread
-            token={token}
-            sessionId={sessionId}
-            onAuthError={handleAuthError}
-            onToolResults={handleToolResults}
-            onSpeakingChange={setIsSpeaking}
-            onPendingChange={setIsPending}
-          />
-        </div>
-        <div className={activeTab === "markets" ? "h-full overflow-y-auto" : "hidden"}>
-          <MarketsPanel
-            token={token}
-            onAuthError={handleAuthError}
-            liveSnapshot={liveMarketSnapshot}
-            liveHistory={liveMarketHistory}
-          />
-        </div>
-        <div className={activeTab === "news" ? "h-full overflow-y-auto" : "hidden"}>
-          <NewsPanel token={token} onAuthError={handleAuthError} liveNews={liveNews} />
-        </div>
-        <div className={activeTab === "portfolio" ? "h-full overflow-y-auto" : "hidden"}>
-          <PortfolioPanel token={token} onAuthError={handleAuthError} livePortfolio={livePortfolio} />
+          <div className="min-h-0 w-full max-w-4xl flex-1 border-t border-border/60 pt-4">
+            <div className={activeTab === "chat" ? "h-full" : "hidden"}>
+              <ChatThread
+                token={token}
+                sessionId={sessionId}
+                onAuthError={handleAuthError}
+                onToolResults={handleToolResults}
+                onSpeakingChange={setIsSpeaking}
+                onPendingChange={setIsPending}
+              />
+            </div>
+            <div className={activeTab === "markets" ? "h-full overflow-y-auto" : "hidden"}>
+              <MarketsPanel
+                token={token}
+                onAuthError={handleAuthError}
+                liveSnapshot={liveMarketSnapshot}
+                liveHistory={liveMarketHistory}
+              />
+            </div>
+            <div className={activeTab === "news" ? "h-full overflow-y-auto" : "hidden"}>
+              <NewsPanel token={token} onAuthError={handleAuthError} liveNews={liveNews} />
+            </div>
+            <div className={activeTab === "portfolio" ? "h-full overflow-y-auto" : "hidden"}>
+              <PortfolioPanel token={token} onAuthError={handleAuthError} livePortfolio={livePortfolio} />
+            </div>
+          </div>
         </div>
       </div>
     </div>

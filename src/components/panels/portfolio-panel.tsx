@@ -63,7 +63,7 @@ export function PortfolioPanel({ token, onAuthError, livePortfolio }: PortfolioP
 
   return (
     <div className="flex flex-col gap-4">
-      <Card>
+      <Card className="glow-border">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Account</CardTitle>
           <Button
@@ -101,7 +101,7 @@ export function PortfolioPanel({ token, onAuthError, livePortfolio }: PortfolioP
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="glow-border">
         <CardHeader>
           <CardTitle>Positions</CardTitle>
         </CardHeader>
