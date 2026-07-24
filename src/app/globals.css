@@ -1,0 +1,244 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-outfit);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-syne);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-kv-glow: var(--kv-glow);
+  --color-kv-glow-soft: var(--kv-glow-soft);
+  --color-kv-surface: var(--kv-surface);
+  --color-kv-surface-elevated: var(--kv-surface-elevated);
+  --color-kv-grid: var(--kv-grid);
+  --color-kv-mint: var(--kv-mint);
+  --color-kv-lime: var(--kv-lime);
+  --color-kv-emerald-deep: var(--kv-emerald-deep);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  /* K.I.V. HUD Green — always dark, no light mode. Ported verbatim from
+     kiv-console so Jarvis reads as the same ecosystem, not a separate app. */
+  --background: hsl(150 20% 4%);
+  --foreground: hsl(140 20% 92%);
+  --card: hsl(150 15% 7%);
+  --card-foreground: hsl(140 20% 92%);
+  --popover: hsl(150 15% 7%);
+  --popover-foreground: hsl(140 20% 92%);
+  --primary: hsl(152 76% 46%);
+  --primary-foreground: hsl(150 20% 4%);
+  --secondary: hsl(150 12% 12%);
+  --secondary-foreground: hsl(140 20% 85%);
+  --muted: hsl(150 10% 14%);
+  --muted-foreground: hsl(140 10% 55%);
+  --accent: hsl(160 80% 42%);
+  --accent-foreground: hsl(150 20% 4%);
+  --destructive: hsl(0 72% 51%);
+  --border: hsl(150 12% 14%);
+  --input: hsl(150 12% 14%);
+  --ring: hsl(152 76% 46%);
+  --radius: 0.625rem;
+  --chart-1: hsl(152 76% 46%);
+  --chart-2: hsl(162 72% 55%);
+  --chart-3: hsl(82 80% 55%);
+  --chart-4: hsl(160 80% 42%);
+  --chart-5: hsl(155 50% 15%);
+  --sidebar: hsl(150 15% 6%);
+  --sidebar-foreground: hsl(140 20% 92%);
+  --sidebar-primary: hsl(152 76% 46%);
+  --sidebar-primary-foreground: hsl(150 20% 4%);
+  --sidebar-accent: hsl(150 12% 12%);
+  --sidebar-accent-foreground: hsl(140 20% 85%);
+  --sidebar-border: hsl(150 12% 14%);
+  --sidebar-ring: hsl(152 76% 46%);
+
+  --kv-glow: hsl(152 76% 46%);
+  --kv-glow-soft: hsl(152 60% 30%);
+  --kv-surface: hsl(150 15% 7%);
+  --kv-surface-elevated: hsl(150 14% 10%);
+  --kv-grid: hsl(150 20% 12%);
+  --kv-mint: hsl(162 72% 55%);
+  --kv-lime: hsl(82 80% 55%);
+  --kv-emerald-deep: hsl(155 50% 15%);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-syne);
+  }
+}
+
+/* === HUD utilities, ported from kiv-console === */
+
+.glow-green {
+  box-shadow:
+    0 0 20px hsl(152 76% 46% / 0.15),
+    0 0 60px hsl(152 76% 46% / 0.05);
+}
+
+.glow-border {
+  border: 1px solid hsl(152 76% 46% / 0.2);
+}
+
+.glow-border-hover:hover {
+  border-color: hsl(152 76% 46% / 0.4);
+  box-shadow: 0 0 24px hsl(152 76% 46% / 0.12);
+}
+
+.grid-pattern {
+  background-image:
+    linear-gradient(hsl(150 20% 12% / 0.4) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(150 20% 12% / 0.4) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+.text-gradient-green {
+  background: linear-gradient(135deg, hsl(152 76% 46%), hsl(162 72% 55%), hsl(82 80% 55%));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.noise-overlay::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+  mix-blend-mode: overlay;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.5s ease-out forwards;
+}
+
+.stagger-children > *:nth-child(1) {
+  animation-delay: 0ms;
+}
+.stagger-children > *:nth-child(2) {
+  animation-delay: 60ms;
+}
+.stagger-children > *:nth-child(3) {
+  animation-delay: 120ms;
+}
+.stagger-children > *:nth-child(4) {
+  animation-delay: 180ms;
+}
+.stagger-children > *:nth-child(5) {
+  animation-delay: 240ms;
+}
+
+@keyframes scan-sweep {
+  0% {
+    top: -2px;
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
+}
+
+.scan-line {
+  position: relative;
+  overflow: hidden;
+}
+
+.scan-line::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, hsl(152 76% 46% / 0.4), transparent);
+  animation: scan-sweep 4s ease-in-out infinite;
+}
+
+@keyframes ticker-scroll {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-ticker {
+  animation: ticker-scroll 30s linear infinite;
+}
+
+.animate-ticker:hover {
+  animation-play-state: paused;
+}
