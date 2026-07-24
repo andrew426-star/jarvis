@@ -76,6 +76,28 @@ class Settings(BaseSettings):
     elevenlabs_voice_id: str | None = None
     elevenlabs_model_id: str = "eleven_flash_v2_5"
 
+    # JARVIS_ACCESS_TOKEN — shared-secret gate for /invoke and /speak, added
+    # to an already-deployed service, so it must stay Optional the same way
+    # spotify_*/elevenlabs_* are (a missing value can't break boot) — but
+    # unlike those, an unset value here does NOT mean "degrade gracefully":
+    # app/core/auth.py fails CLOSED (401s everything) until this is set,
+    # since this is a security gate being deliberately added, not a
+    # pre-existing integration. A human-chosen passphrase Andrew types once
+    # into the frontend's login screen (the browser remembers it via
+    # localStorage after that) — unlike GOOGLE_OAUTH_STATE_SECRET, which is
+    # machine-generated (openssl rand -hex 32) and never typed by a human.
+    jarvis_access_token: str | None = None
+
+    # CORS — the deployed Next.js frontend's origin (scheme+host, no
+    # trailing slash). Optional so the backend still boots before the
+    # frontend has a domain; until set, only http://localhost:3000
+    # (hardcoded in main.py, for local frontend dev against this deployed
+    # backend) can call /invoke or /speak from a browser. Server-to-server/
+    # curl calls are unaffected either way — CORS is a browser-enforced
+    # restriction, not the actual security boundary (JARVIS_ACCESS_TOKEN
+    # above is).
+    jarvis_frontend_origin: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:
