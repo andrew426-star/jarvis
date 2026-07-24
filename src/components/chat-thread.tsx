@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { WifiOffIcon } from "lucide-react"
 
-import { ChatInput } from "@/components/chat-input"
+import { ChatInput, type ChatInputHandle } from "@/components/chat-input"
 import { ChatMessage, type ChatMessageData } from "@/components/chat-message"
 import { ThinkingIndicator } from "@/components/thinking-indicator"
 import { Card } from "@/components/ui/card"
@@ -36,6 +36,7 @@ export function ChatThread({
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
+  const chatInputRef = useRef<ChatInputHandle>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -46,7 +47,7 @@ export function ChatThread({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending])
 
-  async function handleSend(text: string) {
+  async function handleSend(text: string, viaVoice: boolean) {
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: text }])
     setPending(true)
     setError(null)
@@ -60,6 +61,8 @@ export function ChatThread({
           role: "assistant",
           content: result.response,
           toolsUsed: result.tools_used,
+          autoPlay: true,
+          reopenMicAfter: viaVoice,
         },
       ])
       if (result.tool_results.length > 0) onToolResults?.(result.tool_results)
@@ -91,6 +94,9 @@ export function ChatThread({
             token={token}
             onAuthError={onAuthError}
             onSpeakingChange={onSpeakingChange}
+            onAutoPlayEnded={
+              message.reopenMicAfter ? () => chatInputRef.current?.startRecording() : undefined
+            }
           />
         ))}
         {pending && <ThinkingIndicator />}
@@ -103,6 +109,7 @@ export function ChatThread({
         <div ref={bottomRef} />
       </div>
       <ChatInput
+        ref={chatInputRef}
         disabled={pending}
         token={token}
         onAuthError={onAuthError}

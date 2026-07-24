@@ -1,12 +1,16 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from "react"
 import { Loader2Icon, MicIcon, MicOffIcon, SquareIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { JarvisAuthError, transcribe } from "@/lib/jarvis-client"
 
 type RecordState = "idle" | "recording" | "transcribing" | "error"
+
+export interface MicButtonHandle {
+  startRecording: () => void
+}
 
 interface MicButtonProps {
   token: string
@@ -15,23 +19,109 @@ interface MicButtonProps {
   onTranscribed: (text: string) => void
 }
 
-export function MicButton({ token, disabled, onAuthError, onTranscribed }: MicButtonProps) {
+// Voice-activity heuristics — not physically calibrated against a real mic
+// in this environment, so treat as a reasonable starting point rather than
+// a tuned constant. SILENCE_THRESHOLD is an RMS amplitude (0-1) below which
+// the input is considered quiet; SILENCE_DURATION_MS is how long that quiet
+// has to hold, after real speech was already detected, before treating the
+// turn as finished. MAX_RECORDING_MS is a hard safety cap so a stuck/very
+// noisy input can't leave the mic recording forever.
+const SILENCE_THRESHOLD = 0.02
+const SILENCE_DURATION_MS = 1300
+const MAX_RECORDING_MS = 30000
+
+export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function MicButton(
+  { token, disabled, onAuthError, onTranscribed },
+  ref
+) {
   const [state, setState] = useState<RecordState>("idle")
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const vadFrameRef = useRef<number | null>(null)
+  const hasSpokenRef = useRef(false)
+  const silenceStartRef = useRef<number | null>(null)
+  const recordingStartRef = useRef(0)
 
-  async function startRecording() {
+  function stopVadLoop() {
+    if (vadFrameRef.current !== null) cancelAnimationFrame(vadFrameRef.current)
+    vadFrameRef.current = null
+    audioContextRef.current?.close().catch(() => {})
+    audioContextRef.current = null
+    analyserRef.current = null
+  }
+
+  function stopRecording() {
+    recorderRef.current?.stop()
+  }
+
+  function runVadLoop() {
+    const analyser = analyserRef.current
+    if (!analyser) return
+    const data = new Uint8Array(analyser.fftSize)
+
+    const tick = () => {
+      if (!analyserRef.current) return
+      analyserRef.current.getByteTimeDomainData(data)
+      let sumSquares = 0
+      for (let i = 0; i < data.length; i++) {
+        const normalized = (data[i] - 128) / 128
+        sumSquares += normalized * normalized
+      }
+      const rms = Math.sqrt(sumSquares / data.length)
+      const now = performance.now()
+
+      if (rms > SILENCE_THRESHOLD) {
+        hasSpokenRef.current = true
+        silenceStartRef.current = null
+      } else if (hasSpokenRef.current) {
+        if (silenceStartRef.current === null) {
+          silenceStartRef.current = now
+        } else if (now - silenceStartRef.current > SILENCE_DURATION_MS) {
+          stopRecording()
+          return
+        }
+      }
+
+      if (now - recordingStartRef.current > MAX_RECORDING_MS) {
+        stopRecording()
+        return
+      }
+
+      vadFrameRef.current = requestAnimationFrame(tick)
+    }
+    vadFrameRef.current = requestAnimationFrame(tick)
+  }
+
+  const startRecording = useCallback(async () => {
     if (state !== "idle" || disabled) return
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const recorder = new MediaRecorder(stream)
       chunksRef.current = []
+      hasSpokenRef.current = false
+      silenceStartRef.current = null
+      recordingStartRef.current = performance.now()
+
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      const audioContext = new AudioContextClass()
+      const source = audioContext.createMediaStreamSource(stream)
+      const analyser = audioContext.createAnalyser()
+      analyser.fftSize = 1024
+      source.connect(analyser)
+      audioContextRef.current = audioContext
+      analyserRef.current = analyser
+      runVadLoop()
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunksRef.current.push(event.data)
       }
 
       recorder.onstop = async () => {
+        stopVadLoop()
         stream.getTracks().forEach((track) => track.stop())
         const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" })
         setState("transcribing")
@@ -57,11 +147,10 @@ export function MicButton({ token, disabled, onAuthError, onTranscribed }: MicBu
       setState("error")
       setTimeout(() => setState("idle"), 2500)
     }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, disabled, token])
 
-  function stopRecording() {
-    recorderRef.current?.stop()
-  }
+  useImperativeHandle(ref, () => ({ startRecording }), [startRecording])
 
   function handleClick() {
     if (state === "idle") startRecording()
@@ -93,4 +182,4 @@ export function MicButton({ token, disabled, onAuthError, onTranscribed }: MicBu
       )}
     </div>
   )
-}
+})

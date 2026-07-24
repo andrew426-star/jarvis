@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { BotIcon, Loader2Icon, PauseIcon, UserIcon, Volume2Icon } from "lucide-react"
 
 import { ToolBadge } from "@/components/tool-badge"
@@ -12,6 +12,13 @@ export interface ChatMessageData {
   role: "user" | "assistant"
   content: string
   toolsUsed?: string[]
+  // Every assistant reply narrates itself once, unprompted — set on the
+  // message at creation time in chat-thread.tsx, never toggled after.
+  autoPlay?: boolean
+  // Whether the *user's* turn that produced this reply came in by voice —
+  // only then should the mic reopen once narration ends, so typing doesn't
+  // unexpectedly start listening.
+  reopenMicAfter?: boolean
 }
 
 interface ChatMessageProps {
@@ -19,16 +26,28 @@ interface ChatMessageProps {
   token: string
   onAuthError: () => void
   onSpeakingChange?: (speaking: boolean) => void
+  // Fires only after the *automatic* narration finishes (or fails) — not
+  // after a manual replay — so chat-thread.tsx can reopen the mic for a
+  // voice-initiated turn without reopening it every time an old message is
+  // manually replayed.
+  onAutoPlayEnded?: () => void
 }
 
 type AudioState = "idle" | "loading" | "playing" | "error"
 
-export function ChatMessage({ message, token, onAuthError, onSpeakingChange }: ChatMessageProps) {
+export function ChatMessage({
+  message,
+  token,
+  onAuthError,
+  onSpeakingChange,
+  onAutoPlayEnded,
+}: ChatMessageProps) {
   const isUser = message.role === "user"
   const [audioState, setAudioState] = useState<AudioState>("idle")
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const hasAutoPlayedRef = useRef(false)
 
-  async function handleSpeak() {
+  async function playSpeech(auto: boolean) {
     if (audioState === "loading") return
     if (audioState === "playing") {
       audioRef.current?.pause()
@@ -47,6 +66,7 @@ export function ChatMessage({ message, token, onAuthError, onSpeakingChange }: C
         URL.revokeObjectURL(url)
         setAudioState("idle")
         onSpeakingChange?.(false)
+        if (auto) onAutoPlayEnded?.()
       }
       await audio.play()
       setAudioState("playing")
@@ -58,8 +78,19 @@ export function ChatMessage({ message, token, onAuthError, onSpeakingChange }: C
       }
       setAudioState("error")
       setTimeout(() => setAudioState("idle"), 2500)
+      // Narration failing shouldn't strand a voice conversation — let the
+      // mic reopen anyway so the user isn't stuck.
+      if (auto) onAutoPlayEnded?.()
     }
   }
+
+  useEffect(() => {
+    if (message.autoPlay && !hasAutoPlayedRef.current) {
+      hasAutoPlayedRef.current = true
+      playSpeech(true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className={`animate-fade-up flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
@@ -89,7 +120,7 @@ export function ChatMessage({ message, token, onAuthError, onSpeakingChange }: C
               type="button"
               variant="ghost"
               size="icon-xs"
-              onClick={handleSpeak}
+              onClick={() => playSpeech(false)}
               aria-label={audioState === "playing" ? "Stop playback" : "Play reply"}
             >
               {audioState === "loading" ? (
