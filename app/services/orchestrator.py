@@ -1,6 +1,7 @@
 import json
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from app.core.config import get_settings
@@ -11,6 +12,22 @@ from app.memory.session_buffer import append_turn, get_recent_turns
 from app.tools.schemas import DISPATCH, TOOL_SCHEMAS
 
 MAX_ITERATIONS = 8
+
+# How many past tool-call rounds (one assistant tool_calls message + its
+# tool-result messages) get resent to Groq per iteration, and a per-result
+# size guard — bounds the growing request payload on long multi-step turns
+# without touching the full, authoritative `messages` accumulator or the
+# audit trail written to Supabase/Pinecone.
+MAX_TOOL_ROUNDS_IN_CONTEXT = 4
+TOOL_RESULT_CHAR_CAP = 4000
+
+# Separate, independent pool from FastAPI/Starlette's own threadpool (which
+# is what actually runs this sync route across concurrent requests) — this
+# one parallelizes the tool calls *within* a single turn. DISPATCH handlers
+# are plain sync functions doing blocking I/O (httpx-based calls to
+# Finnhub/Alpaca/Stripe/NewsAPI/Tavily/GitHub/Google/Spotify), so threads
+# are the right primitive; no async rewrite of the route/handlers needed.
+_TOOL_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="jarvis-tool")
 
 SYSTEM_PROMPT = (
     "You are J.A.R.V.I.S. (Just A Rather Very Intelligent System) — Andrew Thomas's personal AI "
@@ -58,6 +75,55 @@ SYSTEM_PROMPT = (
 )
 
 
+def _execute_tool_call(tool_call) -> tuple[str, dict, dict]:
+    name = tool_call.function.name
+    try:
+        args = json.loads(tool_call.function.arguments or "{}")
+    except json.JSONDecodeError:
+        args = {}
+
+    handler = DISPATCH.get(name)
+    if handler is None:
+        result = {"ok": False, "error": f"Unknown tool: {name}"}
+    else:
+        try:
+            result = handler(args)
+        except Exception as exc:  # noqa: BLE001 — never crash the loop on a tool error
+            result = {"ok": False, "error": str(exc)}
+    return name, args, result
+
+
+def _build_request_messages(messages: list[dict], prefix_len: int) -> list[dict]:
+    """The payload actually sent to Groq: the full fixed prefix (system
+    prompt, recall block, session history, user message) + only the most
+    recent MAX_TOOL_ROUNDS_IN_CONTEXT tool-call rounds. `messages` itself
+    is never mutated — this is a fresh, request-scoped view, so the loop's
+    own continuation logic and the audit trail stay correct either way.
+    A "round" is one assistant message with tool_calls plus every tool
+    message immediately following it — dropped as a whole unit, since
+    Groq's function-calling format requires each tool message's
+    tool_call_id to correlate to a tool_calls entry earlier in the same
+    request; splitting a round would break that pairing.
+    """
+    prefix, tail = messages[:prefix_len], messages[prefix_len:]
+
+    rounds: list[list[dict]] = []
+    for msg in tail:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            rounds.append([msg])
+        elif rounds:
+            rounds[-1].append(msg)
+
+    kept = [m for r in rounds[-MAX_TOOL_ROUNDS_IN_CONTEXT:] for m in r]
+
+    def _capped(msg: dict) -> dict:
+        if msg.get("role") == "tool" and len(msg.get("content", "")) > TOOL_RESULT_CHAR_CAP:
+            return {**msg, "content": msg["content"][:TOOL_RESULT_CHAR_CAP] + "...[truncated]"}
+        return msg
+
+    return prefix + [_capped(m) for m in kept]
+
+
 def run_invoke(message: str, session_id: str | None) -> dict:
     session_id = session_id or str(uuid.uuid4())
     settings = get_settings()
@@ -76,6 +142,7 @@ def run_invoke(message: str, session_id: str | None) -> dict:
     messages.extend(recent_turns)
 
     messages.append({"role": "user", "content": message})
+    prefix_len = len(messages)
 
     tools_used: list[str] = []
     tool_call_trace: list[dict] = []
@@ -84,7 +151,7 @@ def run_invoke(message: str, session_id: str | None) -> dict:
     for _ in range(MAX_ITERATIONS):
         response = client.chat.completions.create(
             model=settings.groq_model,
-            messages=messages,
+            messages=_build_request_messages(messages, prefix_len),
             tools=TOOL_SCHEMAS,
             tool_choice="auto",
             temperature=0.3,
@@ -97,21 +164,15 @@ def run_invoke(message: str, session_id: str | None) -> dict:
             final_text = choice.content or ""
             break
 
-        for tool_call in choice.tool_calls:
-            name = tool_call.function.name
+        # Submitted up front so every call in this round starts running
+        # concurrently; results are applied in original order (not
+        # completion order) so tool_call_trace/tools_used stay stable.
+        futures = [_TOOL_EXECUTOR.submit(_execute_tool_call, tc) for tc in choice.tool_calls]
+        for tool_call, future in zip(choice.tool_calls, futures):
             try:
-                args = json.loads(tool_call.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {}
-
-            handler = DISPATCH.get(name)
-            if handler is None:
-                result = {"ok": False, "error": f"Unknown tool: {name}"}
-            else:
-                try:
-                    result = handler(args)
-                except Exception as exc:  # noqa: BLE001 — never crash the loop on a tool error
-                    result = {"ok": False, "error": str(exc)}
+                name, args, result = future.result()
+            except Exception as exc:  # noqa: BLE001 — defense-in-depth; _execute_tool_call already catches handler errors
+                name, args, result = tool_call.function.name, {}, {"ok": False, "error": str(exc)}
 
             tools_used.append(name)
             tool_call_trace.append({"name": name, "args": args, "result": result})
