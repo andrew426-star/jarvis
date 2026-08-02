@@ -67,6 +67,24 @@ class Settings(BaseSettings):
     spotify_redirect_uri: str | None = None
     spotify_oauth_state_secret: str | None = None
 
+    # Zoho Mail — read-only inbox access, optional for the same reason as
+    # Spotify above: credentials aren't in hand yet and a missing one must
+    # not break boot. zoho_accounts_domain/zoho_api_domain get real
+    # defaults (not None) since the US data center is almost certainly
+    # correct (Kivaro AI is a Dallas, TX company) — override only if
+    # Zoho's API Console shows a different data center (e.g.
+    # accounts.zoho.eu/mail.zoho.eu). Note: Zoho's OAuth token response
+    # includes its own "api_domain" field, but that's a different, generic
+    # zohoapis.<tld> host — not the same as Mail's own mail.zoho.<tld> API
+    # host — so it's deliberately not used; these two settings are the
+    # single source of truth instead.
+    zoho_client_id: str | None = None
+    zoho_client_secret: str | None = None
+    zoho_redirect_uri: str | None = None
+    zoho_oauth_state_secret: str | None = None
+    zoho_accounts_domain: str = "accounts.zoho.com"
+    zoho_api_domain: str = "mail.zoho.com"
+
     # ElevenLabs TTS — optional for the same reason as Spotify above:
     # credentials aren't in hand yet, and a missing one must not break the
     # already-running app's boot. elevenlabs_voice_id has no hardcoded

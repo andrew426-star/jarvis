@@ -8,6 +8,7 @@ from app.api.routes.spotify_auth import router as spotify_auth_router
 from app.api.routes.speak import router as speak_router
 from app.api.routes.transcribe import router as transcribe_router
 from app.api.routes.verify import router as verify_router
+from app.api.routes.zoho_auth import router as zoho_auth_router
 from app.core.config import get_settings
 
 app = FastAPI(title="J.A.R.V.I.S.")
@@ -36,6 +37,7 @@ app.include_router(speak_router)
 app.include_router(verify_router)
 app.include_router(panels_router)
 app.include_router(transcribe_router)
+app.include_router(zoho_auth_router)
 
 
 @app.get("/health")

@@ -11,6 +11,7 @@ from app.tools.portfolio import portfolio
 from app.tools.spotify import spotify
 from app.tools.think import think
 from app.tools.web_research import web_research
+from app.tools.zoho_mail import zoho_mail
 
 # Groq/OpenAI-shaped tool declarations for chat.completions.create(tools=...).
 TOOL_SCHEMAS = [
@@ -390,6 +391,55 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "zoho_mail",
+            "description": (
+                "Read Andrew's Zoho Mail business inbox (andrew.thomas@kivaroai.com) — a "
+                "completely separate mailbox from his connected Gmail (google_titan). Use to "
+                "list recent inbox messages, search by sender/subject/keyword, or read a "
+                "specific message's full body. Read-only — no send/reply capability."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["list_recent", "search", "get_content"],
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Result cap for list_recent/search. Default 10, max 200.",
+                    },
+                    "sender": {
+                        "type": "string",
+                        "description": "Filter by sender email or name, for the search operation.",
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Filter by subject text, for the search operation.",
+                    },
+                    "keyword": {
+                        "type": "string",
+                        "description": "Free-text search across the full email content, for the "
+                        "search operation.",
+                    },
+                    "folder_id": {
+                        "type": "string",
+                        "description": "Zoho folderId, required for get_content — from a prior "
+                        "list_recent/search result's folder_id field.",
+                    },
+                    "message_id": {
+                        "type": "string",
+                        "description": "Zoho messageId, required for get_content — from a prior "
+                        "list_recent/search result's message_id field.",
+                    },
+                },
+                "required": ["operation"],
+            },
+        },
+    },
 ]
 
 DISPATCH = {
@@ -406,4 +456,5 @@ DISPATCH = {
     "github": github,
     "news_feed": news_feed,
     "spotify": spotify,
+    "zoho_mail": zoho_mail,
 }
