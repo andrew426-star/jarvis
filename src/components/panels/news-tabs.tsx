@@ -17,7 +17,15 @@ type CategoryFeed = {
 export function NewsTabs({ categories }: { categories: CategoryFeed[] }) {
   return (
     <Tabs defaultValue={categories[0]?.id}>
-      <TabsList className="h-auto flex-wrap justify-start gap-1 bg-transparent p-0">
+      {/* !h-auto (important) — confirmed live via getBoundingClientRect
+          that plain h-auto loses to the base Tabs primitive's own
+          group-data-horizontal/tabs:h-8, so TabsList reports a stuck
+          32px height even once these 6 pills wrap to 3 rows at this
+          reading pane's ~480px width. TabsContent then starts rendering
+          at that stale (too-small) offset, overlapping the wrapped
+          rows. Kiv-console's own Intel Hub never hit this because its
+          card is wide enough for the pills to fit in fewer rows there. */}
+      <TabsList className="!h-auto flex-wrap justify-start gap-1 bg-transparent p-0">
         {categories.map((category) => (
           <TabsTrigger
             key={category.id}

@@ -242,3 +242,31 @@
 .animate-ticker:hover {
   animation-play-state: paused;
 }
+
+/* Spatial HUD layout (jarvis-stage.tsx / orbital-panel.tsx) — panels
+   positioned in plain CSS screen-space around the 3D core, not inside
+   the Three.js scene. Radius stays a CSS var driven by --slot-cos/
+   --slot-sin (set inline per slot from its fixed angle) so it's
+   responsive via clamp() without any JS measurement/ResizeObserver. */
+.orbital-slot {
+  position: absolute;
+  /* Must stay in sync with jarvis-stage.tsx's core anchor (top-[68%]) —
+     see the comment there for why 68%, not 50%. */
+  top: 68%;
+  left: 50%;
+  --orbit-radius: clamp(170px, 20vw, 260px);
+  transform: translate(-50%, -50%)
+    translate(calc(var(--slot-cos) * var(--orbit-radius)), calc(var(--slot-sin) * var(--orbit-radius)));
+  transition:
+    transform 420ms cubic-bezier(0.22, 0.9, 0.32, 1),
+    opacity 300ms ease;
+}
+
+.orbital-slot[data-prominence="touched"] {
+  --orbit-radius: clamp(150px, 18vw, 230px);
+}
+
+.orbital-slot[data-state="receded"] {
+  opacity: 0.4;
+  --orbit-radius: clamp(210px, 24vw, 300px);
+}

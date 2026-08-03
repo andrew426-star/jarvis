@@ -1,14 +1,9 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import dynamic from "next/dynamic"
 
-import { ChatThread } from "@/components/chat-thread"
+import { JarvisStage, type PanelKey } from "@/components/jarvis-stage"
 import { LoginGate } from "@/components/login-gate"
-import { PanelTabs, type TabKey } from "@/components/panel-tabs"
-import { MarketsPanel } from "@/components/panels/markets-panel"
-import { NewsPanel } from "@/components/panels/news-panel"
-import { PortfolioPanel } from "@/components/panels/portfolio-panel"
 import type {
   MarketHistory,
   MarketSnapshot,
@@ -24,14 +19,9 @@ import {
   setStoredToken,
 } from "@/lib/storage"
 
-const JarvisCore = dynamic(() => import("@/components/jarvis-core"), {
-  ssr: false,
-  loading: () => <div className="glow-green mx-auto size-24 animate-pulse rounded-full bg-primary/10" />,
-})
-
-// tool_results names that map onto a tab — the same tool a chat message
-// used, when clicked/asked, is what the matching tab should show.
-const TOOL_TAB_MAP: Record<string, TabKey> = {
+// tool_results names that map onto a panel — the same tool a chat message
+// used, when clicked/asked, is what the matching panel should focus.
+const TOOL_PANEL_MAP: Record<string, PanelKey> = {
   market_analysis: "markets",
   market_history: "markets",
   news_feed: "news",
@@ -69,7 +59,18 @@ export function JarvisConsole() {
   const [token, setToken] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState("")
 
-  const [activeTab, setActiveTab] = useState<TabKey>("chat")
+  // Replaces the old single activeTab: TabKey — focusedPanel is null in
+  // the ambient state (all three panels peripheral, chat full-height) or
+  // one of the three panel keys when a reading pane is open. panelSignals
+  // is the real relevance/recency signal driving chip prominence: the
+  // Date.now() a panel was last touched (via a chat tool call or a manual
+  // click), or null if never touched this session.
+  const [focusedPanel, setFocusedPanel] = useState<PanelKey | null>(null)
+  const [panelSignals, setPanelSignals] = useState<Record<PanelKey, number | null>>({
+    markets: null,
+    news: null,
+    portfolio: null,
+  })
   const [isPending, setIsPending] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
 
@@ -108,14 +109,48 @@ export function JarvisConsole() {
   }
 
   function handleToolResults(results: ToolResult[]) {
+    const touched: PanelKey[] = []
     for (const entry of results) {
-      if (entry.name === "market_analysis") setLiveMarketSnapshot(entry.result as MarketSnapshot)
-      if (entry.name === "market_history") setLiveMarketHistory(entry.result as MarketHistory)
-      if (entry.name === "news_feed") setLiveNews(entry.result as NewsResult)
-      if (entry.name === "portfolio") setLivePortfolio(entry.result as PortfolioResult)
+      if (entry.name === "market_analysis") {
+        setLiveMarketSnapshot(entry.result as MarketSnapshot)
+        touched.push("markets")
+      }
+      if (entry.name === "market_history") {
+        setLiveMarketHistory(entry.result as MarketHistory)
+        touched.push("markets")
+      }
+      if (entry.name === "news_feed") {
+        setLiveNews(entry.result as NewsResult)
+        touched.push("news")
+      }
+      if (entry.name === "portfolio") {
+        setLivePortfolio(entry.result as PortfolioResult)
+        touched.push("portfolio")
+      }
     }
-    const firstMapped = results.find((entry) => TOOL_TAB_MAP[entry.name])
-    if (firstMapped) setActiveTab(TOOL_TAB_MAP[firstMapped.name])
+    if (touched.length === 0) return
+
+    const now = Date.now()
+    setPanelSignals((prev) => {
+      const next = { ...prev }
+      for (const key of touched) next[key] = now
+      return next
+    })
+
+    const firstMapped = results.find((entry) => TOOL_PANEL_MAP[entry.name])
+    if (firstMapped) setFocusedPanel(TOOL_PANEL_MAP[firstMapped.name])
+  }
+
+  function handleFocusPanel(key: PanelKey) {
+    setFocusedPanel(key)
+    // Manually opening a panel counts as relevance too — a user checking
+    // Portfolio without asking Jarvis anything is still real signal, not
+    // something that should leave the chip looking permanently dormant.
+    setPanelSignals((prev) => ({ ...prev, [key]: Date.now() }))
+  }
+
+  function handleDefocus() {
+    setFocusedPanel(null)
   }
 
   if (status === "resolving") {
@@ -146,40 +181,23 @@ export function JarvisConsole() {
       </header>
 
       <div className="relative flex min-h-0 flex-1 flex-col items-center px-4 pb-6 sm:px-8">
-        <div className="pointer-events-none size-64 shrink-0 sm:size-72 md:size-80">
-          <JarvisCore state={coreState} />
-        </div>
-
-        <div className="flex w-full min-h-0 flex-1 flex-col items-center gap-3">
-          <PanelTabs active={activeTab} onChange={setActiveTab} />
-
-          <div className="min-h-0 w-full max-w-4xl flex-1 border-t border-border/60 pt-4">
-            <div className={activeTab === "chat" ? "h-full" : "hidden"}>
-              <ChatThread
-                token={token}
-                sessionId={sessionId}
-                onAuthError={handleAuthError}
-                onToolResults={handleToolResults}
-                onSpeakingChange={setIsSpeaking}
-                onPendingChange={setIsPending}
-              />
-            </div>
-            <div className={activeTab === "markets" ? "h-full overflow-y-auto" : "hidden"}>
-              <MarketsPanel
-                token={token}
-                onAuthError={handleAuthError}
-                liveSnapshot={liveMarketSnapshot}
-                liveHistory={liveMarketHistory}
-              />
-            </div>
-            <div className={activeTab === "news" ? "h-full overflow-y-auto" : "hidden"}>
-              <NewsPanel token={token} onAuthError={handleAuthError} liveNews={liveNews} />
-            </div>
-            <div className={activeTab === "portfolio" ? "h-full overflow-y-auto" : "hidden"}>
-              <PortfolioPanel token={token} onAuthError={handleAuthError} livePortfolio={livePortfolio} />
-            </div>
-          </div>
-        </div>
+        <JarvisStage
+          token={token}
+          sessionId={sessionId}
+          coreState={coreState}
+          onAuthError={handleAuthError}
+          onToolResults={handleToolResults}
+          onSpeakingChange={setIsSpeaking}
+          onPendingChange={setIsPending}
+          focusedPanel={focusedPanel}
+          panelSignals={panelSignals}
+          onFocusPanel={handleFocusPanel}
+          onDefocus={handleDefocus}
+          liveMarketSnapshot={liveMarketSnapshot}
+          liveMarketHistory={liveMarketHistory}
+          liveNews={liveNews}
+          livePortfolio={livePortfolio}
+        />
       </div>
     </div>
   )
