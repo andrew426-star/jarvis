@@ -333,15 +333,21 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "news_feed",
             "description": (
-                "Get recent news headlines — defaults to Fintech/AI-automation/alternative-"
-                "investment topics, or pass a specific query."
+                "Get recent news headlines — defaults to potential market moves, AI tools/LLM "
+                "updates, and shifts in hedge funds, private equity, venture capital, or the AI "
+                "field, or pass a specific query."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Search query. Omit for the default Fintech/AI/alt-investment feed.",
+                        "description": (
+                            "Search query. Omit for the default market-moves/AI-tools-LLM/"
+                            "hedge-fund-PE-VC-AI feed. When choosing your own query for a "
+                            "general news request, prefer these same themes unless the user "
+                            "asks about something else specifically."
+                        ),
                     },
                     "page_size": {"type": "integer", "description": "Number of articles to return. Default 8."},
                 },

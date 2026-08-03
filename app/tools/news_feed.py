@@ -6,7 +6,13 @@ from app.core.config import get_settings
 from app.core.redis_client import get_redis_client
 
 NEWSAPI_BASE = "https://newsapi.org/v2/everything"
-DEFAULT_QUERY = "hedge fund OR fintech OR AI automation OR alternative investment"
+# Matches kiv-console's own newsapi.ts QUERY, verbatim — same curation:
+# potential market moves, AI tools/LLM updates, and shifts in hedge
+# funds, PE, VC, or the AI field, not a generic fintech/AI grab-bag.
+DEFAULT_QUERY = (
+    '"hedge fund" OR "private equity" OR "venture capital" OR "large language model" '
+    'OR "generative AI" OR "Federal Reserve" OR "market volatility"'
+)
 CACHE_TTL_SECONDS = 14400  # 4h — matches kiv-console's own NEWS_CACHE_LIFE.revalidate
 
 
@@ -31,6 +37,16 @@ def news_feed(args: dict) -> dict:
             NEWSAPI_BASE,
             params={
                 "q": query,
+                # Restricts matching to title/description rather than full
+                # article body — confirmed live against the real API that
+                # full-text matching (NewsAPI's default) pulls in a lot of
+                # noise that title/description matching cuts out almost
+                # entirely. Matches kiv-console's own fetchArticles().
+                "searchIn": "title,description",
+                # pypi.org floods any AI/LLM query with raw package-release
+                # notifications ("llm-preflight 2.4.1") — confirmed live
+                # against the real API. Matches kiv-console's exclusion.
+                "excludeDomains": "pypi.org",
                 "language": "en",
                 "sortBy": "publishedAt",
                 "pageSize": page_size,
