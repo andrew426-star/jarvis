@@ -15,6 +15,17 @@ DEFAULT_QUERY = (
 )
 CACHE_TTL_SECONDS = 14400  # 4h — matches kiv-console's own NEWS_CACHE_LIFE.revalidate
 
+# Bump this whenever the request shape changes (searchIn, domains, any
+# param below) without the query TEXT itself changing — e.g. tightening
+# MAINSTREAM_DOMAINS. The cache key is keyed on query text, so a
+# request-shape-only change is otherwise invisible to it and Redis (unlike
+# kiv-console's Next.js cache, which auto-invalidates on every deploy via
+# its own build ID) keeps serving pre-change results for up to
+# CACHE_TTL_SECONDS after a real deploy. Confirmed live: this exact gap
+# served stale non-mainstream-source results for a full deploy cycle
+# before the cache was manually flushed.
+CACHE_KEY_VERSION = "v2"
+
 # Mainstream outlets only — matches kiv-console's own MAINSTREAM_DOMAINS
 # verbatim. Andrew's ask: pull from recognizable sources (VentureBeat,
 # WSJ, etc.) rather than blogs/Hacker-News-style posts. Replaces the prior
@@ -30,7 +41,7 @@ MAINSTREAM_DOMAINS = ",".join([
 def news_feed(args: dict) -> dict:
     query = str(args.get("query") or DEFAULT_QUERY).strip()
     page_size = int(args.get("page_size") or 8)
-    cache_key = f"jarvis:newscache:{query.lower()}:{page_size}"
+    cache_key = f"jarvis:newscache:{CACHE_KEY_VERSION}:{query.lower()}:{page_size}"
 
     # Same NEWSAPI_KEY kiv-console already uses against its own 100-req/24h
     # quota, which kiv-console's own history shows running tight — a Redis
