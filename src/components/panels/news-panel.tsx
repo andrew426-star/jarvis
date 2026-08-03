@@ -13,11 +13,6 @@ interface NewsPanelProps {
   liveNews?: NewsResult
 }
 
-// A dedicated AI-focused query for the panel's own on-demand refresh —
-// distinct from the broader fintech/alt-investment default the news_feed
-// tool uses when Jarvis calls it mid-conversation without a specific ask.
-const DEFAULT_PANEL_QUERY = "artificial intelligence OR AI model OR AI agent"
-
 export function NewsPanel({ token, onAuthError, liveNews }: NewsPanelProps) {
   const [news, setNews] = useState<NewsResult | null>(null)
   const [loading, setLoading] = useState(true)
@@ -29,20 +24,25 @@ export function NewsPanel({ token, onAuthError, liveNews }: NewsPanelProps) {
   async function refreshNews() {
     setLoading(true)
     try {
-      setNews(await getNews(token, DEFAULT_PANEL_QUERY))
+      // No query -> server-side DEFAULT_QUERY (news_feed.py), Jarvis/K.I.V.'s
+      // shared curated market-moves/AI-tools-LLM/hedge-fund-PE-VC feed. This
+      // panel used to hardcode its own narrower AI-only query, independent
+      // of that curation — that's why changing the backend default didn't
+      // visibly change anything here. Single source of truth now.
+      setNews(await getNews(token))
     } catch (err) {
       if (err instanceof JarvisAuthError) {
         onAuthError()
         return
       }
-      setNews({ ok: false, query: DEFAULT_PANEL_QUERY, error: "Could not load news." })
+      setNews({ ok: false, query: "", error: "Could not load news." })
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    getNews(token, DEFAULT_PANEL_QUERY)
+    getNews(token)
       .then((result) => {
         if (!hasLiveNewsRef.current) setNews(result)
       })
@@ -52,7 +52,7 @@ export function NewsPanel({ token, onAuthError, liveNews }: NewsPanelProps) {
           return
         }
         if (!hasLiveNewsRef.current) {
-          setNews({ ok: false, query: DEFAULT_PANEL_QUERY, error: "Could not load news." })
+          setNews({ ok: false, query: "", error: "Could not load news." })
         }
       })
       .finally(() => setLoading(false))
