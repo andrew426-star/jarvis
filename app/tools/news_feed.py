@@ -15,6 +15,17 @@ DEFAULT_QUERY = (
 )
 CACHE_TTL_SECONDS = 14400  # 4h — matches kiv-console's own NEWS_CACHE_LIFE.revalidate
 
+# Mainstream outlets only — matches kiv-console's own MAINSTREAM_DOMAINS
+# verbatim. Andrew's ask: pull from recognizable sources (VentureBeat,
+# WSJ, etc.) rather than blogs/Hacker-News-style posts. Replaces the prior
+# pypi.org exclusion entirely — none of these domains are package-release
+# feeds, so the allowlist already covers that case and more.
+MAINSTREAM_DOMAINS = ",".join([
+    "venturebeat.com", "wsj.com", "bloomberg.com", "reuters.com", "cnbc.com",
+    "techcrunch.com", "businessinsider.com", "ft.com", "forbes.com", "fortune.com",
+    "axios.com", "theverge.com", "marketwatch.com",
+])
+
 
 def news_feed(args: dict) -> dict:
     query = str(args.get("query") or DEFAULT_QUERY).strip()
@@ -43,10 +54,7 @@ def news_feed(args: dict) -> dict:
                 # noise that title/description matching cuts out almost
                 # entirely. Matches kiv-console's own fetchArticles().
                 "searchIn": "title,description",
-                # pypi.org floods any AI/LLM query with raw package-release
-                # notifications ("llm-preflight 2.4.1") — confirmed live
-                # against the real API. Matches kiv-console's exclusion.
-                "excludeDomains": "pypi.org",
+                "domains": MAINSTREAM_DOMAINS,
                 "language": "en",
                 "sortBy": "publishedAt",
                 "pageSize": page_size,
