@@ -149,6 +149,39 @@ export interface NewsResult {
   error?: string
 }
 
+// Mirrors kiv-console's own NEWS_CATEGORIES (src/lib/news/newsapi.ts)
+// verbatim — same 6 themes, same query strings — so the News panel here
+// can render the same Intel-Hub-style tabs. The backend itself has no
+// category concept; each tab is just a separate /panels/news?query= call
+// using one of these query strings.
+export const NEWS_CATEGORIES = [
+  {
+    id: "market-moves",
+    label: "Market-Moving Signals",
+    query:
+      '"Federal Reserve" OR "interest rate" OR "market selloff" OR "market rally" OR "market volatility" OR recession',
+  },
+  {
+    id: "ai-tools-llms",
+    label: "AI Tools & LLM Updates",
+    query: '"large language model" OR LLM OR "generative AI" OR "AI model release" OR "AI tool"',
+  },
+  { id: "hedge-funds", label: "Hedge Fund Shifts", query: '"hedge fund"' },
+  { id: "private-equity", label: "Private Equity Shifts", query: '"private equity"' },
+  {
+    id: "venture-capital",
+    label: "Venture Capital & AI Funding",
+    query: '"venture capital" OR "VC funding" OR "startup funding" OR "AI startup"',
+  },
+  {
+    id: "ai-innovation",
+    label: "AI Field Innovation",
+    query: '"AI breakthrough" OR "AI research" OR "next-generation AI"',
+  },
+] as const satisfies readonly { id: string; label: string; query: string }[];
+
+export type NewsCategoryId = (typeof NEWS_CATEGORIES)[number]["id"]
+
 export interface PortfolioAccount {
   equity: number
   cash: number

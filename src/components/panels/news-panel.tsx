@@ -1,11 +1,12 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { ExternalLinkIcon, RefreshCwIcon } from "lucide-react"
+import { useEffect, useState } from "react"
+import { RefreshCwIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { JarvisAuthError, getNews, type NewsResult } from "@/lib/jarvis-client"
+import { NewsTabs } from "./news-tabs"
+import { JarvisAuthError, getNews, NEWS_CATEGORIES, type NewsArticle, type NewsResult } from "@/lib/jarvis-client"
 
 interface NewsPanelProps {
   token: string
@@ -13,89 +14,95 @@ interface NewsPanelProps {
   liveNews?: NewsResult
 }
 
+interface CategoryFeed {
+  id: string
+  label: string
+  articles: NewsArticle[]
+}
+
+// Structured like kiv-console's Intel Hub (CategorizedNews + NewsTabs) —
+// one tab per theme, fetched in parallel — rather than a single flat list.
+// A live chat-triggered news_feed result (liveNews) is layered on top as
+// its own "from your conversation" section instead of replacing the
+// tabs, since the fixed categories and an ad-hoc chat query are genuinely
+// different things worth keeping both visible.
 export function NewsPanel({ token, onAuthError, liveNews }: NewsPanelProps) {
-  const [news, setNews] = useState<NewsResult | null>(null)
+  const [categories, setCategories] = useState<CategoryFeed[] | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  // Guards against the initial background fetch resolving after a fresher
-  // live tool result already arrived from a chat turn.
-  const hasLiveNewsRef = useRef(false)
-
-  async function refreshNews() {
+  async function loadCategories() {
     setLoading(true)
+    setError(null)
     try {
-      // No query -> server-side DEFAULT_QUERY (news_feed.py), Jarvis/K.I.V.'s
-      // shared curated market-moves/AI-tools-LLM/hedge-fund-PE-VC feed. This
-      // panel used to hardcode its own narrower AI-only query, independent
-      // of that curation — that's why changing the backend default didn't
-      // visibly change anything here. Single source of truth now.
-      setNews(await getNews(token))
+      const results = await Promise.all(NEWS_CATEGORIES.map((c) => getNews(token, c.query)))
+      setCategories(
+        NEWS_CATEGORIES.map((c, i) => ({
+          id: c.id,
+          label: c.label,
+          articles: results[i].ok ? (results[i].articles ?? []) : [],
+        })),
+      )
     } catch (err) {
       if (err instanceof JarvisAuthError) {
         onAuthError()
         return
       }
-      setNews({ ok: false, query: "", error: "Could not load news." })
+      setError("Could not load news.")
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    getNews(token)
-      .then((result) => {
-        if (!hasLiveNewsRef.current) setNews(result)
-      })
-      .catch((err) => {
-        if (err instanceof JarvisAuthError) {
-          onAuthError()
-          return
-        }
-        if (!hasLiveNewsRef.current) {
-          setNews({ ok: false, query: "", error: "Could not load news." })
-        }
-      })
-      .finally(() => setLoading(false))
+    loadCategories()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(() => {
-    if (liveNews) {
-      hasLiveNewsRef.current = true
-      setNews(liveNews)
-    }
-  }, [liveNews])
+  const anyResults = categories?.some((c) => c.articles.length > 0) ?? false
 
   return (
     <Card className="glow-border">
       <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle>News{news?.query ? ` — ${news.query}` : ""}</CardTitle>
-        <Button type="button" variant="ghost" size="icon-sm" onClick={refreshNews} aria-label="Refresh news">
+        <CardTitle>News</CardTitle>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={loadCategories}
+          aria-label="Refresh news"
+        >
           <RefreshCwIcon className={loading ? "animate-spin" : ""} />
         </Button>
       </CardHeader>
-      <CardContent className="flex flex-col gap-1">
-        {news?.ok === false && <p className="text-sm text-destructive">{news.error}</p>}
-        {news?.ok && news.articles?.length === 0 && (
-          <p className="text-sm text-muted-foreground">No articles found.</p>
+      <CardContent className="flex flex-col gap-3">
+        {liveNews?.ok && liveNews.articles && liveNews.articles.length > 0 && (
+          <div className="flex flex-col gap-1 rounded-lg border border-primary/30 bg-primary/5 p-2.5">
+            <span className="text-xs font-medium tracking-wide text-primary uppercase">
+              From your conversation — {liveNews.query}
+            </span>
+            {liveNews.articles.slice(0, 3).map((article) => (
+              <a
+                key={article.url}
+                href={article.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm hover:underline"
+              >
+                {article.title}
+              </a>
+            ))}
+          </div>
         )}
-        {news?.articles?.map((article) => (
-          <a
-            key={article.url}
-            href={article.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="glow-border-hover flex flex-col gap-0.5 rounded-lg p-2.5"
-          >
-            <span className="flex items-center gap-1.5 text-sm font-medium">
-              {article.title}
-              <ExternalLinkIcon className="size-3 shrink-0 text-muted-foreground" />
-            </span>
-            <span className="text-xs text-muted-foreground">
-              {article.source} · {new Date(article.published_at).toLocaleDateString()}
-            </span>
-          </a>
-        ))}
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {!error && !loading && categories && !anyResults && (
+          <p className="text-sm text-muted-foreground">
+            No articles right now — NewsAPI&apos;s free tier rate-limits at 100 requests/day, so
+            this can go quiet temporarily. It&apos;ll resume on its own.
+          </p>
+        )}
+        {categories && anyResults && <NewsTabs categories={categories} />}
       </CardContent>
     </Card>
   )
