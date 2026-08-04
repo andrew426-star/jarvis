@@ -1,10 +1,13 @@
 "use client"
 
-import { useEffect, useMemo, useRef } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Canvas, useFrame, useThree } from "@react-three/fiber"
-import { Float } from "@react-three/drei"
-import { Bloom, EffectComposer } from "@react-three/postprocessing"
+import { Float, Html } from "@react-three/drei"
+import { EffectComposer } from "@react-three/postprocessing"
+import { BloomEffect } from "postprocessing"
 import * as THREE from "three"
+
+import { audioAmplitude } from "@/lib/audio-amplitude"
 
 export type CoreState = "idle" | "thinking" | "speaking"
 
@@ -24,11 +27,33 @@ const STATE_PARAMS: Record<CoreState, StateParams> = {
 const SHELL_COLOR = "hsl(152, 76%, 46%)"
 const CORE_COLOR = "hsl(162, 72%, 55%)"
 
-const GLOBE_RADIUS = 1.3
+// Bigger sphere within the same container box, via framing (radius +
+// closer camera) rather than more geometry — ring/tick/mote counts below
+// are untouched, keeping the perf budget exactly where it was.
+const GLOBE_RADIUS = 1.45
 const RING_COUNT = 32
-const RING_TUBE = 0.006
+const RING_TUBE = 0.0065
 const DATA_TICK_COUNT = 110
 const MOTE_COUNT = 40
+const CAMERA_Z = 5.15
+
+// Boot/materialize sequence timing — fires once per session (JarvisCore
+// mounts once via dynamic(...,{ssr:false}) in jarvis-stage.tsx and never
+// unmounts as panels toggle). Whole-lattice spin stays frozen until this
+// finishes — "coming online," not "already spinning while parts fly in."
+const BOOT_RING_STAGGER = 0.55
+const BOOT_RING_DURATION = 0.9
+const BOOT_TAIL = 0.5
+const BOOT_TOTAL = BOOT_RING_STAGGER + BOOT_RING_DURATION + BOOT_TAIL
+
+function easeOutCubic(x: number): number {
+  return 1 - Math.pow(1 - x, 3)
+}
+function easeOutBack(x: number): number {
+  const c1 = 1.70158
+  const c3 = c1 + 1
+  return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2)
+}
 
 // A depth-faded, additively-blended line/ring material shared by the main
 // lattice and the secondary data-texture layer. `sphereDir` (the vertex
@@ -38,13 +63,21 @@ const MOTE_COUNT = 40
 // position — w=0 keeps it a pure direction) into view space and comparing
 // it to the camera's forward axis gives a camera/rotation-robust "is this
 // the near or far side" factor with no hardcoded camera distance.
+//
+// uPulse (0 = idle) displaces each vertex radially — a real geometric
+// swell, not just an opacity change. Driven by CoreMesh's per-ring
+// ring.uniforms.uPulse, itself blended toward real narration amplitude
+// while speaking (see audio-amplitude.ts) — this is the actual "brought
+// to life" moment, not a fixed sine wave.
 const DEPTH_VERTEX_SHADER = `
+  uniform float uPulse;
   varying float vFacing;
   void main() {
     vec3 sphereDir = normalize(position);
+    vec3 displaced = position * (1.0 + uPulse * 0.05);
     vec3 viewDir = normalize((modelViewMatrix * vec4(sphereDir, 0.0)).xyz);
     vFacing = viewDir.z;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
   }
 `
 
@@ -80,9 +113,15 @@ const RING_UP = new THREE.Vector3(0, 0, 1)
 
 interface RingSpec {
   quaternion: THREE.Quaternion
+  scatterQuaternion: THREE.Quaternion // wide random tumble — the ring's boot starting orientation
+  bootDelay: number // seconds, per-ring stagger within BOOT_RING_STAGGER
   baseOpacity: number
   tube: number
-  uniforms: { uColor: { value: THREE.Color }; uOpacity: { value: number } }
+  uniforms: {
+    uColor: { value: THREE.Color }
+    uOpacity: { value: number }
+    uPulse: { value: number }
+  }
 }
 
 // True great-circle rings, all sharing one radius (a slight bias toward
@@ -95,13 +134,22 @@ function useRings(count: number): RingSpec[] {
     () =>
       Array.from({ length: count }, () => {
         const baseOpacity = 0.4 + Math.random() * 0.1
+        const finalQuaternion = new THREE.Quaternion().setFromUnitVectors(RING_UP, randomUnitVector(0.75))
+        const scatterAxis = randomUnitVector()
+        const scatterAngle = Math.PI * (0.6 + Math.random() * 0.8)
+        const scatterQuaternion = finalQuaternion
+          .clone()
+          .premultiply(new THREE.Quaternion().setFromAxisAngle(scatterAxis, scatterAngle))
         return {
-          quaternion: new THREE.Quaternion().setFromUnitVectors(RING_UP, randomUnitVector(0.75)),
+          quaternion: finalQuaternion,
+          scatterQuaternion,
+          bootDelay: Math.random() * BOOT_RING_STAGGER,
           baseOpacity,
           tube: RING_TUBE * (0.85 + Math.random() * 0.3),
           uniforms: {
             uColor: { value: new THREE.Color(SHELL_COLOR) },
             uOpacity: { value: baseOpacity },
+            uPulse: { value: 0 },
           },
         }
       }),
@@ -224,22 +272,33 @@ const MOTE_VERTEX_SHADER = `
 
 const MOTE_FRAGMENT_SHADER = `
   uniform vec3 uColor;
+  uniform float uBootFade;
   varying float vOpacity;
   void main() {
     float d = length(gl_PointCoord - vec2(0.5));
     if (d > 0.5) discard;
-    gl_FragColor = vec4(uColor, vOpacity * 0.3);
+    gl_FragColor = vec4(uColor, vOpacity * 0.3 * uBootFade);
   }
 `
 
-function CoreMesh({ state }: { state: CoreState }) {
+interface CoreMeshProps {
+  state: CoreState
+  bootProgressRef: React.RefObject<number>
+}
+
+function CoreMesh({ state, bootProgressRef }: CoreMeshProps) {
   const groupRef = useRef<THREE.Group>(null)
   const echoGroupRefs = useRef<(THREE.Group | null)[]>([])
+  const ringMeshRefs = useRef<(THREE.Mesh | null)[]>([])
   const moteGroupRef = useRef<THREE.Group>(null)
+  const nodeMaterialRef = useRef<THREE.PointsMaterial>(null)
   const rotationRef = useRef({ x: 0, y: 0 })
   const nextFlickerAtRef = useRef(2 + Math.random() * 4)
   const flickerEndRef = useRef(0)
   const flickerIndicesRef = useRef<Set<number>>(new Set())
+  const bootStartRef = useRef<number | null>(null)
+  const bootDoneRef = useRef(false)
+  const smoothedAudioRef = useRef(0)
 
   const params = STATE_PARAMS[state]
   const rings = useRings(RING_COUNT)
@@ -250,10 +309,44 @@ function CoreMesh({ state }: { state: CoreState }) {
     () => ({ uColor: { value: new THREE.Color(SHELL_COLOR) }, uOpacity: { value: 0.16 } }),
     []
   )
-  const moteUniforms = useMemo(() => ({ uColor: { value: new THREE.Color(CORE_COLOR) } }), [])
+  const moteUniforms = useMemo(
+    () => ({ uColor: { value: new THREE.Color(CORE_COLOR) }, uBootFade: { value: 1 } }),
+    []
+  )
 
   useFrame((three, delta) => {
     const t = three.clock.elapsedTime
+    if (bootStartRef.current === null) bootStartRef.current = t
+    const elapsed = t - bootStartRef.current
+
+    if (!bootDoneRef.current) {
+      const bootProgress = THREE.MathUtils.clamp(elapsed / BOOT_TOTAL, 0, 1)
+      bootProgressRef.current = bootProgress
+
+      rings.forEach((ring, i) => {
+        const ringT = THREE.MathUtils.clamp((elapsed - ring.bootDelay) / BOOT_RING_DURATION, 0, 1)
+        const mesh = ringMeshRefs.current[i]
+        if (mesh) {
+          mesh.quaternion.slerpQuaternions(ring.scatterQuaternion, ring.quaternion, easeOutCubic(ringT))
+          mesh.scale.setScalar(THREE.MathUtils.clamp(0.3 + 0.7 * easeOutBack(ringT), 0, 1.08))
+        }
+        ring.uniforms.uOpacity.value = ring.baseOpacity * easeOutCubic(ringT)
+      })
+
+      const tailT = THREE.MathUtils.clamp(
+        (elapsed - BOOT_RING_STAGGER - BOOT_RING_DURATION) / BOOT_TAIL,
+        0,
+        1
+      )
+      dataTextureUniforms.uOpacity.value = 0.16 * tailT
+      if (nodeMaterialRef.current) nodeMaterialRef.current.opacity = 0.55 * tailT
+      moteUniforms.uBootFade.value = tailT
+
+      if (bootProgress >= 1) bootDoneRef.current = true
+      // Whole-lattice spin stays frozen while assembling — "coming online"
+      // reads better than "already spinning while parts fly in."
+      return
+    }
 
     // Rigid-body rotation, plus a slow bounded precession wobble layered
     // on top (not accumulated) — an "unstable projection" rather than a
@@ -289,13 +382,25 @@ function CoreMesh({ state }: { state: CoreState }) {
       nextFlickerAtRef.current = t + 4 + Math.random() * 5
     }
     const flickering = t < flickerEndRef.current
+
+    // Real narration amplitude (see audio-amplitude.ts) dominates the
+    // fixed sine pulse while speaking — smoothed so individual audio
+    // frames don't read as jitter. Outside "speaking," rawAudio is 0 and
+    // this collapses back to the original fixed pulse exactly.
+    const rawAudio = state === "speaking" ? audioAmplitude.current : 0
+    smoothedAudioRef.current = THREE.MathUtils.damp(smoothedAudioRef.current, rawAudio, 6, delta)
+    const basePulse = Math.sin(t * params.pulseFreq) * params.pulseAmp
+    const pulse =
+      state === "speaking" ? THREE.MathUtils.lerp(basePulse, smoothedAudioRef.current, 0.75) : basePulse
+
     rings.forEach((ring, i) => {
       const dip = flickering && flickerIndicesRef.current.has(i) ? 0.82 : 1
-      ring.uniforms.uOpacity.value = ring.baseOpacity * dip
+      ring.uniforms.uOpacity.value = ring.baseOpacity * dip * (1 + Math.max(0, pulse) * 0.25)
+      ring.uniforms.uPulse.value = pulse
     })
 
-    const pulse = Math.sin(t * params.pulseFreq) * params.pulseAmp
-    dataTextureUniforms.uOpacity.value = 0.16 + pulse * 0.03
+    if (groupRef.current) groupRef.current.scale.setScalar(1 + Math.max(0, pulse) * 0.015)
+    dataTextureUniforms.uOpacity.value = 0.16 + pulse * 0.05
   })
 
   return (
@@ -321,7 +426,11 @@ function CoreMesh({ state }: { state: CoreState }) {
 
       <group ref={groupRef}>
         {rings.map((ring, i) => (
-          <mesh key={i} quaternion={ring.quaternion}>
+          <mesh
+            key={i}
+            ref={(el) => (ringMeshRefs.current[i] = el)}
+            quaternion={ring.scatterQuaternion}
+          >
             <torusGeometry args={[GLOBE_RADIUS, ring.tube, 6, 96]} />
             <shaderMaterial
               vertexShader={DEPTH_VERTEX_SHADER}
@@ -347,6 +456,7 @@ function CoreMesh({ state }: { state: CoreState }) {
 
         <points geometry={nodeGeometry}>
           <pointsMaterial
+            ref={nodeMaterialRef}
             color={CORE_COLOR}
             size={0.028}
             sizeAttenuation
@@ -407,30 +517,153 @@ function TransparentBackground() {
   return null
 }
 
+// Bloom intensity per state, driven imperatively so it costs zero extra
+// re-renders — matches how the file already mutates ring.uniforms.
+//
+// Constructs the real BloomEffect instance directly (from the underlying
+// `postprocessing` package, not @react-three/postprocessing's <Bloom>
+// wrapper) and mounts it via <primitive>, rather than driving it through
+// a ref on <Bloom>. Confirmed live why: <Bloom ref={...}> does forward to
+// the real instance (verified against the installed source), but that
+// wrapper's own internal wrapEffect implementation separately does
+// JSON.stringify(props) as a useMemo dependency, and — since it never
+// explicitly excludes `ref` from that — once the ref's `.current` holds
+// a real BloomEffect (which has the ordinary circular parent/children
+// structure any Three.js-adjacent object does), ANY re-render of that
+// component crashes with "Converting circular structure to JSON." This
+// isn't avoidable by memoizing the driver component either: the crash
+// needs to be survived specifically on the re-renders that matter most —
+// real idle/thinking/speaking transitions. Owning the instance directly
+// sidesteps that library internal entirely; mutating bloomEffect.intensity
+// in useFrame is the same pattern already used everywhere else here.
+const BLOOM_INTENSITY: Record<CoreState, number> = { idle: 1.3, thinking: 1.75, speaking: 2.05 }
+const BOOT_FLASH_PEAK = 2.6
+
+function BloomDriver({ state, bootProgressRef }: { state: CoreState; bootProgressRef: React.RefObject<number> }) {
+  const bloomEffect = useMemo(
+    () =>
+      new BloomEffect({
+        luminanceThreshold: 0.1,
+        luminanceSmoothing: 0.9,
+        intensity: BLOOM_INTENSITY.idle,
+        radius: 0.65,
+        mipmapBlur: true,
+      }),
+    []
+  )
+
+  useFrame((_three, delta) => {
+    const boot = bootProgressRef.current
+    const target = boot < 1 ? THREE.MathUtils.lerp(0, BOOT_FLASH_PEAK, boot) : BLOOM_INTENSITY[state]
+    bloomEffect.intensity = THREE.MathUtils.damp(bloomEffect.intensity, target, 4, delta)
+  })
+
+  return <primitive object={bloomEffect} />
+}
+
+// Small, continuous, non-interactive drift — not OrbitControls, nothing
+// user-driven. camera.lookAt(0,0,0) every frame is mandatory: moving
+// position without re-aiming would push the core visually off-center,
+// contradicting "more centered."
+function CameraDrift() {
+  useFrame(({ camera, clock }) => {
+    const t = clock.elapsedTime
+    camera.position.x = Math.sin(t * 0.11) * 0.18
+    camera.position.y = Math.cos(t * 0.08) * 0.12 + 0.02
+    camera.position.z = CAMERA_Z + Math.sin(t * 0.05) * 0.15
+    camera.lookAt(0, 0, 0)
+  })
+  return null
+}
+
+// Small technical-flavor HUD text drifting near the core — capped at 5,
+// desktop-only (below lg the core itself is smaller and text would just
+// be clutter). Text cycles every 5s via a plain React re-render — the one
+// place that's the right tool in this file, since it's a ~5s cadence
+// touching 5 tiny DOM nodes, not a per-frame path.
+const HUD_FRAGMENT_POOL = [
+  ["SYNC 0.998", "LINK STABLE", "UPLINK OK"],
+  ["NODE 0x7F3A", "NODE 0x291C", "NODE 0xE60D"],
+  ["Δ 12.4Hz", "Δ 8.1Hz", "Δ 15.7Hz"],
+  ["LAT 41.9N", "LON 87.6W", "ALT 612M"],
+  ["REL 004", "REL 005", "REL 006"],
+] as const
+
+// Confirmed live these need real margin from the container edge, not
+// just the sphere edge — drei's Html (no `transform` prop) positions
+// relative to the Canvas's own DOM wrapper, which is only as big as the
+// core's own size-* box (448px at lg), not the open space a "sphere
+// floating in a scene" assumption would suggest. A fragment whose
+// projected point sits within ~15px of that edge gets its text clipped
+// (confirmed: "NODE 0x7F3A" rendered as "'F3A"). Kept well inside.
+const HUD_FRAGMENT_POSITIONS: [number, number, number][] = [
+  [1.25, 0.45, 0.3],
+  [-1.2, -0.3, 0.6],
+  [0.2, 1.2, -0.5],
+  [-0.4, -1.25, 0.4],
+  [1.1, -0.75, -0.6],
+]
+
+function HudReadouts() {
+  const groupRef = useRef<THREE.Group>(null)
+  const [cycle, setCycle] = useState(0)
+
+  useFrame((_three, delta) => {
+    if (groupRef.current) groupRef.current.rotation.y += delta * 0.025
+  })
+
+  useEffect(() => {
+    const id = setInterval(() => setCycle((c) => c + 1), 5000)
+    return () => clearInterval(id)
+  }, [])
+
+  return (
+    <group ref={groupRef}>
+      {HUD_FRAGMENT_POSITIONS.map((position, i) => (
+        <Html
+          key={i}
+          position={position}
+          center
+          occlude={false}
+          className="hidden lg:block"
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 9,
+            letterSpacing: "0.1em",
+            color: "hsl(162 72% 55% / 0.5)",
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+          }}
+        >
+          {HUD_FRAGMENT_POOL[i][cycle % HUD_FRAGMENT_POOL[i].length]}
+        </Html>
+      ))}
+    </group>
+  )
+}
+
 interface JarvisCoreProps {
   state: CoreState
 }
 
 export default function JarvisCore({ state }: JarvisCoreProps) {
+  const bootProgressRef = useRef(0)
+
   return (
     <Canvas
-      camera={{ position: [0, 0, 5.6], fov: 45 }}
+      camera={{ position: [0, 0, CAMERA_Z], fov: 45 }}
       gl={{ alpha: true, antialias: true }}
       style={{ background: "transparent" }}
     >
       <TransparentBackground />
       <ambientLight intensity={0.4} />
       <pointLight position={[2, 2, 2]} intensity={0.6} color={SHELL_COLOR} />
-      <CoreMesh state={state} />
+      <CoreMesh state={state} bootProgressRef={bootProgressRef} />
       <ProjectorBeam />
+      <HudReadouts />
+      <CameraDrift />
       <EffectComposer>
-        <Bloom
-          luminanceThreshold={0.1}
-          luminanceSmoothing={0.9}
-          intensity={1.6}
-          radius={0.65}
-          mipmapBlur
-        />
+        <BloomDriver state={state} bootProgressRef={bootProgressRef} />
       </EffectComposer>
     </Canvas>
   )

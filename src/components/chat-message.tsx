@@ -5,6 +5,7 @@ import { BotIcon, Loader2Icon, PauseIcon, UserIcon, Volume2Icon } from "lucide-r
 
 import { ToolBadge } from "@/components/tool-badge"
 import { Button } from "@/components/ui/button"
+import { startAudioAnalysis, stopAudioAnalysis } from "@/lib/audio-amplitude"
 import { JarvisAuthError, speak } from "@/lib/jarvis-client"
 
 export interface ChatMessageData {
@@ -51,6 +52,7 @@ export function ChatMessage({
     if (audioState === "loading") return
     if (audioState === "playing") {
       audioRef.current?.pause()
+      stopAudioAnalysis()
       setAudioState("idle")
       onSpeakingChange?.(false)
       return
@@ -64,11 +66,13 @@ export function ChatMessage({
       audioRef.current = audio
       audio.onended = () => {
         URL.revokeObjectURL(url)
+        stopAudioAnalysis()
         setAudioState("idle")
         onSpeakingChange?.(false)
         if (auto) onAutoPlayEnded?.()
       }
       await audio.play()
+      startAudioAnalysis(audio)
       setAudioState("playing")
       onSpeakingChange?.(true)
     } catch (err) {

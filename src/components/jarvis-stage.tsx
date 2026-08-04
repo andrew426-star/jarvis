@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic"
 
 import { ChatThread } from "@/components/chat-thread"
+import { CoreTendril } from "@/components/core-tendril"
 import type { CoreState } from "@/components/jarvis-core"
 import { OrbitalPanel } from "@/components/orbital-panel"
 import { PanelTabs, type TabKey } from "@/components/panel-tabs"
@@ -94,21 +95,28 @@ export function JarvisStage({
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:gap-6">
         {/* Core + orbit slots. Always visible — the core stays centered
-            and stationary; chips are positioned relative to it via
-            .orbital-slot's CSS transform, not JS-measured. Anchor sits at
-            68% down (not 50%) — all three slot angles are in the upper
-            arc (-150/-90/-30), and the top slot's full orbit radius
-            reaches straight up with no horizontal component to share it,
-            unlike the two side slots. At a true 50% center that reach
-            clipped past the viewport/header; matches .orbital-slot's own
-            top:68% in globals.css, which must stay in sync with this. */}
-        <div className="relative h-[300px] w-full shrink-0 sm:h-[360px] lg:h-[420px] lg:flex-1">
-          <div className="absolute top-[68%] left-1/2 size-64 -translate-x-1/2 -translate-y-1/2 sm:size-72 lg:size-96">
+            and stationary; chips (and tendrils) are positioned relative
+            to it via .orbital-slot's/.core-tendril's shared CSS
+            transform, not JS-measured. Anchor is --core-anchor-top (a
+            shared CSS var, globals.css), not a literal percentage here —
+            it's genuinely centered on mobile/tablet (no chips render
+            below lg) and biased down only at lg, where the top slot's
+            full orbit radius reaching straight up (unlike the two side
+            slots, which only reach half their radius vertically) needs
+            real headroom against the viewport/header. */}
+        <div className="relative h-[340px] w-full shrink-0 sm:h-[400px] lg:h-[480px] lg:flex-1">
+          <div className="absolute top-[var(--core-anchor-top)] left-1/2 size-72 -translate-x-1/2 -translate-y-1/2 sm:size-80 lg:size-[28rem]">
             <JarvisCore state={coreState} />
           </div>
 
           {PANEL_KEYS.map((key) => (
-            <div key={key} className="hidden lg:block">
+            <div key={key} className="hidden lg:contents">
+              <CoreTendril
+                angle={SLOT_ANGLE[key]}
+                active={panelSignals[key] !== null}
+                prominence={panelSignals[key] ? "touched" : "dormant"}
+                receded={focusedPanel !== null && focusedPanel !== key}
+              />
               <OrbitalPanel
                 angle={SLOT_ANGLE[key]}
                 prominence={panelSignals[key] ? "touched" : "dormant"}
@@ -116,7 +124,7 @@ export function JarvisStage({
                 focused={focusedPanel === key}
                 onClick={() => handleChipClick(key)}
               >
-                {key === "markets" && <MarketsChip snapshot={liveMarketSnapshot} />}
+                {key === "markets" && <MarketsChip snapshot={liveMarketSnapshot} history={liveMarketHistory} />}
                 {key === "news" && <NewsChip news={liveNews} />}
                 {key === "portfolio" && <PortfolioChip portfolio={livePortfolio} />}
               </OrbitalPanel>
