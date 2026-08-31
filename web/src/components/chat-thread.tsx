@@ -6,7 +6,6 @@ import { WifiOffIcon } from "lucide-react"
 import { ChatInput, type ChatInputHandle } from "@/components/chat-input"
 import { ChatMessage, type ChatMessageData } from "@/components/chat-message"
 import { ThinkingIndicator } from "@/components/thinking-indicator"
-import { Card } from "@/components/ui/card"
 import {
   JarvisApiError,
   JarvisAuthError,
@@ -23,10 +22,12 @@ interface ChatThreadProps {
   onSpeakingChange?: (speaking: boolean) => void
   onPendingChange?: (pending: boolean) => void
   onRecordingChange?: (recording: boolean) => void
+  /** Completed exchanges, for the SESSION gauge on the status ring. */
+  onTurnsChange?: (turns: number) => void
 }
 
 // The mic lives at the bottom of this component, but the thing you click
-// to talk is the core, several levels up in jarvis-stage.tsx — so the
+// to talk is the reactor, several levels up in jarvis-stage.tsx - so the
 // recording controls are re-exposed here rather than staying private.
 export interface ChatThreadHandle {
   startRecording: () => void
@@ -42,6 +43,7 @@ export const ChatThread = forwardRef<ChatThreadHandle, ChatThreadProps>(function
     onSpeakingChange,
     onPendingChange,
     onRecordingChange,
+    onTurnsChange,
   },
   ref
 ) {
@@ -68,6 +70,11 @@ export const ChatThread = forwardRef<ChatThreadHandle, ChatThreadProps>(function
     onPendingChange?.(pending)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending])
+
+  useEffect(() => {
+    onTurnsChange?.(messages.filter((message) => message.role === "assistant").length)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages])
 
   async function handleSend(text: string, viaVoice: boolean) {
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: text }])
@@ -104,10 +111,20 @@ export const ChatThread = forwardRef<ChatThreadHandle, ChatThreadProps>(function
   }
 
   return (
-    <Card className="glow-border flex h-full w-full flex-col overflow-hidden py-0">
-      <div className="flex-1 space-y-4 overflow-y-auto p-4">
+    <div className="hud-panel flex h-full w-full flex-col overflow-hidden">
+      <div
+        className="flex shrink-0 items-center justify-between px-3 py-1.5"
+        style={{ borderBottom: "1px solid hsl(var(--hue) 70% 55% / 0.22)" }}
+      >
+        <span className="label-hud">Comms Channel</span>
+        <span className="label-hud">{messages.length} LOG</span>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         {messages.length === 0 && (
-          <p className="text-sm text-muted-foreground">Say something — J.A.R.V.I.S. is ready.</p>
+          <p className="readout text-[0.75rem]" style={{ color: "var(--muted-foreground)" }}>
+            Awaiting input. Speak, or type below.
+          </p>
         )}
         {messages.map((message) => (
           <ChatMessage
@@ -123,13 +140,17 @@ export const ChatThread = forwardRef<ChatThreadHandle, ChatThreadProps>(function
         ))}
         {pending && <ThinkingIndicator />}
         {error && (
-          <div className="flex items-center gap-1.5 text-sm text-destructive">
-            <WifiOffIcon className="size-4" />
+          <div
+            className="readout flex items-center gap-1.5 text-[0.75rem]"
+            style={{ color: "var(--destructive)" }}
+          >
+            <WifiOffIcon className="size-3.5" />
             {error}
           </div>
         )}
         <div ref={bottomRef} />
       </div>
+
       <ChatInput
         ref={chatInputRef}
         disabled={pending}
@@ -138,6 +159,6 @@ export const ChatThread = forwardRef<ChatThreadHandle, ChatThreadProps>(function
         onSend={handleSend}
         onRecordingChange={onRecordingChange}
       />
-    </Card>
+    </div>
   )
 })

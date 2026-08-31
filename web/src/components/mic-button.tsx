@@ -3,8 +3,7 @@
 import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from "react"
 import { Loader2Icon, MicIcon, MicOffIcon, SquareIcon } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { clearMicAmplitude, setMicAmplitude } from "@/lib/audio-amplitude"
+import { clearMicAmplitude, setMicAmplitude, setMicBands } from "@/lib/audio-amplitude"
 import { JarvisAuthError, transcribe } from "@/lib/jarvis-client"
 
 type RecordState = "idle" | "recording" | "transcribing" | "error"
@@ -73,6 +72,9 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
     const analyser = analyserRef.current
     if (!analyser) return
     const data = new Uint8Array(analyser.fftSize)
+    // Separate buffer: frequencyBinCount is half fftSize, and the two
+    // reads want different shapes off the same analyser.
+    const bins = new Uint8Array(analyser.frequencyBinCount)
 
     const tick = () => {
       if (!analyserRef.current) return
@@ -86,6 +88,8 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
       // Same number the silence check below uses — also drives the core's
       // pulse, so the ring visibly answers your voice while listening.
       setMicAmplitude(rms)
+      analyserRef.current.getByteFrequencyData(bins)
+      setMicBands(bins)
       const now = performance.now()
 
       if (rms > SILENCE_THRESHOLD) {
@@ -174,28 +178,28 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
   }
 
   return (
-    <div className="relative">
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        onClick={handleClick}
-        disabled={disabled || state === "transcribing"}
-        aria-label={state === "recording" ? "Stop recording" : "Record a voice message"}
-      >
-        {state === "transcribing" ? (
-          <Loader2Icon className="animate-spin" />
-        ) : state === "error" ? (
-          <MicOffIcon className="text-destructive" />
-        ) : state === "recording" ? (
-          <SquareIcon className="text-destructive" />
-        ) : (
-          <MicIcon />
-        )}
-      </Button>
-      {state === "recording" && (
-        <span className="absolute top-1 right-1 size-2 animate-pulse rounded-full bg-destructive" />
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={disabled || state === "transcribing"}
+      aria-label={state === "recording" ? "Stop recording" : "Record a voice message"}
+      aria-pressed={state === "recording"}
+      className="bracket-frame flex size-7 items-center justify-center transition-colors duration-200 disabled:opacity-30"
+      style={{
+        ["--tick" as string]: "5px",
+        color: state === "error" ? "var(--destructive)" : "var(--hud)",
+        background: state === "recording" ? "hsl(var(--hue) var(--sat) 55% / 0.14)" : "transparent",
+      }}
+    >
+      {state === "transcribing" ? (
+        <Loader2Icon className="size-3.5 animate-spin" />
+      ) : state === "error" ? (
+        <MicOffIcon className="size-3.5" />
+      ) : state === "recording" ? (
+        <SquareIcon className="size-3 animate-pulse-dot" />
+      ) : (
+        <MicIcon className="size-3.5" />
       )}
-    </div>
+    </button>
   )
 })

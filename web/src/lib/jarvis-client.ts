@@ -1,3 +1,5 @@
+import { recordLatency } from "@/lib/telemetry"
+
 // Empty string = same origin, which is the production shape: FastAPI
 // serves this bundle and the API off one port, so "/invoke" is already
 // the right URL. Only `next dev` on :3000 needs the variable set (to
@@ -43,6 +45,9 @@ async function extractErrorDetail(res: Response): Promise<string> {
 
 async function jarvisFetch(path: string, token: string, init: RequestInit): Promise<Response> {
   let res: Response
+  // Timed here rather than per call site so every route feeds the HUD's
+  // latency gauge, including the panel polls nobody explicitly awaits.
+  const startedAt = performance.now()
   try {
     res = await fetch(`${API_URL}${path}`, {
       ...init,
@@ -53,6 +58,8 @@ async function jarvisFetch(path: string, token: string, init: RequestInit): Prom
     })
   } catch {
     throw new JarvisNetworkError()
+  } finally {
+    recordLatency(performance.now() - startedAt)
   }
 
   if (res.status === 401) throw new JarvisAuthError()

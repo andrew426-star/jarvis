@@ -1,18 +1,16 @@
 "use client"
 
-import dynamic from "next/dynamic"
 import { useRef } from "react"
 
+import { ArcReactor, type CoreState } from "@/components/arc-reactor"
 import { ChatThread, type ChatThreadHandle } from "@/components/chat-thread"
-import { CoreTendril } from "@/components/core-tendril"
-import type { CoreState } from "@/components/jarvis-core"
-import { OrbitalPanel } from "@/components/orbital-panel"
-import { PanelTabs, type TabKey } from "@/components/panel-tabs"
-import { MarketsChip, NewsChip, PortfolioChip } from "@/components/panels/panel-chips"
+import { FrequencyBars } from "@/components/frequency-bars"
+import { StatusRing } from "@/components/status-ring"
 import { MarketsPanel } from "@/components/panels/markets-panel"
 import { NewsPanel } from "@/components/panels/news-panel"
 import { PortfolioPanel } from "@/components/panels/portfolio-panel"
 import { stopNarration } from "@/lib/narration"
+import { BootStage } from "@/lib/use-boot"
 import type {
   MarketHistory,
   MarketSnapshot,
@@ -21,40 +19,37 @@ import type {
   ToolResult,
 } from "@/lib/jarvis-client"
 
-const JarvisCore = dynamic(() => import("@/components/jarvis-core"), {
-  ssr: false,
-  loading: () => <div className="glow-green mx-auto size-24 animate-pulse rounded-full bg-primary/10" />,
-})
+export type PanelKey = "markets" | "news" | "portfolio"
 
-export type PanelKey = Exclude<TabKey, "chat">
-
-// Upper arc only, so the lower half stays clear for the chat dock below
-// (and for jarvis-core.tsx's own ProjectorBeam, which already renders a
-// faint cone pointing down from the core — chat living in that space is
-// a small continuity win, not just a layout convenience).
-const SLOT_ANGLE: Record<PanelKey, number> = {
-  news: -150,
-  markets: -90,
-  portfolio: -30,
+const PANEL_LABELS: Record<PanelKey, string> = {
+  markets: "Markets",
+  news: "Intel",
+  portfolio: "Assets",
 }
 
-const PANEL_KEYS = Object.keys(SLOT_ANGLE) as PanelKey[]
+const PANEL_KEYS = Object.keys(PANEL_LABELS) as PanelKey[]
 
 interface JarvisStageProps {
   token: string
   sessionId: string
   coreState: CoreState
+  bootStage: BootStage
   onAuthError: () => void
   onToolResults: (results: ToolResult[]) => void
   onSpeakingChange: (speaking: boolean) => void
   onPendingChange: (pending: boolean) => void
+  onTurnsChange: (turns: number) => void
+  turns: number
   isListening: boolean
   onListeningChange: (listening: boolean) => void
 
-  focusedPanel: PanelKey | null
+  activePanel: PanelKey
   panelSignals: Record<PanelKey, number | null>
   onFocusPanel: (key: PanelKey) => void
-  onDefocus: () => void
+
+  /** Mobile only - which of the two columns is on screen. */
+  mobileView: "console" | "data"
+  onMobileViewChange: (view: "console" | "data") => void
 
   liveMarketSnapshot?: MarketSnapshot
   liveMarketHistory?: MarketHistory
@@ -66,27 +61,30 @@ export function JarvisStage({
   token,
   sessionId,
   coreState,
+  bootStage,
   onAuthError,
   onToolResults,
   onSpeakingChange,
   onPendingChange,
+  onTurnsChange,
+  turns,
   isListening,
   onListeningChange,
-  focusedPanel,
+  activePanel,
   panelSignals,
   onFocusPanel,
-  onDefocus,
+  mobileView,
+  onMobileViewChange,
   liveMarketSnapshot,
   liveMarketHistory,
   liveNews,
   livePortfolio,
 }: JarvisStageProps) {
   const chatRef = useRef<ChatThreadHandle>(null)
-  const mobileTab: TabKey = focusedPanel ?? "chat"
 
-  // The core is the primary way to talk to Jarvis; the mic button in the
-  // chat dock stays as the secondary, keyboard-reachable path.
-  function handleCoreClick() {
+  // The reactor is the primary way to talk to Jarvis; the mic button in
+  // the chat dock stays as the secondary, keyboard-reachable path.
+  function handleReactorActivate() {
     if (isListening) {
       chatRef.current?.stopRecording()
       return
@@ -97,129 +95,140 @@ export function JarvisStage({
     chatRef.current?.startRecording()
   }
 
-  function handleMobileTabChange(tab: TabKey) {
-    if (tab === "chat") onDefocus()
-    else onFocusPanel(tab)
-  }
-
-  function handleChipClick(key: PanelKey) {
-    if (focusedPanel === key) onDefocus()
-    else onFocusPanel(key)
-  }
+  const panelsUp = bootStage >= BootStage.Panels
 
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col gap-3 lg:mx-auto lg:max-w-6xl">
-      <nav className="lg:hidden">
-        <PanelTabs active={mobileTab} onChange={handleMobileTabChange} />
+    <div className="relative z-10 flex min-h-0 w-full flex-1 flex-col gap-3 px-3 pb-3 sm:px-6 sm:pb-5">
+      {/* Mobile switcher. Below lg there is not room for the reactor and
+          a data column at once, so they take turns rather than both
+          being squeezed into something neither can use. */}
+      <nav className="flex gap-2 lg:hidden">
+        {(["console", "data"] as const).map((view) => (
+          <button
+            key={view}
+            type="button"
+            onClick={() => onMobileViewChange(view)}
+            className="bracket-frame label-hud flex-1 py-2 transition-colors duration-200"
+            style={{
+              color: mobileView === view ? "var(--hud)" : "var(--hud-dim)",
+              background:
+                mobileView === view ? "hsl(var(--hue) var(--sat) 55% / 0.1)" : "transparent",
+            }}
+          >
+            {view === "console" ? "Console" : "Telemetry"}
+          </button>
+        ))}
       </nav>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:gap-6">
-        {/* Core + orbit slots. Always visible — the core stays centered
-            and stationary; chips (and tendrils) are positioned relative
-            to it via .orbital-slot's/.core-tendril's shared CSS
-            transform, not JS-measured. Anchor is --core-anchor-top (a
-            shared CSS var, globals.css), not a literal percentage here —
-            it's genuinely centered on mobile/tablet (no chips render
-            below lg) and biased down only at lg, where the top slot's
-            full orbit radius reaching straight up (unlike the two side
-            slots, which only reach half their radius vertically) needs
-            real headroom against the viewport/header. */}
-        <div className="relative h-[340px] w-full shrink-0 sm:h-[400px] lg:h-[480px] lg:flex-1">
-          <div className="absolute top-[var(--core-anchor-top)] left-1/2 size-72 -translate-x-1/2 -translate-y-1/2 sm:size-80 lg:size-[28rem]">
-            {/* Canvas made inert so the button below it takes the click.
-                The lattice is thin lines, so raycasting against the mesh
-                would be a coin flip; a plain circular button is reliable
-                and is focusable/announceable, which a hit-test isn't.
-                Inset to roughly the globe so it doesn't swallow the
-                empty corners of the box. */}
-            <div className="pointer-events-none absolute inset-0">
-              <JarvisCore state={coreState} />
-            </div>
-            <button
-              type="button"
-              onClick={handleCoreClick}
-              // While a request is in flight the mic is disabled anyway
-              // (chat-input is disabled by `pending`), so this only makes
-              // that existing refusal visible instead of silent.
-              disabled={coreState === "thinking"}
-              aria-label={isListening ? "Stop listening" : "Talk to J.A.R.V.I.S."}
-              aria-pressed={isListening}
-              className="absolute inset-[16%] rounded-full transition-colors hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none disabled:cursor-default disabled:hover:bg-transparent"
-            />
-          </div>
-
-          {PANEL_KEYS.map((key) => (
-            <div key={key} className="hidden lg:contents">
-              <CoreTendril
-                angle={SLOT_ANGLE[key]}
-                active={panelSignals[key] !== null}
-                prominence={panelSignals[key] ? "touched" : "dormant"}
-                receded={focusedPanel !== null && focusedPanel !== key}
-              />
-              <OrbitalPanel
-                angle={SLOT_ANGLE[key]}
-                prominence={panelSignals[key] ? "touched" : "dormant"}
-                receded={focusedPanel !== null && focusedPanel !== key}
-                focused={focusedPanel === key}
-                onClick={() => handleChipClick(key)}
-              >
-                {key === "markets" && <MarketsChip snapshot={liveMarketSnapshot} history={liveMarketHistory} />}
-                {key === "news" && <NewsChip news={liveNews} />}
-                {key === "portfolio" && <PortfolioChip portfolio={livePortfolio} />}
-              </OrbitalPanel>
-            </div>
-          ))}
-        </div>
-
-        {/* Reading pane — only rendered visible when a panel is focused.
-            All three full panels stay mounted at all times (hidden via
-            className, not conditional rendering) so their own background
-            fetches never stall or refire when switching focus — the same
-            property the old single-content-area layout already had. */}
-        <div
-          className={
-            focusedPanel
-              ? "flex min-h-0 w-full flex-1 flex-col overflow-y-auto lg:w-[480px] lg:flex-none"
-              : "hidden"
-          }
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)_minmax(0,380px)]">
+        {/* ---- Left rail: data panels ---- */}
+        <section
+          className={`${panelsUp ? "boot-left" : "opacity-0"} min-h-0 flex-col gap-2 ${
+            mobileView === "data" ? "flex" : "hidden"
+          } lg:flex`}
         >
-          <div className={focusedPanel === "markets" ? "" : "hidden"}>
-            <MarketsPanel
-              token={token}
-              onAuthError={onAuthError}
-              liveSnapshot={liveMarketSnapshot}
-              liveHistory={liveMarketHistory}
+          <div className="flex gap-1">
+            {PANEL_KEYS.map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => onFocusPanel(key)}
+                className="bracket-frame label-hud flex-1 py-1.5 transition-colors duration-200"
+                style={{
+                  ["--tick" as string]: "5px",
+                  color: activePanel === key ? "var(--hud)" : "var(--hud-dim)",
+                  background:
+                    activePanel === key ? "hsl(var(--hue) var(--sat) 55% / 0.1)" : "transparent",
+                }}
+              >
+                {PANEL_LABELS[key]}
+                {/* A panel Jarvis has actually touched this session gets a
+                    live dot - the same relevance signal the old orbital
+                    chips carried, kept because it still earns its place. */}
+                {panelSignals[key] !== null && (
+                  <span
+                    className="ml-1 inline-block size-1 align-middle"
+                    style={{ background: "var(--hud-bright)" }}
+                  />
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* All three stay mounted and are hidden with a class rather
+              than conditionally rendered, so their background fetches
+              never stall or refire when switching tabs. */}
+          <div className="hud-panel min-h-0 flex-1 overflow-y-auto p-3">
+            <div className={activePanel === "markets" ? "" : "hidden"}>
+              <MarketsPanel
+                token={token}
+                onAuthError={onAuthError}
+                liveSnapshot={liveMarketSnapshot}
+                liveHistory={liveMarketHistory}
+              />
+            </div>
+            <div className={activePanel === "news" ? "" : "hidden"}>
+              <NewsPanel token={token} onAuthError={onAuthError} liveNews={liveNews} />
+            </div>
+            <div className={activePanel === "portfolio" ? "" : "hidden"}>
+              <PortfolioPanel
+                token={token}
+                onAuthError={onAuthError}
+                livePortfolio={livePortfolio}
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* ---- Centre: reactor, status ring, EQ ---- */}
+        <section
+          className={`min-h-0 flex-col items-center justify-center gap-4 ${
+            mobileView === "console" ? "flex" : "hidden"
+          } lg:flex`}
+        >
+          <div className="relative aspect-square w-full max-w-[min(58vh,420px)] shrink-0">
+            {/* The ring is the same square box as the reactor, scaled up
+                so its gauges sit outside the outermost reactor ring. */}
+            <StatusRing
+              bootStage={bootStage}
+              turns={turns}
+              className="pointer-events-none absolute inset-[-13%] h-[126%] w-[126%]"
+            />
+            <ArcReactor
+              state={coreState}
+              bootStage={bootStage}
+              onActivate={handleReactorActivate}
+              isListening={isListening}
+              disabled={coreState === "thinking"}
             />
           </div>
-          <div className={focusedPanel === "news" ? "" : "hidden"}>
-            <NewsPanel token={token} onAuthError={onAuthError} liveNews={liveNews} />
-          </div>
-          <div className={focusedPanel === "portfolio" ? "" : "hidden"}>
-            <PortfolioPanel token={token} onAuthError={onAuthError} livePortfolio={livePortfolio} />
-          </div>
-        </div>
-      </div>
 
-      {/* Chat dock — full height when ambient, a compact strip on desktop
-          when a panel is focused (hidden entirely on mobile when focused,
-          matching the old one-tab-at-a-time behavior there). */}
-      <div
-        className={
-          focusedPanel
-            ? "hidden lg:flex lg:h-32 lg:shrink-0 lg:flex-col lg:overflow-hidden"
-            : "flex min-h-0 flex-1 flex-col"
-        }
-      >
-        <ChatThread
-          ref={chatRef}
-          token={token}
-          sessionId={sessionId}
-          onAuthError={onAuthError}
-          onToolResults={onToolResults}
-          onSpeakingChange={onSpeakingChange}
-          onPendingChange={onPendingChange}
-          onRecordingChange={onListeningChange}
-        />
+          <div className="h-14 w-full max-w-[min(58vh,420px)] shrink-0 sm:h-16">
+            <FrequencyBars
+              active={coreState === "speaking" || coreState === "listening"}
+              bootStage={bootStage}
+            />
+          </div>
+        </section>
+
+        {/* ---- Right rail: terminal ---- */}
+        <section
+          className={`${panelsUp ? "boot-right" : "opacity-0"} min-h-0 ${
+            mobileView === "console" ? "flex" : "hidden"
+          } flex-col lg:flex`}
+        >
+          <ChatThread
+            ref={chatRef}
+            token={token}
+            sessionId={sessionId}
+            onAuthError={onAuthError}
+            onToolResults={onToolResults}
+            onSpeakingChange={onSpeakingChange}
+            onPendingChange={onPendingChange}
+            onRecordingChange={onListeningChange}
+            onTurnsChange={onTurnsChange}
+          />
+        </section>
       </div>
     </div>
   )

@@ -1,3 +1,4 @@
+import mimetypes
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -60,6 +61,14 @@ def health() -> dict:
 # The directory is absent until someone runs the frontend build, which is
 # the normal state during backend-only work and when running `next dev`
 # separately — so skip the mount instead of crashing at import time.
+# Python's mimetypes table has no entry for woff2 on several platforms,
+# so next/font's self-hosted faces would go out as
+# application/octet-stream. Browsers sniff and render them anyway, but
+# the wrong type costs correct caching and compression for the largest
+# static assets the page loads.
+mimetypes.add_type("font/woff2", ".woff2")
+mimetypes.add_type("font/woff", ".woff")
+
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "web" / "out"
 if _FRONTEND_DIST.is_dir():
     app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="frontend")
