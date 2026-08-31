@@ -1,8 +1,9 @@
 "use client"
 
 import dynamic from "next/dynamic"
+import { useRef } from "react"
 
-import { ChatThread } from "@/components/chat-thread"
+import { ChatThread, type ChatThreadHandle } from "@/components/chat-thread"
 import { CoreTendril } from "@/components/core-tendril"
 import type { CoreState } from "@/components/jarvis-core"
 import { OrbitalPanel } from "@/components/orbital-panel"
@@ -11,6 +12,7 @@ import { MarketsChip, NewsChip, PortfolioChip } from "@/components/panels/panel-
 import { MarketsPanel } from "@/components/panels/markets-panel"
 import { NewsPanel } from "@/components/panels/news-panel"
 import { PortfolioPanel } from "@/components/panels/portfolio-panel"
+import { stopNarration } from "@/lib/narration"
 import type {
   MarketHistory,
   MarketSnapshot,
@@ -46,6 +48,8 @@ interface JarvisStageProps {
   onToolResults: (results: ToolResult[]) => void
   onSpeakingChange: (speaking: boolean) => void
   onPendingChange: (pending: boolean) => void
+  isListening: boolean
+  onListeningChange: (listening: boolean) => void
 
   focusedPanel: PanelKey | null
   panelSignals: Record<PanelKey, number | null>
@@ -66,6 +70,8 @@ export function JarvisStage({
   onToolResults,
   onSpeakingChange,
   onPendingChange,
+  isListening,
+  onListeningChange,
   focusedPanel,
   panelSignals,
   onFocusPanel,
@@ -75,7 +81,21 @@ export function JarvisStage({
   liveNews,
   livePortfolio,
 }: JarvisStageProps) {
+  const chatRef = useRef<ChatThreadHandle>(null)
   const mobileTab: TabKey = focusedPanel ?? "chat"
+
+  // The core is the primary way to talk to Jarvis; the mic button in the
+  // chat dock stays as the secondary, keyboard-reachable path.
+  function handleCoreClick() {
+    if (isListening) {
+      chatRef.current?.stopRecording()
+      return
+    }
+    // Barge-in. Narration is cut first so the mic never records Jarvis
+    // talking over the user. Harmlessly a no-op when nothing is playing.
+    stopNarration()
+    chatRef.current?.startRecording()
+  }
 
   function handleMobileTabChange(tab: TabKey) {
     if (tab === "chat") onDefocus()
@@ -106,7 +126,26 @@ export function JarvisStage({
             real headroom against the viewport/header. */}
         <div className="relative h-[340px] w-full shrink-0 sm:h-[400px] lg:h-[480px] lg:flex-1">
           <div className="absolute top-[var(--core-anchor-top)] left-1/2 size-72 -translate-x-1/2 -translate-y-1/2 sm:size-80 lg:size-[28rem]">
-            <JarvisCore state={coreState} />
+            {/* Canvas made inert so the button below it takes the click.
+                The lattice is thin lines, so raycasting against the mesh
+                would be a coin flip; a plain circular button is reliable
+                and is focusable/announceable, which a hit-test isn't.
+                Inset to roughly the globe so it doesn't swallow the
+                empty corners of the box. */}
+            <div className="pointer-events-none absolute inset-0">
+              <JarvisCore state={coreState} />
+            </div>
+            <button
+              type="button"
+              onClick={handleCoreClick}
+              // While a request is in flight the mic is disabled anyway
+              // (chat-input is disabled by `pending`), so this only makes
+              // that existing refusal visible instead of silent.
+              disabled={coreState === "thinking"}
+              aria-label={isListening ? "Stop listening" : "Talk to J.A.R.V.I.S."}
+              aria-pressed={isListening}
+              className="absolute inset-[16%] rounded-full transition-colors hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none disabled:cursor-default disabled:hover:bg-transparent"
+            />
           </div>
 
           {PANEL_KEYS.map((key) => (
@@ -172,12 +211,14 @@ export function JarvisStage({
         }
       >
         <ChatThread
+          ref={chatRef}
           token={token}
           sessionId={sessionId}
           onAuthError={onAuthError}
           onToolResults={onToolResults}
           onSpeakingChange={onSpeakingChange}
           onPendingChange={onPendingChange}
+          onRecordingChange={onListeningChange}
         />
       </div>
     </div>

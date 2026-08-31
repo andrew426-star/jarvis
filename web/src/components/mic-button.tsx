@@ -4,12 +4,14 @@ import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from "
 import { Loader2Icon, MicIcon, MicOffIcon, SquareIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { clearMicAmplitude, setMicAmplitude } from "@/lib/audio-amplitude"
 import { JarvisAuthError, transcribe } from "@/lib/jarvis-client"
 
 type RecordState = "idle" | "recording" | "transcribing" | "error"
 
 export interface MicButtonHandle {
   startRecording: () => void
+  stopRecording: () => void
 }
 
 interface MicButtonProps {
@@ -17,6 +19,9 @@ interface MicButtonProps {
   disabled?: boolean
   onAuthError: () => void
   onTranscribed: (text: string) => void
+  // Lets the core render a "listening" state — the mic lives down here in
+  // the chat dock, but the thing you click to talk is up in the stage.
+  onRecordingChange?: (recording: boolean) => void
 }
 
 // Voice-activity heuristics — not physically calibrated against a real mic
@@ -31,7 +36,7 @@ const SILENCE_DURATION_MS = 1300
 const MAX_RECORDING_MS = 30000
 
 export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function MicButton(
-  { token, disabled, onAuthError, onTranscribed },
+  { token, disabled, onAuthError, onTranscribed, onRecordingChange },
   ref
 ) {
   const [state, setState] = useState<RecordState>("idle")
@@ -44,9 +49,17 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
   const silenceStartRef = useRef<number | null>(null)
   const recordingStartRef = useRef(0)
 
+  // Single funnel for state changes, so the outward "is it listening"
+  // signal can't drift from what the button itself is showing.
+  function applyState(next: RecordState) {
+    setState(next)
+    onRecordingChange?.(next === "recording")
+  }
+
   function stopVadLoop() {
     if (vadFrameRef.current !== null) cancelAnimationFrame(vadFrameRef.current)
     vadFrameRef.current = null
+    clearMicAmplitude()
     audioContextRef.current?.close().catch(() => {})
     audioContextRef.current = null
     analyserRef.current = null
@@ -70,6 +83,9 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
         sumSquares += normalized * normalized
       }
       const rms = Math.sqrt(sumSquares / data.length)
+      // Same number the silence check below uses — also drives the core's
+      // pulse, so the ring visibly answers your voice while listening.
+      setMicAmplitude(rms)
       const now = performance.now()
 
       if (rms > SILENCE_THRESHOLD) {
@@ -124,33 +140,33 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
         stopVadLoop()
         stream.getTracks().forEach((track) => track.stop())
         const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" })
-        setState("transcribing")
+        applyState("transcribing")
         try {
           const text = await transcribe(audioBlob, token)
-          setState("idle")
+          applyState("idle")
           if (text.trim()) onTranscribed(text.trim())
         } catch (err) {
           if (err instanceof JarvisAuthError) {
             onAuthError()
             return
           }
-          setState("error")
-          setTimeout(() => setState("idle"), 2500)
+          applyState("error")
+          setTimeout(() => applyState("idle"), 2500)
         }
       }
 
       recorderRef.current = recorder
       recorder.start()
-      setState("recording")
+      applyState("recording")
     } catch {
       // getUserMedia rejected — permission denied or no mic available.
-      setState("error")
-      setTimeout(() => setState("idle"), 2500)
+      applyState("error")
+      setTimeout(() => applyState("idle"), 2500)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, disabled, token])
 
-  useImperativeHandle(ref, () => ({ startRecording }), [startRecording])
+  useImperativeHandle(ref, () => ({ startRecording, stopRecording }), [startRecording])
 
   function handleClick() {
     if (state === "idle") startRecording()

@@ -9,7 +9,7 @@ import * as THREE from "three"
 
 import { audioAmplitude } from "@/lib/audio-amplitude"
 
-export type CoreState = "idle" | "thinking" | "speaking"
+export type CoreState = "idle" | "thinking" | "speaking" | "listening"
 
 interface StateParams {
   rotationSpeed: number
@@ -21,6 +21,10 @@ const STATE_PARAMS: Record<CoreState, StateParams> = {
   idle: { rotationSpeed: 0.15, pulseFreq: 0.6, pulseAmp: 0.15 },
   thinking: { rotationSpeed: 0.4, pulseFreq: 2.5, pulseAmp: 0.35 },
   speaking: { rotationSpeed: 0.25, pulseFreq: 4.5, pulseAmp: 0.5 },
+  // Attentive rather than busy: slower than thinking, and a low pulseAmp
+  // on purpose — while listening the visible motion should come from the
+  // user's own voice (audioAmplitude), not from a baseline sine.
+  listening: { rotationSpeed: 0.18, pulseFreq: 1.2, pulseAmp: 0.12 },
 }
 
 // K.I.V.'s HUD green palette (globals.css --kv-glow / --kv-mint) — untouched.
@@ -383,15 +387,18 @@ function CoreMesh({ state, bootProgressRef }: CoreMeshProps) {
     }
     const flickering = t < flickerEndRef.current
 
-    // Real narration amplitude (see audio-amplitude.ts) dominates the
-    // fixed sine pulse while speaking — smoothed so individual audio
-    // frames don't read as jitter. Outside "speaking," rawAudio is 0 and
-    // this collapses back to the original fixed pulse exactly.
-    const rawAudio = state === "speaking" ? audioAmplitude.current : 0
+    // Real amplitude (see audio-amplitude.ts) dominates the fixed sine
+    // pulse — smoothed so individual audio frames don't read as jitter.
+    // Two sources feed it and never overlap: narration while speaking,
+    // and the mic's own VAD while listening. In every other state
+    // rawAudio is 0 and this collapses back to the fixed pulse exactly.
+    const isAudioReactive = state === "speaking" || state === "listening"
+    const rawAudio = isAudioReactive ? audioAmplitude.current : 0
     smoothedAudioRef.current = THREE.MathUtils.damp(smoothedAudioRef.current, rawAudio, 6, delta)
     const basePulse = Math.sin(t * params.pulseFreq) * params.pulseAmp
-    const pulse =
-      state === "speaking" ? THREE.MathUtils.lerp(basePulse, smoothedAudioRef.current, 0.75) : basePulse
+    const pulse = isAudioReactive
+      ? THREE.MathUtils.lerp(basePulse, smoothedAudioRef.current, 0.75)
+      : basePulse
 
     rings.forEach((ring, i) => {
       const dip = flickering && flickerIndicesRef.current.has(i) ? 0.82 : 1
@@ -536,7 +543,12 @@ function TransparentBackground() {
 // real idle/thinking/speaking transitions. Owning the instance directly
 // sidesteps that library internal entirely; mutating bloomEffect.intensity
 // in useFrame is the same pattern already used everywhere else here.
-const BLOOM_INTENSITY: Record<CoreState, number> = { idle: 1.3, thinking: 1.75, speaking: 2.05 }
+const BLOOM_INTENSITY: Record<CoreState, number> = {
+  idle: 1.3,
+  thinking: 1.75,
+  speaking: 2.05,
+  listening: 1.9,
+}
 const BOOT_FLASH_PEAK = 2.6
 
 function BloomDriver({ state, bootProgressRef }: { state: CoreState; bootProgressRef: React.RefObject<number> }) {

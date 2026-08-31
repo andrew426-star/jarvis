@@ -6,6 +6,7 @@ import { BotIcon, Loader2Icon, PauseIcon, UserIcon, Volume2Icon } from "lucide-r
 import { ToolBadge } from "@/components/tool-badge"
 import { Button } from "@/components/ui/button"
 import { startAudioAnalysis, stopAudioAnalysis } from "@/lib/audio-amplitude"
+import { clearNarration, registerNarration, stopNarration } from "@/lib/narration"
 import { JarvisAuthError, speak } from "@/lib/jarvis-client"
 
 export interface ChatMessageData {
@@ -50,11 +51,11 @@ export function ChatMessage({
 
   async function playSpeech(auto: boolean) {
     if (audioState === "loading") return
+    // Routed through the shared handle rather than pausing directly, so
+    // the local button and a barge-in from the core take the exact same
+    // path and can't leave the registry pointing at dead audio.
     if (audioState === "playing") {
-      audioRef.current?.pause()
-      stopAudioAnalysis()
-      setAudioState("idle")
-      onSpeakingChange?.(false)
+      stopNarration()
       return
     }
 
@@ -64,7 +65,20 @@ export function ChatMessage({
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
       audioRef.current = audio
+
+      // Interrupted from outside: pause() deliberately does NOT fire
+      // onended, so onAutoPlayEnded stays unfired and the mic is not
+      // reopened behind the barge-in that is already opening it.
+      const stopPlayback = () => {
+        audio.pause()
+        URL.revokeObjectURL(url)
+        stopAudioAnalysis()
+        setAudioState("idle")
+        onSpeakingChange?.(false)
+      }
+
       audio.onended = () => {
+        clearNarration(stopPlayback)
         URL.revokeObjectURL(url)
         stopAudioAnalysis()
         setAudioState("idle")
@@ -72,6 +86,7 @@ export function ChatMessage({
         if (auto) onAutoPlayEnded?.()
       }
       await audio.play()
+      registerNarration(stopPlayback)
       startAudioAnalysis(audio)
       setAudioState("playing")
       onSpeakingChange?.(true)

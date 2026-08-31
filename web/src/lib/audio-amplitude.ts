@@ -60,3 +60,24 @@ export function stopAudioAnalysis() {
   rafId = null
   audioAmplitude.current = 0
 }
+
+// --- Mic side ---------------------------------------------------------
+// While recording, the core should react to *your* voice the same way it
+// reacts to narration. mic-button.tsx's VAD loop already computes a
+// per-frame RMS, so rather than standing up a second analyser this just
+// feeds that existing number into the same singleton. The two are
+// mutually exclusive in time: a barge-in stops narration before the mic
+// opens, so nothing races over this value.
+
+// Gain is uncalibrated, same caveat as mic-button.tsx's VAD constants —
+// speech RMS lands well below 1.0, so it needs a lift to read as motion
+// on the core at all. Clamped so a shout can't blow the pulse out.
+const MIC_GAIN = 2.5
+
+export function setMicAmplitude(rms: number) {
+  audioAmplitude.current = Math.min(1, rms * MIC_GAIN)
+}
+
+export function clearMicAmplitude() {
+  audioAmplitude.current = 0
+}

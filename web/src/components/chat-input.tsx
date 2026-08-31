@@ -12,14 +12,16 @@ interface ChatInputProps {
   token: string
   onAuthError: () => void
   onSend: (message: string, viaVoice: boolean) => void
+  onRecordingChange?: (recording: boolean) => void
 }
 
 export interface ChatInputHandle {
   startRecording: () => void
+  stopRecording: () => void
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
-  { disabled, token, onAuthError, onSend },
+  { disabled, token, onAuthError, onSend, onRecordingChange },
   ref
 ) {
   const [value, setValue] = useState("")
@@ -43,6 +45,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     ref,
     () => ({
       startRecording: () => micRef.current?.startRecording(),
+      stopRecording: () => micRef.current?.stopRecording(),
     }),
     []
   )
@@ -63,6 +66,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         disabled={disabled}
         onAuthError={onAuthError}
         onTranscribed={(text) => onSend(text, true)}
+        onRecordingChange={onRecordingChange}
       />
       <Button type="button" size="icon" onClick={submit} disabled={disabled || !value.trim()}>
         <SendIcon />

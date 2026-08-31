@@ -32,6 +32,7 @@ const STATUS_LABEL = {
   idle: "STANDING BY",
   thinking: "PROCESSING",
   speaking: "RESPONDING",
+  listening: "LISTENING",
 } as const
 
 type BracketPosition = "tl" | "tr" | "bl" | "br"
@@ -73,6 +74,7 @@ export function JarvisConsole() {
   })
   const [isPending, setIsPending] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [isListening, setIsListening] = useState(false)
 
   const [liveMarketSnapshot, setLiveMarketSnapshot] = useState<MarketSnapshot | undefined>()
   const [liveMarketHistory, setLiveMarketHistory] = useState<MarketHistory | undefined>()
@@ -161,7 +163,16 @@ export function JarvisConsole() {
     return <LoginGate onAuthenticated={handleAuthenticated} />
   }
 
-  const coreState = isSpeaking ? "speaking" : isPending ? "thinking" : "idle"
+  // Listening outranks speaking: during a barge-in the mic opens in the
+  // same tick narration is cut, and the core should read as listening
+  // immediately rather than flickering through "responding" on the way.
+  const coreState = isListening
+    ? "listening"
+    : isSpeaking
+      ? "speaking"
+      : isPending
+        ? "thinking"
+        : "idle"
 
   return (
     <div className="relative flex h-screen w-full flex-col overflow-hidden">
@@ -189,6 +200,8 @@ export function JarvisConsole() {
           onToolResults={handleToolResults}
           onSpeakingChange={setIsSpeaking}
           onPendingChange={setIsPending}
+          isListening={isListening}
+          onListeningChange={setIsListening}
           focusedPanel={focusedPanel}
           panelSignals={panelSignals}
           onFocusPanel={handleFocusPanel}

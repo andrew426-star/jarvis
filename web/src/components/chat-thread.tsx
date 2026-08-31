@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react"
 import { WifiOffIcon } from "lucide-react"
 
 import { ChatInput, type ChatInputHandle } from "@/components/chat-input"
@@ -22,21 +22,43 @@ interface ChatThreadProps {
   onToolResults?: (results: ToolResult[]) => void
   onSpeakingChange?: (speaking: boolean) => void
   onPendingChange?: (pending: boolean) => void
+  onRecordingChange?: (recording: boolean) => void
 }
 
-export function ChatThread({
-  token,
-  sessionId,
-  onAuthError,
-  onToolResults,
-  onSpeakingChange,
-  onPendingChange,
-}: ChatThreadProps) {
+// The mic lives at the bottom of this component, but the thing you click
+// to talk is the core, several levels up in jarvis-stage.tsx — so the
+// recording controls are re-exposed here rather than staying private.
+export interface ChatThreadHandle {
+  startRecording: () => void
+  stopRecording: () => void
+}
+
+export const ChatThread = forwardRef<ChatThreadHandle, ChatThreadProps>(function ChatThread(
+  {
+    token,
+    sessionId,
+    onAuthError,
+    onToolResults,
+    onSpeakingChange,
+    onPendingChange,
+    onRecordingChange,
+  },
+  ref
+) {
   const [messages, setMessages] = useState<ChatMessageData[]>([])
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const chatInputRef = useRef<ChatInputHandle>(null)
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      startRecording: () => chatInputRef.current?.startRecording(),
+      stopRecording: () => chatInputRef.current?.stopRecording(),
+    }),
+    []
+  )
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -114,7 +136,8 @@ export function ChatThread({
         token={token}
         onAuthError={onAuthError}
         onSend={handleSend}
+        onRecordingChange={onRecordingChange}
       />
     </Card>
   )
-}
+})
