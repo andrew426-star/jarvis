@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes.google_auth import router as google_auth_router
 from app.api.routes.invoke import router as invoke_router
@@ -43,3 +46,18 @@ app.include_router(zoho_auth_router)
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+# The built frontend, served by this same process off this same port —
+# `next build` with output: "export" (web/next.config.ts) drops a plain
+# static bundle here. Mounted LAST on purpose: Starlette matches routes in
+# registration order, so every API route above still wins over this
+# catch-all "/" mount.
+#
+# html=True gives index.html for "/" and 404.html for anything unmatched.
+# The directory is absent until someone runs the frontend build, which is
+# the normal state during backend-only work and when running `next dev`
+# separately — so skip the mount instead of crashing at import time.
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "web" / "out"
+if _FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="frontend")

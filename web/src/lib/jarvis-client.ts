@@ -1,4 +1,8 @@
-const API_URL = process.env.NEXT_PUBLIC_JARVIS_API_URL
+// Empty string = same origin, which is the production shape: FastAPI
+// serves this bundle and the API off one port, so "/invoke" is already
+// the right URL. Only `next dev` on :3000 needs the variable set (to
+// http://localhost:8000) — see web/.env.example.
+const API_URL = process.env.NEXT_PUBLIC_JARVIS_API_URL ?? ""
 
 export class JarvisAuthError extends Error {
   constructor() {
