@@ -133,12 +133,7 @@ class Settings(BaseSettings):
     # machine-generated (openssl rand -hex 32) and never typed by a human.
     jarvis_access_token: str | None = None
 
-    # Post-sign-in redirect target, and CORS origin. Now that FastAPI
-    # serves the console itself, the deployed app is same-origin and this
-    # can stay unset (the login callback then bounces to a bare "/").
-    # It earns its keep for `next dev`: set it to http://localhost:3000 so
-    # sign-in lands back on the HMR server rather than on the API.
-    # Original CORS note follows — the frontend's origin (scheme+host, no
+    # CORS only — the frontend's origin (scheme+host, no
     # trailing slash). Optional so the backend still boots before the
     # frontend has a domain; until set, only http://localhost:3000
     # (hardcoded in main.py, for local frontend dev against this deployed
@@ -147,6 +142,15 @@ class Settings(BaseSettings):
     # restriction, not the actual security boundary (JARVIS_ACCESS_TOKEN
     # above is).
     jarvis_frontend_origin: str | None = None
+
+    # Where sign-in returns the browser. Deliberately NOT
+    # jarvis_frontend_origin: that one is a CORS allowance, it long
+    # outlives the host it names, and a stale value there silently
+    # redirected sign-in to a decommissioned deployment once already.
+    # Unset (the production case) means a relative redirect, which is
+    # always the host the user actually came from. Set it only for
+    # `next dev`, where the console is on :3000 and the API on :8000.
+    jarvis_login_return_origin: str | None = None
 
 
 @lru_cache

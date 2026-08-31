@@ -70,9 +70,15 @@ back in if sign-in is misconfigured:
 localStorage.setItem("jarvis_access_token", "<JARVIS_ACCESS_TOKEN>")
 ```
 
-For `next dev`, also set `JARVIS_FRONTEND_ORIGIN=http://localhost:3000` so
-sign-in redirects back to the HMR server rather than to the API, and
-register `http://localhost:8000/auth/login/callback` in Google too.
+For `next dev`, also set `JARVIS_LOGIN_RETURN_ORIGIN=http://localhost:3000`
+so sign-in redirects back to the HMR server rather than to the API, and
+register `http://localhost:8000/auth/login/callback` in Google too. In
+production leave it unset — sign-in then returns to whichever host the
+request came in on, which is always right when FastAPI serves the console.
+
+Note it is *not* `JARVIS_FRONTEND_ORIGIN`. That one is a CORS allowance
+and tends to outlive the host it names; pointing sign-in at it once sent
+users to a decommissioned deployment.
 
 ## Try the API
 

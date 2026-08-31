@@ -89,7 +89,8 @@ services:
     # The two REDIRECT_URIs above are host-dependent in the same way
     # GOOGLE_REDIRECT_URI is.
     #
-    # JARVIS_FRONTEND_ORIGIN stays absent in production, where the console
-    # is same-origin and sign-in redirects to a bare "/". It is not dead,
-    # though: `next dev` needs it set to http://localhost:3000 so sign-in
-    # lands back on the HMR server instead of on the API.
+    # JARVIS_FRONTEND_ORIGIN is CORS-only and unnecessary now that the
+    # console is same-origin. If one is set on this service from the
+    # Railway era, DELETE it — a stale value there is pure liability.
+    # Sign-in's return address is JARVIS_LOGIN_RETURN_ORIGIN, a separate
+    # setting that stays unset in production and is only for `next dev`.
