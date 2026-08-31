@@ -56,5 +56,18 @@ curl -X POST localhost:8000/invoke \
 
 ## Deploy
 
-One Railway service. `nixpacks.toml` adds Node to the build image so
-`web/` compiles during the build; `railway.json` starts uvicorn alone.
+One Render service, from `render.yaml`. The `Dockerfile` builds `web/`
+with Node 22 in a throwaway stage and ships a Python image that runs
+uvicorn alone — Node is a build-time dependency only.
+
+Docker rather than Render's native Python runtime because that runtime's
+bundled Node version is undocumented and `NODE_VERSION` is documented as
+Node-runtime-only, while Next 16 needs Node 20+.
+
+Two things do not carry over from the old Railway setup:
+
+- **Redirect URIs are host-dependent.** `GOOGLE_REDIRECT_URI` (and
+  `SPOTIFY_`/`ZOHO_` if used) must point at the Render host *and* be
+  registered as such in each provider's console.
+- **`JARVIS_FRONTEND_ORIGIN` is obsolete.** It only existed to CORS-allow
+  a separately-deployed frontend; the console is same-origin now.

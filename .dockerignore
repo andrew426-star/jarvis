@@ -1,0 +1,20 @@
+.git
+.venv
+**/__pycache__
+**/*.pyc
+
+# Rebuilt inside the image — never ship the host's copies.
+web/node_modules
+web/.next
+web/out
+**/*.tsbuildinfo
+
+# Secrets and local-only config stay out of the build context. This is
+# also what keeps NEXT_PUBLIC_JARVIS_API_URL unset during the image
+# build, so the bundle comes out same-origin.
+**/.env
+**/.env.*
+
+# Not used at runtime.
+supabase
+scripts

@@ -1,0 +1,71 @@
+# One service: the Docker image holds the built console and the API, and
+# uvicorn serves both off a single port. See Dockerfile.
+services:
+  - type: web
+    name: jarvis
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    healthCheckPath: /health
+
+    # sync: false means "prompt me, don't store it in git". Every key
+    # below has no default in app/core/config.py, so the app will not
+    # boot until all of them are set.
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: FINNHUB_API_KEY
+        sync: false
+      - key: NEWSAPI_KEY
+        sync: false
+      - key: ALPACA_API_KEY_ID
+        sync: false
+      - key: ALPACA_SECRET_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_OAUTH_STATE_SECRET
+        sync: false
+
+      # Host-dependent: must be this service's own Render URL, and the
+      # same string must be registered in the Google Cloud console.
+      # Carrying the old Railway value over will fail the OAuth callback.
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+
+      # Not optional in practice: app/core/auth.py fails CLOSED, so every
+      # route 401s until this is set. It's the passphrase typed into the
+      # console's login screen.
+      - key: JARVIS_ACCESS_TOKEN
+        sync: false
+
+    # Deliberately not listed, because they have defaults or are genuinely
+    # optional — add them in the Render dashboard if you want the feature:
+    #   ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID    -> /speak
+    #   SPOTIFY_CLIENT_ID / _SECRET / _REDIRECT_URI / _OAUTH_STATE_SECRET
+    #   ZOHO_CLIENT_ID / _SECRET / _REDIRECT_URI / _OAUTH_STATE_SECRET
+    # The two REDIRECT_URIs above are host-dependent in the same way
+    # GOOGLE_REDIRECT_URI is.
+    #
+    # JARVIS_FRONTEND_ORIGIN is intentionally absent: it only ever existed
+    # to CORS-allow a separately-deployed frontend, and the frontend is
+    # now same-origin.
