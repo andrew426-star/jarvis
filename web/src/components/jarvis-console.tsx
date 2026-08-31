@@ -59,6 +59,7 @@ export function JarvisConsole() {
   const [status, setStatus] = useState<Status>("resolving")
   const [token, setToken] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState("")
+  const [loginError, setLoginError] = useState<string | null>(null)
 
   // Replaces the old single activeTab: TabKey — focusedPanel is null in
   // the ambient state (all three panels peripheral, chat full-height) or
@@ -86,6 +87,33 @@ export function JarvisConsole() {
   // not defined`. Rendering a neutral placeholder until this runs avoids a
   // hydration mismatch.
   useEffect(() => {
+    // A completed Google sign-in lands back here as ?session=… (or
+    // ?login_error=…), since the callback has to hand the browser its
+    // credential somehow and this app talks Bearer, not cookies.
+    const params = new URLSearchParams(window.location.search)
+    const grantedSession = params.get("session")
+    const failure = params.get("login_error")
+
+    if (grantedSession || failure) {
+      // Strip it immediately: a session token sitting in the address bar
+      // ends up in history, bookmarks, and any screenshot of the app.
+      window.history.replaceState({}, "", window.location.pathname)
+    }
+
+    if (grantedSession) {
+      setStoredToken(grantedSession)
+      setToken(grantedSession)
+      setSessionId(getOrCreateSessionId())
+      setStatus("authenticated")
+      return
+    }
+
+    if (failure) {
+      setLoginError(failure)
+      setStatus("unauthenticated")
+      return
+    }
+
     const storedToken = getStoredToken()
     if (storedToken) {
       setToken(storedToken)
@@ -95,13 +123,6 @@ export function JarvisConsole() {
       setStatus("unauthenticated")
     }
   }, [])
-
-  function handleAuthenticated(newToken: string) {
-    setStoredToken(newToken)
-    setToken(newToken)
-    setSessionId(getOrCreateSessionId())
-    setStatus("authenticated")
-  }
 
   function handleAuthError() {
     clearStoredToken()
@@ -160,7 +181,7 @@ export function JarvisConsole() {
   }
 
   if (status === "unauthenticated" || !token) {
-    return <LoginGate onAuthenticated={handleAuthenticated} />
+    return <LoginGate loginError={loginError} />
   }
 
   // Listening outranks speaking: during a barge-in the mic opens in the

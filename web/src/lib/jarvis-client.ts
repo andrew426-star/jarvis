@@ -4,6 +4,12 @@
 // http://localhost:8000) — see web/.env.example.
 const API_URL = process.env.NEXT_PUBLIC_JARVIS_API_URL ?? ""
 
+// Sign-in is a full-page redirect through Google, not a fetch — the
+// browser has to leave the app, so this is a URL rather than a call.
+export function googleLoginUrl(): string {
+  return `${API_URL}/auth/login/google`
+}
+
 export class JarvisAuthError extends Error {
   constructor() {
     super("Missing or invalid access token.")

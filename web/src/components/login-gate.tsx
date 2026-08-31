@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, type FormEvent } from "react"
+import { useState } from "react"
 import { LockIcon, Loader2Icon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -11,39 +11,29 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { JarvisAuthError, JarvisNetworkError, verifyToken } from "@/lib/jarvis-client"
+import { googleLoginUrl } from "@/lib/jarvis-client"
 
-interface LoginGateProps {
-  onAuthenticated: (token: string) => void
+// Mirrors the login_error values app/api/routes/google_login.py can
+// redirect back with. Anything unrecognised falls through to a generic
+// message rather than printing a raw code at the user.
+const ERROR_MESSAGE: Record<string, string> = {
+  denied: "Sign-in was cancelled.",
+  not_allowed: "That Google account isn't authorised for this instance.",
+  bad_request: "That sign-in link expired. Try again.",
+  exchange_failed: "Google sign-in failed. Try again.",
+  not_configured: "Sign-in isn't configured on the server yet.",
 }
 
-export function LoginGate({ onAuthenticated }: LoginGateProps) {
-  const [value, setValue] = useState("")
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+interface LoginGateProps {
+  loginError?: string | null
+}
 
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault()
-    const token = value.trim()
-    if (!token || submitting) return
+export function LoginGate({ loginError }: LoginGateProps) {
+  const [redirecting, setRedirecting] = useState(false)
 
-    setSubmitting(true)
-    setError(null)
-    try {
-      await verifyToken(token)
-      onAuthenticated(token)
-    } catch (err) {
-      if (err instanceof JarvisAuthError) {
-        setError("Invalid access token.")
-      } else if (err instanceof JarvisNetworkError) {
-        setError(err.message)
-      } else {
-        setError("Something went wrong. Try again.")
-      }
-    } finally {
-      setSubmitting(false)
-    }
+  function handleSignIn() {
+    setRedirecting(true)
+    window.location.href = googleLoginUrl()
   }
 
   return (
@@ -54,24 +44,18 @@ export function LoginGate({ onAuthenticated }: LoginGateProps) {
             <LockIcon className="size-5" />
           </div>
           <CardTitle className="text-2xl text-gradient-green">J.A.R.V.I.S.</CardTitle>
-          <CardDescription>Enter your access token to continue.</CardDescription>
+          <CardDescription>Sign in with Google to continue.</CardDescription>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-            <Input
-              type="password"
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-              placeholder="Access token"
-              autoFocus
-              disabled={submitting}
-            />
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" disabled={submitting || !value.trim()} className="w-full">
-              {submitting && <Loader2Icon className="animate-spin" />}
-              {submitting ? "Verifying…" : "Unlock"}
-            </Button>
-          </form>
+        <CardContent className="flex flex-col gap-3">
+          {loginError && (
+            <p className="text-sm text-destructive">
+              {ERROR_MESSAGE[loginError] ?? "Sign-in failed. Try again."}
+            </p>
+          )}
+          <Button type="button" onClick={handleSignIn} disabled={redirecting} className="w-full">
+            {redirecting && <Loader2Icon className="animate-spin" />}
+            {redirecting ? "Redirecting…" : "Sign in with Google"}
+          </Button>
         </CardContent>
       </Card>
     </div>

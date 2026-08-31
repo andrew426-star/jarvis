@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import get_settings
+from app.core.session import is_allowed, verify_session
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -11,19 +12,38 @@ _bearer = HTTPBearer(auto_error=False)
 def require_access_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> None:
-    """Shared gate for /invoke and /speak. Fails CLOSED: if
-    JARVIS_ACCESS_TOKEN isn't set yet, every request is rejected rather
-    than left open — this is a security gate being deliberately added to
-    an already-deployed service, not a pre-existing integration (like
-    spotify_*/elevenlabs_*) whose absence should degrade gracefully.
-    """
-    settings = get_settings()
-    expected = settings.jarvis_access_token
-    provided = credentials.credentials if credentials else None
+    """Shared gate for every non-OAuth route. Two accepted credentials:
 
-    if not expected or not provided or not hmac.compare_digest(provided, expected):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or invalid access token.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    1. A Google sign-in session (app/core/session.py) — how the console
+       authenticates. The allowlist is re-checked on every request, not
+       just at sign-in, so removing an address from JARVIS_ALLOWED_EMAILS
+       takes effect immediately instead of waiting out the session.
+    2. JARVIS_ACCESS_TOKEN, the original shared secret — kept for
+       curl/scripts, which have no way to run a browser OAuth flow.
+
+    Fails CLOSED in every direction: no credential, an unconfigured
+    server, or a valid signature for a no-longer-allowed address are all
+    rejected. This guards tools that can send mail as the account owner,
+    so "open by accident" must not be reachable.
+    """
+    provided = credentials.credentials if credentials else None
+    if not provided:
+        raise _unauthorized()
+
+    session_email = verify_session(provided)
+    if session_email and is_allowed(session_email):
+        return
+
+    expected = get_settings().jarvis_access_token
+    if expected and hmac.compare_digest(provided, expected):
+        return
+
+    raise _unauthorized()
+
+
+def _unauthorized() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Missing or invalid access token.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )

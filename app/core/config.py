@@ -37,6 +37,26 @@ class Settings(BaseSettings):
     google_redirect_uri: str
     google_oauth_state_secret: str
 
+    # Sign-in is a SEPARATE Google flow from the connect flow above, and
+    # needs its own registered redirect URI. Kept apart deliberately:
+    # connect asks for the broad Gmail/Drive/Docs scopes with
+    # prompt=consent and stores a refresh token, while login asks only for
+    # `openid email` and stores nothing — folding them together would
+    # re-consent the world every time someone signs in, and risks a login
+    # callback overwriting the service connection's refresh token.
+    google_login_redirect_uri: str | None = None
+
+    # Comma-separated addresses allowed to sign in. Fails CLOSED: unset
+    # means nobody gets in, so a missing value can't silently turn a
+    # public URL into an open one (see app/core/session.py).
+    jarvis_allowed_emails: str | None = None
+
+    # HMAC key for the session tokens issued after a successful sign-in.
+    # Machine-generated (openssl rand -hex 32), never typed by a human.
+    # Rotating it invalidates every existing session at once, which is the
+    # intended revocation mechanism.
+    jarvis_session_secret: str | None = None
+
     # Same Finnhub key kiv-console already uses, reused rather than fresh.
     finnhub_api_key: str
 
@@ -95,7 +115,13 @@ class Settings(BaseSettings):
     elevenlabs_voice_id: str | None = None
     elevenlabs_model_id: str = "eleven_flash_v2_5"
 
-    # JARVIS_ACCESS_TOKEN — shared-secret gate for /invoke and /speak, added
+    # JARVIS_ACCESS_TOKEN — the ORIGINAL shared-secret gate. Google
+    # sign-in (above) is now the console's way in; this stays as the
+    # non-browser path, so curl/scripts/smoke tests keep working without
+    # running an OAuth flow. Unset it to disable that path entirely.
+    # Historical note on the comment below: it predates sign-in, when this
+    # was the only gate.
+    # shared-secret gate for /invoke and /speak, added
     # to an already-deployed service, so it must stay Optional the same way
     # spotify_*/elevenlabs_* are (a missing value can't break boot) — but
     # unlike those, an unset value here does NOT mean "degrade gracefully":
@@ -107,7 +133,12 @@ class Settings(BaseSettings):
     # machine-generated (openssl rand -hex 32) and never typed by a human.
     jarvis_access_token: str | None = None
 
-    # CORS — the deployed Next.js frontend's origin (scheme+host, no
+    # Post-sign-in redirect target, and CORS origin. Now that FastAPI
+    # serves the console itself, the deployed app is same-origin and this
+    # can stay unset (the login callback then bounces to a bare "/").
+    # It earns its keep for `next dev`: set it to http://localhost:3000 so
+    # sign-in lands back on the HMR server rather than on the API.
+    # Original CORS note follows — the frontend's origin (scheme+host, no
     # trailing slash). Optional so the backend still boots before the
     # frontend has a domain; until set, only http://localhost:3000
     # (hardcoded in main.py, for local frontend dev against this deployed

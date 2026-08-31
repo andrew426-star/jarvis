@@ -45,6 +45,35 @@ on :8000, and :3000 is already in the CORS allowlist (`app/main.py`).
 If `web/out/` has never been built, the static mount is simply skipped
 and :8000 serves the API alone.
 
+## Signing in
+
+The console authenticates with Google, restricted to an allowlist. Three
+settings turn it on, and it fails closed without them:
+
+```
+GOOGLE_LOGIN_REDIRECT_URI=https://<host>/auth/login/callback
+JARVIS_ALLOWED_EMAILS=you@example.com          # unset = nobody gets in
+JARVIS_SESSION_SECRET=$(openssl rand -hex 32)  # rotating it signs everyone out
+```
+
+`GOOGLE_LOGIN_REDIRECT_URI` must also be registered on the OAuth client in
+the Google Cloud console. It is a *second* redirect URI alongside
+`GOOGLE_REDIRECT_URI` — sign-in and the Gmail/Drive connect flow are
+separate flows with different scopes, and share nothing but the client.
+
+`JARVIS_ACCESS_TOKEN` still works as a bearer credential. Nothing types it
+into the console any more, but curl and scripts use it, and it is the way
+back in if sign-in is misconfigured:
+
+```js
+// devtools console, then reload
+localStorage.setItem("jarvis_access_token", "<JARVIS_ACCESS_TOKEN>")
+```
+
+For `next dev`, also set `JARVIS_FRONTEND_ORIGIN=http://localhost:3000` so
+sign-in redirects back to the HMR server rather than to the API, and
+register `http://localhost:8000/auth/login/callback` in Google too.
+
 ## Try the API
 
 ```

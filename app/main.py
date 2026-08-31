@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes.google_auth import router as google_auth_router
+from app.api.routes.google_login import router as google_login_router
 from app.api.routes.invoke import router as invoke_router
 from app.api.routes.panels import router as panels_router
 from app.api.routes.spotify_auth import router as spotify_auth_router
@@ -35,6 +36,7 @@ app.add_middleware(
 
 app.include_router(invoke_router)
 app.include_router(google_auth_router)
+app.include_router(google_login_router)
 app.include_router(spotify_auth_router)
 app.include_router(speak_router)
 app.include_router(verify_router)

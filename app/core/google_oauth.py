@@ -41,7 +41,12 @@ TABLE = "jarvis_google_connection"
 ROW_ID = "default"
 
 
-def generate_oauth_state() -> str:
+# Sign-in only needs to learn who you are. No offline access, so Google
+# returns no refresh token and there is nothing to store.
+GOOGLE_LOGIN_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
+
+
+def generate_oauth_state(purpose: str = "connect") -> str:
     """Stateless CSRF token — no server-side storage needed. Jarvis is
     single-user with no session model, so there's no user id to bind to
     (unlike kiv-console's state=user.id); an HMAC-signed nonce+timestamp
@@ -51,19 +56,23 @@ def generate_oauth_state() -> str:
     """
     nonce = secrets.token_urlsafe(16)
     ts = str(int(time.time()))
-    payload = f"{nonce}.{ts}"
+    # `purpose` binds the state to one flow, so a state minted for the
+    # connect flow can't be replayed against the login callback.
+    payload = f"{purpose}.{nonce}.{ts}"
     sig = hmac.new(
         get_settings().google_oauth_state_secret.encode(), payload.encode(), hashlib.sha256
     ).hexdigest()
     return f"{payload}.{sig}"
 
 
-def verify_oauth_state(state: str) -> bool:
+def verify_oauth_state(state: str, purpose: str = "connect") -> bool:
     parts = state.split(".")
-    if len(parts) != 3:
+    if len(parts) != 4:
         return False
-    nonce, ts, sig = parts
-    payload = f"{nonce}.{ts}"
+    state_purpose, nonce, ts, sig = parts
+    if not hmac.compare_digest(state_purpose, purpose):
+        return False
+    payload = f"{state_purpose}.{nonce}.{ts}"
     expected = hmac.new(
         get_settings().google_oauth_state_secret.encode(), payload.encode(), hashlib.sha256
     ).hexdigest()
@@ -91,7 +100,24 @@ def build_auth_url() -> str:
     return f"{GOOGLE_AUTH_URL}?{query}"
 
 
-def exchange_code_for_tokens(code: str) -> dict:
+def build_login_url() -> str:
+    """Sign-in flow. prompt=select_account (not consent) so returning
+    users just pick an account, and no access_type=offline since a login
+    has no reason to hold a refresh token.
+    """
+    settings = get_settings()
+    params = {
+        "client_id": settings.google_client_id,
+        "redirect_uri": settings.google_login_redirect_uri,
+        "response_type": "code",
+        "scope": " ".join(GOOGLE_LOGIN_SCOPES),
+        "prompt": "select_account",
+        "state": generate_oauth_state("login"),
+    }
+    return f"{GOOGLE_AUTH_URL}?{httpx.QueryParams(params)}"
+
+
+def exchange_code_for_tokens(code: str, redirect_uri: str | None = None) -> dict:
     settings = get_settings()
     res = httpx.post(
         GOOGLE_TOKEN_URL,
@@ -99,7 +125,9 @@ def exchange_code_for_tokens(code: str) -> dict:
             "code": code,
             "client_id": settings.google_client_id,
             "client_secret": settings.google_client_secret,
-            "redirect_uri": settings.google_redirect_uri,
+            # Google requires this to match the URI the code was issued
+            # for, which differs between the connect and login flows.
+            "redirect_uri": redirect_uri or settings.google_redirect_uri,
             "grant_type": "authorization_code",
         },
     )

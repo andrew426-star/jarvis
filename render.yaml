@@ -61,9 +61,23 @@ services:
       - key: GOOGLE_REDIRECT_URI
         sync: false
 
-      # Not optional in practice: app/core/auth.py fails CLOSED, so every
-      # route 401s until this is set. It's the passphrase typed into the
-      # console's login screen.
+      # Sign-in. Its own redirect URI, separate from the connect flow's
+      # above, and registered alongside it in the Google Cloud console:
+      #   https://<this-service>.onrender.com/auth/login/callback
+      - key: GOOGLE_LOGIN_REDIRECT_URI
+        sync: false
+      # Comma-separated addresses allowed to sign in. Unset = nobody,
+      # which locks the console (see app/core/session.py).
+      - key: JARVIS_ALLOWED_EMAILS
+        sync: false
+      # openssl rand -hex 32. Rotating it signs everyone out.
+      - key: JARVIS_SESSION_SECRET
+        sync: false
+
+      # No longer typed into the console (Google sign-in replaced that),
+      # but still the credential curl and scripts use, and the escape
+      # hatch if sign-in is ever misconfigured. Drop it to close that
+      # path entirely.
       - key: JARVIS_ACCESS_TOKEN
         sync: false
 
@@ -75,6 +89,7 @@ services:
     # The two REDIRECT_URIs above are host-dependent in the same way
     # GOOGLE_REDIRECT_URI is.
     #
-    # JARVIS_FRONTEND_ORIGIN is intentionally absent: it only ever existed
-    # to CORS-allow a separately-deployed frontend, and the frontend is
-    # now same-origin.
+    # JARVIS_FRONTEND_ORIGIN stays absent in production, where the console
+    # is same-origin and sign-in redirects to a bare "/". It is not dead,
+    # though: `next dev` needs it set to http://localhost:3000 so sign-in
+    # lands back on the HMR server instead of on the API.
