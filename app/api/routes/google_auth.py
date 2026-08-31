@@ -22,10 +22,23 @@ _UNSET = (
 )
 
 
+CONNECT_CALLBACK_PATH = "/auth/google/callback"
+
+_WRONG_PATH = (
+    "GOOGLE_REDIRECT_URI is {uri}, which is not the connect callback. It "
+    "must end with " + CONNECT_CALLBACK_PATH + ". /auth/login/callback "
+    "belongs to GOOGLE_LOGIN_REDIRECT_URI, the sign-in flow. These are two "
+    "different settings with two different paths."
+)
+
+
 @router.get("/auth/google/connect")
 def google_connect():
-    if not get_settings().google_redirect_uri:
+    uri = get_settings().google_redirect_uri
+    if not uri:
         return PlainTextResponse(_UNSET, status_code=500)
+    if not uri.rstrip("/").endswith(CONNECT_CALLBACK_PATH):
+        return PlainTextResponse(_WRONG_PATH.format(uri=uri), status_code=500)
     return RedirectResponse(build_auth_url())
 
 

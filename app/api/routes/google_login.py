@@ -26,18 +26,40 @@ def _console_url(**params: str) -> str:
     return f"{base}/?{urlencode(params)}"
 
 
+# This router owns exactly one callback path, so a redirect URI aimed
+# anywhere else is a misconfiguration that is knowable before the round
+# trip rather than after it.
+LOGIN_CALLBACK_PATH = "/auth/login/callback"
+
+
 @router.get("/auth/login/google")
 def login_start():
-    # A missing redirect URI is a server misconfiguration, not something
-    # the user did, so it says so in plain text instead of bouncing to the
-    # console. Redirecting here once produced a genuinely baffling
-    # symptom: the error landed on an old deployment that predated
-    # ?login_error and simply rendered its own stale login screen.
-    if not get_settings().google_login_redirect_uri:
+    # A missing or wrong redirect URI is a server misconfiguration, not
+    # something the user did, so it says so in plain text instead of
+    # bouncing to the console. Redirecting here once produced a genuinely
+    # baffling symptom: the error landed on an old deployment that
+    # predated ?login_error and simply rendered its own stale login screen.
+    uri = get_settings().google_login_redirect_uri
+    if not uri:
         return PlainTextResponse(
             "Sign-in is not configured: GOOGLE_LOGIN_REDIRECT_URI is unset. "
             "Set it to this host's /auth/login/callback and register the "
             "same URL on the OAuth client in the Google Cloud console.",
+            status_code=500,
+        )
+    # Pointing this at /auth/google/callback is an easy and very confusing
+    # mistake: Google accepts the round trip, the connect handler receives
+    # a login-purpose state, refuses it, and reports "Invalid or expired
+    # request" — which describes the symptom and hides the cause. Catch it
+    # before leaving for Google, where the real reason is still obvious.
+    if not uri.rstrip("/").endswith(LOGIN_CALLBACK_PATH):
+        return PlainTextResponse(
+            f"GOOGLE_LOGIN_REDIRECT_URI is {uri}, which is not sign-in's "
+            f"callback. It must end with {LOGIN_CALLBACK_PATH}. "
+            "/auth/google/callback belongs to GOOGLE_REDIRECT_URI, the "
+            "Gmail/Drive connect flow. These are two different settings "
+            "with two different paths, and both must be registered on the "
+            "OAuth client in the Google Cloud console.",
             status_code=500,
         )
     return RedirectResponse(build_login_url())
