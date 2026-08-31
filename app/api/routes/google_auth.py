@@ -1,6 +1,7 @@
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
+from app.core.config import get_settings
 from app.core.google_oauth import (
     build_auth_url,
     exchange_code_for_tokens,
@@ -12,8 +13,19 @@ from app.core.google_oauth import (
 router = APIRouter()
 
 
+_UNSET = (
+    "Google connect is not configured: GOOGLE_REDIRECT_URI is unset. Set it "
+    "to this host's /auth/google/callback and register the same URL on the "
+    "OAuth client in the Google Cloud console. Note this is a DIFFERENT "
+    "setting from GOOGLE_LOGIN_REDIRECT_URI, which is sign-in's callback — "
+    "both must exist."
+)
+
+
 @router.get("/auth/google/connect")
-def google_connect() -> RedirectResponse:
+def google_connect():
+    if not get_settings().google_redirect_uri:
+        return PlainTextResponse(_UNSET, status_code=500)
     return RedirectResponse(build_auth_url())
 
 
@@ -23,6 +35,8 @@ def google_connect() -> RedirectResponse:
 def google_callback(code: str | None = None, state: str | None = None, error: str | None = None):
     if error:
         return HTMLResponse(f"<h1>Connection failed</h1><p>{error}</p>", status_code=400)
+    if not get_settings().google_redirect_uri:
+        return PlainTextResponse(_UNSET, status_code=500)
     if not code or not state or not verify_oauth_state(state):
         return HTMLResponse("<h1>Connection failed</h1><p>Invalid or expired request.</p>", status_code=400)
 

@@ -34,8 +34,15 @@ class Settings(BaseSettings):
     # in jarvis_google_connection, not kiv-console's calendar_connections.
     google_client_id: str
     google_client_secret: str
-    google_redirect_uri: str
     google_oauth_state_secret: str
+
+    # Optional, despite the connect flow being unusable without it. It was
+    # required once, and a deploy where it went missing crashed the whole
+    # service at import — sign-in, chat, panels and voice all died for a
+    # setting only /auth/google/connect reads. Failing fast is worth it
+    # for config the app cannot run without; this is not that, so the
+    # connect route reports it instead and everything else keeps serving.
+    google_redirect_uri: str | None = None
 
     # Sign-in is a SEPARATE Google flow from the connect flow above, and
     # needs its own registered redirect URI. Kept apart deliberately:
