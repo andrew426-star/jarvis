@@ -1,11 +1,20 @@
 # One service: the Docker image holds the built console and the API, and
 # uvicorn serves both off a single port. See Dockerfile.
+#
+# NOTE: the live srv-daapqpegekts738ig3l0 service was created by hand in
+# the dashboard, not from this file, so today this Blueprint is inert —
+# Render ignores render.yaml for services it doesn't manage. It is kept
+# as the source of truth for the intended shape (and the env-var list),
+# and is what a from-scratch recreate should use.
 services:
   - type: web
     name: jarvis
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: starter
+    # Matches the live service. Free spins down when idle, so the first
+    # request after a quiet period eats a ~50s cold start before the
+    # console renders at all.
+    plan: free
     region: oregon
     healthCheckPath: /health
 
