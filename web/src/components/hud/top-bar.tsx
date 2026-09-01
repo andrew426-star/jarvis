@@ -2,8 +2,7 @@
 
 
 import { useClock } from "@/lib/use-clock"
-import { useJarvis, type TabKey } from "@/lib/store"
-import { useAnimatedNumber } from "@/lib/use-animated-number"
+import { CONTEXT_WINDOW_TURNS, useJarvis, type TabKey } from "@/lib/store"
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "markets", label: "Markets" },
@@ -11,13 +10,12 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "assets", label: "Assets" },
 ]
 
-function Metric({ label, value }: { label: string; value: number }) {
-  const animated = useAnimatedNumber(value)
+function Metric({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div className="flex min-w-0 items-center" style={{ gap: "var(--sp-1)" }}>
       <span
         className="size-2 shrink-0 rounded-full"
-        style={{ background: "var(--accent)", opacity: 0.6 }}
+        style={{ background: color ?? "var(--accent)", opacity: 0.7 }}
       />
       <span className="t-label truncate-1" style={{ color: "var(--text-secondary)" }}>
         {label}
@@ -27,46 +25,17 @@ function Metric({ label, value }: { label: string; value: number }) {
         style={{
           fontFamily: "var(--font-jetbrains), monospace",
           fontSize: "12px",
-          color: "var(--accent)",
+          color: color ?? "var(--accent)",
         }}
       >
-        {Math.round(animated)}%
+        {value}
       </span>
     </div>
   )
 }
 
-function WindowControls() {
-  const buttons = [
-    { key: "min", hover: "var(--accent)" },
-    { key: "max", hover: "var(--accent)" },
-    { key: "close", hover: "var(--error)" },
-  ]
-  return (
-    <div className="flex items-center" style={{ gap: "var(--sp-2)" }}>
-      {buttons.map((button) => (
-        <button
-          key={button.key}
-          type="button"
-          aria-label={button.key}
-          className="size-3 shrink-0 cursor-pointer rounded-full transition-all duration-200"
-          style={{ border: "1px solid rgba(122, 138, 154, 0.3)", background: "transparent" }}
-          onMouseEnter={(event) => {
-            event.currentTarget.style.borderColor = button.hover
-            event.currentTarget.style.boxShadow = `0 0 8px ${button.hover}`
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.borderColor = "rgba(122, 138, 154, 0.3)"
-            event.currentTarget.style.boxShadow = "none"
-          }}
-        />
-      ))}
-    </div>
-  )
-}
-
 export function TopBar() {
-  const { activeTab, setActiveTab, mode, toggleMode, metrics } = useJarvis()
+  const { activeTab, setActiveTab, mode, toggleMode, signals } = useJarvis()
   // 0 until the first client tick - see use-clock.ts for why the clock
   // is an external store rather than state driven by an effect.
   const epoch = useClock()
@@ -143,7 +112,7 @@ export function TopBar() {
         </span>
       </div>
 
-      {/* Right: mode toggle, metrics, window controls */}
+      {/* Right: mode toggle and live link health */}
       <div className="relative flex min-w-0 shrink-0 items-center" style={{ gap: "var(--sp-4)" }}>
         <button
           type="button"
@@ -156,12 +125,32 @@ export function TopBar() {
         </button>
 
         <div className="hidden items-center lg:flex" style={{ gap: "var(--sp-3)" }}>
-          <Metric label="CPU" value={metrics.cpu} />
-          <Metric label="MEM" value={metrics.mem} />
-          <Metric label="NET" value={metrics.net} />
+          <Metric
+            label="LINK"
+            value={signals.link === "up" ? "UP" : signals.link === "down" ? "DOWN" : "IDLE"}
+            color={
+              signals.link === "up"
+                ? "var(--success)"
+                : signals.link === "down"
+                  ? "var(--error)"
+                  : "var(--text-secondary)"
+            }
+          />
+          <Metric
+            label="LAT"
+            value={signals.latencyMs === null ? "--" : `${signals.latencyMs}ms`}
+            color={
+              signals.latencyMs === null
+                ? "var(--text-secondary)"
+                : signals.latencyMs > 1000
+                  ? "var(--error)"
+                  : signals.latencyMs > 300
+                    ? "var(--warning)"
+                    : "var(--success)"
+            }
+          />
+          <Metric label="CTX" value={`${signals.turns}/${CONTEXT_WINDOW_TURNS}`} />
         </div>
-
-        <WindowControls />
       </div>
     </header>
   )

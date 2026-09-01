@@ -1,15 +1,14 @@
 "use client"
 
-import { useJarvis } from "@/lib/store"
+import { CONTEXT_WINDOW_TURNS, useJarvis } from "@/lib/store"
 import { useAnimatedNumber } from "@/lib/use-animated-number"
 
-// Six gauge segments around the reactor.
+// Six gauge segments around the reactor, all reading something real.
 //
 // Labels are HTML positioned over the SVG, not <text> inside it. SVG
-// text has no text-overflow, so a label that outgrows its slot silently
-// clips mid-glyph - which is precisely how "SESSION" became "SSION" and
-// "HEAP" became "HEAF". As HTML they get a real 60px box with ellipsis,
-// and every label here is <= 4 characters besides.
+// text has no text-overflow, so a label that outgrows its slot clips
+// mid-glyph - which is how "SESSION" became "SSION" and "HEAP" became
+// "HEAF". Every label here is <= 5 characters besides.
 
 const RADIUS = 118
 const SEG_SPAN = 48
@@ -18,12 +17,15 @@ const LABEL_RADIUS = RADIUS + 26
 const VIEW = 320
 const C = VIEW / 2
 
+// Past this the backend is almost certainly cold-starting rather than
+// merely slow, which is a different problem and worth showing as one.
+const LATENCY_CEILING_MS = 1500
+
 function polar(cx: number, cy: number, radius: number, degrees: number) {
   const radians = ((degrees - 90) * Math.PI) / 180
   return { x: cx + radius * Math.cos(radians), y: cy + radius * Math.sin(radians) }
 }
 
-/** Standard SVG arc between two angles, drawn clockwise. */
 function describeArc(
   cx: number,
   cy: number,
@@ -37,85 +39,80 @@ function describeArc(
   return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 0 ${end.x} ${end.y}`
 }
 
-type Severity = "normal" | "warning" | "critical"
+type Severity = "normal" | "warning" | "critical" | "dim"
 
 const SEVERITY_COLOR: Record<Severity, string> = {
   normal: "var(--success)",
   warning: "var(--warning)",
   critical: "var(--error)",
+  dim: "var(--text-secondary)",
 }
 
 interface Segment {
-  /** Max 6 characters, per the label rule. */
   label: string
   readout: string
-  /** 0-1, how much of the arc fills. */
   fraction: number
   severity: Severity
 }
 
-/** Higher is worse (cpu, mem, temp). */
-function loadSeverity(value: number, warn: number, crit: number): Severity {
-  if (value >= crit) return "critical"
-  if (value >= warn) return "warning"
-  return "normal"
-}
-
-/** Higher is better (net, pwr, shld). */
-function reserveSeverity(value: number, warn: number, crit: number): Severity {
-  if (value <= crit) return "critical"
-  if (value <= warn) return "warning"
-  return "normal"
-}
-
 export function StatusRing({ visible }: { visible: boolean }) {
-  const metrics = useJarvis((state) => state.metrics)
+  const signals = useJarvis((state) => state.signals)
 
-  const cpu = useAnimatedNumber(metrics.cpu)
-  const mem = useAnimatedNumber(metrics.mem)
-  const net = useAnimatedNumber(metrics.net)
-  const temp = useAnimatedNumber(metrics.temp)
-  const pwr = useAnimatedNumber(metrics.pwr)
-  const shld = useAnimatedNumber(metrics.shld)
+  const latency = useAnimatedNumber(signals.latencyMs ?? 0)
+  const turns = useAnimatedNumber(signals.turns)
+  const tools = useAnimatedNumber(signals.toolsUsed.length)
+  const fps = useAnimatedNumber(signals.fps)
+
+  const latencySeverity: Severity =
+    signals.latencyMs === null
+      ? "dim"
+      : signals.latencyMs > 1000
+        ? "critical"
+        : signals.latencyMs > 300
+          ? "warning"
+          : "normal"
 
   const segments: Segment[] = [
     {
-      label: "CPU",
-      readout: `${Math.round(cpu)}%`,
-      fraction: cpu / 100,
-      severity: loadSeverity(cpu, 70, 88),
+      label: "LINK",
+      readout: signals.link === "up" ? "UP" : signals.link === "down" ? "DOWN" : "IDLE",
+      fraction: signals.link === "up" ? 1 : signals.link === "down" ? 0.08 : 0.4,
+      severity: signals.link === "up" ? "normal" : signals.link === "down" ? "critical" : "dim",
     },
     {
-      label: "MEM",
-      readout: `${Math.round(mem)}%`,
-      fraction: mem / 100,
-      severity: loadSeverity(mem, 75, 90),
+      label: "LAT",
+      readout: signals.latencyMs === null ? "--" : `${Math.round(latency)}ms`,
+      // Inverted: a full arc means fast, which is what an instrument
+      // showing health rather than magnitude should do.
+      fraction:
+        signals.latencyMs === null ? 0 : 1 - Math.min(1, signals.latencyMs / LATENCY_CEILING_MS),
+      severity: latencySeverity,
     },
     {
-      label: "NET",
-      readout: `${Math.round(net)}%`,
-      fraction: net / 100,
-      severity: reserveSeverity(net, 40, 20),
+      label: "CTX",
+      readout: `${Math.round(turns)}/${CONTEXT_WINDOW_TURNS}`,
+      fraction: Math.min(1, signals.turns / CONTEXT_WINDOW_TURNS),
+      // Filling the window is normal operation, not a fault - it only
+      // means the oldest turns are about to roll out of memory.
+      severity: signals.turns >= CONTEXT_WINDOW_TURNS ? "warning" : "normal",
     },
     {
-      label: "TEMP",
-      // Normalised against a 0-80C span so the arc is readable; the
-      // readout stays in real degrees.
-      readout: `${Math.round(temp)}°C`,
-      fraction: Math.min(1, temp / 80),
-      severity: loadSeverity(temp, 70, 80),
+      label: "TOOLS",
+      readout: `${Math.round(tools)}`,
+      fraction: Math.min(1, signals.toolsUsed.length / 8),
+      severity: signals.toolsUsed.length > 0 ? "normal" : "dim",
     },
     {
-      label: "PWR",
-      readout: `${Math.round(pwr)}%`,
-      fraction: pwr / 100,
-      severity: reserveSeverity(pwr, 40, 20),
+      label: "VOICE",
+      readout: `${Math.round(signals.voice * 100)}%`,
+      fraction: signals.voice,
+      severity: signals.voice > 0.02 ? "normal" : "dim",
     },
     {
-      label: "SHLD",
-      readout: `${Math.round(shld)}%`,
-      fraction: shld / 100,
-      severity: reserveSeverity(shld, 60, 30),
+      label: "FPS",
+      readout: `${Math.round(fps)}`,
+      fraction: Math.min(1, signals.fps / 60),
+      severity: signals.fps >= 50 ? "normal" : signals.fps >= 30 ? "warning" : "critical",
     },
   ]
 
@@ -146,7 +143,6 @@ export function StatusRing({ visible }: { visible: boolean }) {
                   fill="none"
                   stroke={SEVERITY_COLOR[segment.severity]}
                   strokeWidth={5}
-                  strokeLinecap="butt"
                 />
               )}
             </g>
@@ -154,7 +150,6 @@ export function StatusRing({ visible }: { visible: boolean }) {
         })}
       </svg>
 
-      {/* Labels as HTML, so overflow rules actually apply. */}
       {segments.map((segment, index) => {
         const mid = index * (SEG_SPAN + SEG_GAP) + SEG_SPAN / 2
         const point = polar(50, 50, (LABEL_RADIUS / VIEW) * 100, mid)

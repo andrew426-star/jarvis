@@ -8,6 +8,13 @@ const API_URL = process.env.NEXT_PUBLIC_JARVIS_API_URL ?? ""
 
 // Sign-in is a full-page redirect through Google, not a fetch — the
 // browser has to leave the app, so this is a URL rather than a call.
+// Empty in production (same origin). Surfaced so the settings panel can
+// show which backend it is actually talking to, and so the OAuth connect
+// links resolve correctly under `next dev` too.
+export function apiOrigin(): string {
+  return API_URL
+}
+
 export function googleLoginUrl(): string {
   return `${API_URL}/auth/login/google`
 }

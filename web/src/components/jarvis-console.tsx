@@ -32,6 +32,7 @@ import {
   type PortfolioResult,
   type ToolResult,
 } from "@/lib/jarvis-client"
+import { audioAmplitude } from "@/lib/audio-amplitude"
 import { stopNarration } from "@/lib/narration"
 import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store"
 import { useBoot } from "@/lib/use-boot"
@@ -107,17 +108,27 @@ export function JarvisConsole() {
 
   // Keyed on the token so signing out and back in remounts the shell and
   // replays the boot sequence rather than snapping to a live HUD.
-  return <Shell key={token} token={token} sessionId={sessionId} onAuthError={handleAuthError} />
+  return (
+    <Shell
+      key={token}
+      token={token}
+      sessionId={sessionId}
+      onAuthError={handleAuthError}
+      onSignOut={handleAuthError}
+    />
+  )
 }
 
 function Shell({
   token,
   sessionId,
   onAuthError,
+  onSignOut,
 }: {
   token: string
   sessionId: string
   onAuthError: () => void
+  onSignOut: () => void
 }) {
   const boot = useBoot()
   const micRef = useRef<MicButtonHandle>(null)
@@ -126,9 +137,15 @@ function Shell({
     mode,
     activeTab,
     listening,
+    gridVisible,
     setStatus: setAgentStatus,
-    rerollMetrics,
+    setTurns,
+    addToolsUsed,
+    setFps,
+    setVoice,
+    setLinkDown,
     pushLog,
+    notify,
   } = useJarvis()
 
   const [messages, setMessages] = useState<ChatMessageData[]>([])
@@ -156,11 +173,35 @@ function Shell({
     setAgentStatus(agentStatus)
   }, [agentStatus, setAgentStatus])
 
-  // Simulated host metrics, on the spec's 5s cadence.
+  // Real render health and voice level, sampled twice a second. The
+  // reactor and the EQ read amplitude directly at frame rate; only the
+  // gauge needs to go through React, and 2Hz is enough for a dial with a
+  // CSS transition on it.
   useEffect(() => {
-    const id = window.setInterval(rerollMetrics, 5000)
-    return () => window.clearInterval(id)
-  }, [rerollMetrics])
+    let frames = 0
+    let lastSample = performance.now()
+    let raf = 0
+
+    const tick = (now: number) => {
+      frames += 1
+      const elapsed = now - lastSample
+      if (elapsed >= 500) {
+        setFps(Math.round((frames * 1000) / elapsed))
+        setVoice(audioAmplitude.current)
+        frames = 0
+        lastSample = now
+      }
+      raf = requestAnimationFrame(tick)
+    }
+
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [setFps, setVoice])
+
+  // Assistant turns held in the backend's rolling context window.
+  useEffect(() => {
+    setTurns(messages.filter((message) => message.role === "assistant").length)
+  }, [messages, setTurns])
 
   function handleToolResults(results: ToolResult[]) {
     let firstPanel: TabKey | null = null
@@ -172,7 +213,16 @@ function Shell({
       const mapped = TOOL_PANEL_MAP[entry.name]
       if (mapped && !firstPanel) firstPanel = mapped
       pushLog("OK", `Tool ${entry.name}`)
+
+      // A tool that ran but failed is worth surfacing - it is the
+      // difference between "Jarvis did not answer" and "Alpaca is down".
+      const payload = entry.result as { ok?: boolean; error?: string } | null
+      if (payload && payload.ok === false) {
+        notify("warning", `${entry.name} failed`, payload.error ?? "The tool returned an error.")
+        pushLog("WARN", `${entry.name} returned an error`)
+      }
     }
+    addToolsUsed(results.map((entry) => entry.name))
     if (firstPanel) useJarvis.getState().setActiveTab(firstPanel)
   }
 
@@ -200,18 +250,33 @@ function Shell({
         },
       ])
       if (result.tool_results.length > 0) handleToolResults(result.tool_results)
+
+      // Render's free tier sleeps after 15 minutes. A multi-second first
+      // call is the instance waking up, not Jarvis thinking slowly, and
+      // saying so is more useful than a gauge pegged at red.
+      const elapsed = useJarvis.getState().signals.latencyMs
+      if (elapsed !== null && elapsed > 1500) {
+        notify(
+          "info",
+          "Backend cold start",
+          `First call took ${(elapsed / 1000).toFixed(1)}s. Later ones will be quick.`
+        )
+      }
     } catch (err) {
       if (err instanceof JarvisAuthError) {
         pushLog("ERR", "Session rejected")
+        notify("warning", "Session expired", "Sign in again to continue.")
         onAuthError()
         return
       }
+      if (err instanceof JarvisNetworkError) setLinkDown()
       const message =
         err instanceof JarvisNetworkError || err instanceof JarvisApiError
           ? err.message
           : "Something went wrong."
       setError(message)
       pushLog("ERR", message)
+      notify("warning", "Request failed", message)
     } finally {
       setPending(false)
     }
@@ -232,7 +297,7 @@ function Shell({
 
   return (
     <div className="hud-grid">
-      <HolographicGrid serious={serious} />
+      <HolographicGrid serious={serious} visible={gridVisible} />
       <DataStream visible={boot.streams} serious={serious} />
 
       {/* Step 2 of the boot: a single line draws across the centre.
@@ -273,7 +338,7 @@ function Shell({
         transition={{ duration: 0.3, ease: "easeOut", delay: 0.08 }}
         style={{ zIndex: 20, display: "flex" }}
       >
-        <LeftPanel />
+        <LeftPanel token={token} onAuthError={onAuthError} />
       </motion.div>
 
       {/* Centre column. Flex rather than the spec's absolute positioning:
@@ -372,7 +437,7 @@ function Shell({
         />
       </motion.div>
 
-      <SettingsPanel />
+      <SettingsPanel sessionId={sessionId} onSignOut={onSignOut} />
       <GlobalEffects />
     </div>
   )

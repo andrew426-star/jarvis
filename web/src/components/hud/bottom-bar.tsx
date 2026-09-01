@@ -1,37 +1,61 @@
 "use client"
 
 import { useRef, useState, type KeyboardEvent } from "react"
-import { AppWindowIcon, CameraIcon, SearchIcon, SettingsIcon } from "lucide-react"
+import { BriefcaseIcon, MailIcon, SettingsIcon, TrendingUpIcon } from "lucide-react"
 
 import { MicButton, type MicButtonHandle } from "@/components/mic-button"
 import { useJarvis } from "@/lib/store"
 
+// The spec's Search / Screenshot / Open App buttons had nothing behind
+// them - a browser tab cannot screenshot itself or launch a desktop app,
+// and "search" duplicates what the agent already does with web_research.
+// These three are real one-shot prompts into /invoke instead, which is
+// what a chief-of-staff HUD actually wants a hotkey for.
 interface QuickAction {
   key: string
   label: string
-  Icon: typeof SearchIcon
+  prompt: string
+  Icon: typeof MailIcon
 }
 
 const ACTIONS: QuickAction[] = [
-  { key: "search", label: "Web Search", Icon: SearchIcon },
-  { key: "screenshot", label: "Screenshot", Icon: CameraIcon },
-  { key: "app", label: "Open App", Icon: AppWindowIcon },
-  { key: "settings", label: "Settings", Icon: SettingsIcon },
+  {
+    key: "brief",
+    label: "Morning brief",
+    prompt: "Give me my morning briefing: calendar, inbox, and anything urgent.",
+    Icon: BriefcaseIcon,
+  },
+  {
+    key: "markets",
+    label: "Market check",
+    prompt: "How are the markets doing right now, and how is my portfolio positioned?",
+    Icon: TrendingUpIcon,
+  },
+  {
+    key: "mail",
+    label: "Inbox scan",
+    prompt: "Anything in my inbox that actually needs me today?",
+    Icon: MailIcon,
+  },
 ]
 
 function ActionButton({
-  action,
+  label,
+  Icon,
   onClick,
+  disabled,
 }: {
-  action: QuickAction
+  label: string
+  Icon: typeof MailIcon
   onClick: () => void
+  disabled?: boolean
 }) {
   const [showTip, setShowTip] = useState(false)
   const timerRef = useRef<number | null>(null)
 
   function enter() {
     // 500ms delay, so sweeping the cursor across the row does not fire
-    // four tooltips in sequence.
+    // every tooltip in sequence.
     timerRef.current = window.setTimeout(() => setShowTip(true), 500)
   }
   function leave() {
@@ -44,14 +68,15 @@ function ActionButton({
       <button
         type="button"
         onClick={onClick}
+        disabled={disabled}
         onMouseEnter={enter}
         onMouseLeave={leave}
         onFocus={() => setShowTip(true)}
         onBlur={leave}
-        aria-label={action.label}
+        aria-label={label}
         className="btn btn-icon"
       >
-        <action.Icon size={16} />
+        <Icon size={16} />
       </button>
       {showTip && (
         <div
@@ -67,7 +92,7 @@ function ActionButton({
             zIndex: 50,
           }}
         >
-          {action.label}
+          {label}
         </div>
       )}
     </div>
@@ -165,12 +190,17 @@ export function BottomBar({ token, disabled, onSend, onAuthError, micRef }: Bott
         {ACTIONS.map((action) => (
           <ActionButton
             key={action.key}
-            action={action}
-            onClick={() => {
-              if (action.key === "settings") setSettingsOpen(true)
-            }}
+            label={action.label}
+            Icon={action.Icon}
+            disabled={disabled}
+            onClick={() => onSend(action.prompt, false)}
           />
         ))}
+        <ActionButton
+          label="Settings"
+          Icon={SettingsIcon}
+          onClick={() => setSettingsOpen(true)}
+        />
       </div>
     </footer>
   )

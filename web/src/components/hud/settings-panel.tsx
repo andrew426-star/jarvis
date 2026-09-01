@@ -2,277 +2,224 @@
 
 import { useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { ChevronDownIcon, XIcon } from "lucide-react"
+import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react"
 
-import { useJarvis } from "@/lib/store"
+import { apiOrigin } from "@/lib/jarvis-client"
+import { CONTEXT_WINDOW_TURNS, useJarvis } from "@/lib/store"
 
-// Slide-in from the right, accordion sections, one open at a time.
-// Everything in here is presentational: it is the settings surface the
-// spec asks for, not a wired-up configuration system, and nothing it
-// shows is read back by the backend.
+// Everything in this panel is either wired to something real or is not
+// here at all.
+//
+// The v2 spec asked for seven sections - voice model, LLM provider, wake
+// phrase, personality, integrations, memory stats, appearance. Five of
+// them had nothing behind them: the model and provider are server-side
+// config this app cannot set, there is no wake-word engine, and the
+// memory counts were invented. A settings screen whose controls do
+// nothing is worse than a short one, because it teaches you the app
+// lies. What replaced them are the three things that genuinely exist and
+// previously had no UI at all: the OAuth connect flows, the session, and
+// live diagnostics.
 
-const LLM_PROVIDERS = ["Groq", "OpenRouter", "Ollama", "Claude", "ChatGPT", "Gemini"]
-const INTEGRATIONS = ["Spotify", "Email", "Notion", "Google Drive", "Composio"]
-const SWATCHES = ["#00d4ff", "#00ff88", "#ffaa00", "#ff3333", "#0080ff"]
+interface Connection {
+  key: string
+  label: string
+  path: string
+  note: string
+}
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+// These endpoints are real (app/api/routes/google_auth.py,
+// spotify_auth.py, zoho_auth.py) and until now were reachable only by
+// typing the URL by hand.
+const CONNECTIONS: Connection[] = [
+  { key: "google", label: "Google", path: "/auth/google/connect", note: "Gmail, Calendar, Drive" },
+  { key: "spotify", label: "Spotify", path: "/auth/spotify/connect", note: "Playback control" },
+  { key: "zoho", label: "Zoho Mail", path: "/auth/zoho/connect", note: "Inbox, read-only" },
+]
+
+function Row({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div className="flex min-w-0 items-center justify-between" style={{ gap: "var(--sp-2)" }}>
       <span className="t-label truncate-1" style={{ color: "var(--text-secondary)" }}>
         {label}
       </span>
-      <div className="shrink-0">{children}</div>
-    </div>
-  )
-}
-
-function Slider({ label, initial }: { label: string; initial: number }) {
-  const [value, setValue] = useState(initial)
-  return (
-    <div className="flex flex-col" style={{ gap: "var(--sp-1)" }}>
-      <div className="flex items-center justify-between">
-        <span className="t-label" style={{ color: "var(--text-secondary)" }}>
-          {label}
-        </span>
-        <span className="t-label" style={{ color: "var(--accent)" }}>
-          {value}
-        </span>
-      </div>
-      <input
-        type="range"
-        min={0}
-        max={100}
-        value={value}
-        onChange={(event) => setValue(Number(event.target.value))}
-        aria-label={label}
-        className="w-full cursor-pointer"
-        style={{ accentColor: "var(--accent)" }}
-      />
-    </div>
-  )
-}
-
-function Toggle({ label, initial }: { label: string; initial: boolean }) {
-  const [on, setOn] = useState(initial)
-  return (
-    <Row label={label}>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={on}
-        aria-label={label}
-        onClick={() => setOn((prev) => !prev)}
-        className="relative cursor-pointer"
+      <span
+        className="truncate-1"
         style={{
-          width: "36px",
-          height: "18px",
-          borderRadius: "var(--radius)",
-          border: `1px solid rgba(var(--accent-rgb), ${on ? 1 : 0.4})`,
-          background: on ? "rgba(var(--accent-rgb), 0.15)" : "transparent",
-          transition: "all 200ms ease",
-        }}
-      >
-        <span
-          className="absolute top-1/2"
-          style={{
-            width: "10px",
-            height: "10px",
-            left: on ? "22px" : "3px",
-            transform: "translateY(-50%)",
-            background: "var(--accent)",
-            transition: "left 200ms ease",
-          }}
-        />
-      </button>
-    </Row>
-  )
-}
-
-interface Section {
-  key: string
-  title: string
-  render: () => React.ReactNode
-}
-
-const SECTIONS: Section[] = [
-  {
-    key: "voice",
-    title: "Voice Configuration",
-    render: () => (
-      <>
-        <Row label="MODEL">
-          <select
-            aria-label="Voice model"
-            className="cursor-pointer"
-            style={{
-              background: "transparent",
-              border: "1px solid rgba(var(--accent-rgb), 0.4)",
-              color: "var(--accent)",
-              fontSize: "11px",
-              padding: "2px 6px",
-            }}
-          >
-            <option>eleven_flash_v2_5</option>
-            <option>eleven_turbo_v2</option>
-            <option>eleven_multilingual_v2</option>
-          </select>
-        </Row>
-        <Slider label="SPEED" initial={50} />
-        <Slider label="PITCH" initial={50} />
-        <button type="button" className="btn" style={{ padding: "6px 12px" }}>
-          Test Voice
-        </button>
-      </>
-    ),
-  },
-  {
-    key: "llm",
-    title: "LLM Provider",
-    render: () => <ProviderPills />,
-  },
-  {
-    key: "wake",
-    title: "Wake Phrase",
-    render: () => (
-      <input
-        defaultValue="Jarvis"
-        aria-label="Wake phrase"
-        style={{
-          width: "100%",
-          background: "rgba(10, 14, 26, 0.6)",
-          border: "1px solid rgba(var(--accent-rgb), 0.2)",
-          color: "var(--text-primary)",
-          fontSize: "13px",
-          padding: "6px var(--sp-2)",
-          outline: "none",
-        }}
-      />
-    ),
-  },
-  {
-    key: "personality",
-    title: "Personality",
-    render: () => (
-      <textarea
-        readOnly
-        rows={6}
-        aria-label="System prompt"
-        value={
-          "You are J.A.R.V.I.S., Andrew's personal AI chief-of-staff.\nAddress him as sir. Be concise, dry, and unfailingly competent.\nNever speculate where you can check."
-        }
-        style={{
-          width: "100%",
-          resize: "none",
-          background: "rgba(10, 14, 26, 0.6)",
-          border: "1px solid rgba(var(--accent-rgb), 0.2)",
-          color: "var(--text-secondary)",
           fontFamily: "var(--font-jetbrains), monospace",
-          fontSize: "11px",
-          lineHeight: 1.5,
-          padding: "var(--sp-2)",
-          outline: "none",
+          fontSize: "12px",
+          color: color ?? "var(--text-primary)",
+          maxWidth: "60%",
+          textAlign: "right",
         }}
-      />
-    ),
-  },
-  {
-    key: "integrations",
-    title: "Integrations",
-    render: () => (
-      <>
-        {INTEGRATIONS.map((name, index) => (
-          <Toggle key={name} label={name} initial={index < 3} />
-        ))}
-      </>
-    ),
-  },
-  {
-    key: "memory",
-    title: "Memory",
-    render: () => (
-      <>
-        <Row label="FACTS">
-          <span className="t-label" style={{ color: "var(--accent)" }}>
-            47
-          </span>
-        </Row>
-        <Row label="CONVOS">
-          <span className="t-label" style={{ color: "var(--accent)" }}>
-            312
-          </span>
-        </Row>
-        <Row label="LAST">
-          <span className="t-label" style={{ color: "var(--accent)" }}>
-            2h ago
-          </span>
-        </Row>
-      </>
-    ),
-  },
-  {
-    key: "appearance",
-    title: "Appearance",
-    render: () => <Appearance />,
-  },
-]
-
-function ProviderPills() {
-  const [selected, setSelected] = useState("Groq")
-  return (
-    <div className="flex flex-wrap" style={{ gap: "var(--sp-2)" }}>
-      {LLM_PROVIDERS.map((provider) => (
-        <button
-          key={provider}
-          type="button"
-          onClick={() => setSelected(provider)}
-          data-active={selected === provider}
-          className="btn"
-          style={{ padding: "4px 10px" }}
-        >
-          {provider}
-        </button>
-      ))}
+        title={value}
+      >
+        {value}
+      </span>
     </div>
   )
 }
 
-function Appearance() {
-  const [swatch, setSwatch] = useState(SWATCHES[0])
+function Connections() {
   return (
     <>
-      <div className="flex" style={{ gap: "var(--sp-2)" }}>
-        {SWATCHES.map((color) => (
-          <button
-            key={color}
-            type="button"
-            aria-label={`Accent ${color}`}
-            onClick={() => setSwatch(color)}
-            className="cursor-pointer rounded-full"
-            style={{
-              width: "24px",
-              height: "24px",
-              background: "transparent",
-              border: `1px solid ${color}`,
-              boxShadow: swatch === color ? `0 0 10px ${color}` : "none",
-            }}
-          >
+      {CONNECTIONS.map((connection) => (
+        <a
+          key={connection.key}
+          href={`${apiOrigin()}${connection.path}`}
+          className="btn"
+          style={{ justifyContent: "space-between", padding: "var(--sp-2) var(--sp-2)" }}
+        >
+          <span className="flex min-w-0 flex-col items-start">
+            <span className="truncate-1">{connection.label}</span>
             <span
-              className="block rounded-full"
-              style={{ width: "100%", height: "100%", background: color, opacity: 0.35 }}
-            />
-          </button>
-        ))}
-      </div>
-      <Toggle label="GRID" initial />
-      <Slider label="ANIM SPEED" initial={70} />
+              className="truncate-1"
+              style={{
+                fontSize: "11px",
+                letterSpacing: 0,
+                textTransform: "none",
+                color: "var(--text-secondary)",
+              }}
+            >
+              {connection.note}
+            </span>
+          </span>
+          <ExternalLinkIcon size={13} className="shrink-0" />
+        </a>
+      ))}
+      <p
+        className="wrap-words"
+        style={{ fontSize: "11px", color: "var(--text-secondary)", lineHeight: 1.4 }}
+      >
+        Opens Google&apos;s consent screen. Connection state lives server-side; this app cannot
+        read it back yet.
+      </p>
     </>
   )
 }
 
-export function SettingsPanel() {
+function Session({ sessionId, onSignOut }: { sessionId: string; onSignOut: () => void }) {
+  const signals = useJarvis((state) => state.signals)
+  return (
+    <>
+      <Row label="TURNS" value={`${signals.turns} / ${CONTEXT_WINDOW_TURNS}`} color="var(--accent)" />
+      <Row label="TOOLS" value={`${signals.toolsUsed.length}`} />
+      <Row label="ID" value={sessionId.slice(0, 8) || "--"} />
+      <button type="button" onClick={onSignOut} className="btn" style={{ padding: "6px 12px" }}>
+        Sign Out
+      </button>
+    </>
+  )
+}
+
+function Diagnostics() {
+  const signals = useJarvis((state) => state.signals)
+  const history = signals.latencyHistory
+  const average = history.length
+    ? Math.round(history.reduce((total, value) => total + value, 0) / history.length)
+    : null
+
+  return (
+    <>
+      <Row
+        label="LINK"
+        value={signals.link.toUpperCase()}
+        color={
+          signals.link === "up"
+            ? "var(--success)"
+            : signals.link === "down"
+              ? "var(--error)"
+              : "var(--text-secondary)"
+        }
+      />
+      <Row label="LAST" value={signals.latencyMs === null ? "--" : `${signals.latencyMs}ms`} />
+      <Row label="AVG" value={average === null ? "--" : `${average}ms`} />
+      <Row label="PEAK" value={history.length ? `${Math.max(...history)}ms` : "--"} />
+      <Row label="CALLS" value={`${history.length}`} />
+      <Row label="API" value={apiOrigin() || "same-origin"} />
+      <Row label="FPS" value={`${Math.round(signals.fps)}`} />
+    </>
+  )
+}
+
+function Appearance() {
+  const mode = useJarvis((state) => state.mode)
+  const toggleMode = useJarvis((state) => state.toggleMode)
+  const gridVisible = useJarvis((state) => state.gridVisible)
+  const setGridVisible = useJarvis((state) => state.setGridVisible)
+
+  return (
+    <>
+      <div className="flex min-w-0 items-center justify-between" style={{ gap: "var(--sp-2)" }}>
+        <span className="t-label truncate-1" style={{ color: "var(--text-secondary)" }}>
+          MODE
+        </span>
+        <button type="button" onClick={toggleMode} className="btn" style={{ padding: "4px 12px" }}>
+          {mode === "serious" ? "Serious" : "Normal"}
+        </button>
+      </div>
+      <div className="flex min-w-0 items-center justify-between" style={{ gap: "var(--sp-2)" }}>
+        <span className="t-label truncate-1" style={{ color: "var(--text-secondary)" }}>
+          GRID
+        </span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={gridVisible}
+          aria-label="Background grid"
+          onClick={() => setGridVisible(!gridVisible)}
+          className="relative cursor-pointer"
+          style={{
+            width: "36px",
+            height: "18px",
+            borderRadius: "var(--radius)",
+            border: `1px solid rgba(var(--accent-rgb), ${gridVisible ? 1 : 0.4})`,
+            background: gridVisible ? "rgba(var(--accent-rgb), 0.15)" : "transparent",
+            transition: "all 200ms ease",
+          }}
+        >
+          <span
+            className="absolute top-1/2"
+            style={{
+              width: "10px",
+              height: "10px",
+              left: gridVisible ? "22px" : "3px",
+              transform: "translateY(-50%)",
+              background: "var(--accent)",
+              transition: "left 200ms ease",
+            }}
+          />
+        </button>
+      </div>
+      <p
+        className="wrap-words"
+        style={{ fontSize: "11px", color: "var(--text-secondary)", lineHeight: 1.4 }}
+      >
+        Serious mode shifts the entire palette to amber. Both settings persist per browser.
+      </p>
+    </>
+  )
+}
+
+interface SettingsPanelProps {
+  sessionId: string
+  onSignOut: () => void
+}
+
+export function SettingsPanel({ sessionId, onSignOut }: SettingsPanelProps) {
   const open = useJarvis((state) => state.settingsOpen)
   const setOpen = useJarvis((state) => state.setSettingsOpen)
-  const [expanded, setExpanded] = useState<string | null>("voice")
+  const [expanded, setExpanded] = useState<string | null>("connections")
+
+  const sections = [
+    { key: "connections", title: "Connections", render: () => <Connections /> },
+    {
+      key: "session",
+      title: "Session",
+      render: () => <Session sessionId={sessionId} onSignOut={onSignOut} />,
+    },
+    { key: "diagnostics", title: "Diagnostics", render: () => <Diagnostics /> },
+    { key: "appearance", title: "Appearance", render: () => <Appearance /> },
+  ]
 
   return (
     <AnimatePresence>
@@ -325,8 +272,11 @@ export function SettingsPanel() {
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto" style={{ padding: "var(--sp-2) var(--sp-4)" }}>
-              {SECTIONS.map((section) => {
+            <div
+              className="min-h-0 flex-1 overflow-y-auto"
+              style={{ padding: "var(--sp-2) var(--sp-4)" }}
+            >
+              {sections.map((section) => {
                 const isOpen = expanded === section.key
                 return (
                   <div

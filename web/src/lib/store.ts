@@ -23,63 +23,52 @@ export interface Notification {
   kind: "info" | "success" | "warning"
 }
 
-// Ranges straight from the spec. Four of these six cannot be measured
-// from a browser - a page cannot see its host's CPU, temperature, power
-// draw or a shield that does not exist - so they are simulated within
-// these bounds. LATENCY is the exception: it is a real measurement of
-// this app's own API calls, fed in from jarvis-client.
-const RANGES = {
-  cpu: [18, 32],
-  mem: [48, 62],
-  net: [65, 95],
-  temp: [42, 52],
-  pwr: [85, 98],
-  procCount: [142, 178],
-  disk: [45, 70],
-  fps: [58, 60],
-} as const
+// Every gauge on this HUD reads something real.
+//
+// The v2 spec asked for CPU/MEM/TEMP/PWR/SHLD, but a browser cannot see
+// its host's processor, temperature or power draw, and a gauge that
+// invents its own number is decoration wearing an instrument's clothes.
+// These six are what this app genuinely observes about itself and its
+// backend.
 
-function between([lo, hi]: readonly [number, number]): number {
-  return Math.round(lo + Math.random() * (hi - lo))
-}
+/** Backend reachability, inferred from real traffic rather than polled.
+ *  Polling /health would keep a free Render instance awake around the
+ *  clock and burn the monthly instance-hour quota for a green dot. */
+export type LinkState = "up" | "down" | "idle"
 
-export interface Metrics {
-  cpu: number
-  mem: number
-  net: number
-  temp: number
-  pwr: number
-  shld: number
-  procCount: number
-  disk: number
-  fps: number
-  /** Real round trip of the last API call, in ms. Null until one runs. */
+export interface Signals {
+  link: LinkState
+  /** Round trip of the last API call, ms. Null until one runs. */
   latencyMs: number | null
+  /** Recent latencies, oldest first, for the sparkline. */
+  latencyHistory: number[]
+  /** Assistant turns held in the backend's rolling context window. */
+  turns: number
+  /** Distinct tools the agent has invoked this session. */
+  toolsUsed: string[]
+  /** Rendering health, sampled from real frame times. */
+  fps: number
+  /** Live mic / narration level, 0-1. */
+  voice: number
 }
 
-function rollMetrics(): Omit<Metrics, "latencyMs"> {
-  return {
-    cpu: between(RANGES.cpu),
-    mem: between(RANGES.mem),
-    net: between(RANGES.net),
-    temp: between(RANGES.temp),
-    pwr: between(RANGES.pwr),
-    shld: 100,
-    procCount: between(RANGES.procCount),
-    disk: between(RANGES.disk),
-    fps: between(RANGES.fps),
-  }
-}
+// Mirrors REDIS_SESSION_WINDOW_TURNS in app/core/config.py. If that is
+// raised, follow it here - the gauge would otherwise sit pinned at full
+// and quietly stop meaning anything.
+export const CONTEXT_WINDOW_TURNS = 10
+
+const LATENCY_HISTORY = 24
 
 interface JarvisState {
   mode: Mode
   status: AgentStatus
   listening: boolean
   settingsOpen: boolean
+  gridVisible: boolean
   // null = the comms terminal is showing. A tab selects a data panel
   // into the same region, and clicking the active tab returns to chat.
   activeTab: TabKey | null
-  metrics: Metrics
+  signals: Signals
   logs: LogEntry[]
   notifications: Notification[]
 
@@ -88,10 +77,16 @@ interface JarvisState {
   setStatus: (status: AgentStatus) => void
   setListening: (listening: boolean) => void
   setSettingsOpen: (open: boolean) => void
+  setGridVisible: (visible: boolean) => void
   setActiveTab: (tab: TabKey | null) => void
-  rerollMetrics: () => void
   setLatency: (ms: number) => void
+  setLinkDown: () => void
+  setTurns: (turns: number) => void
+  addToolsUsed: (names: string[]) => void
+  setFps: (fps: number) => void
+  setVoice: (level: number) => void
   pushLog: (level: LogLevel, message: string) => void
+  notify: (kind: Notification["kind"], title: string, description: string) => void
   dismissNotification: (id: string) => void
 }
 
@@ -107,43 +102,25 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   status: "idle",
   listening: false,
   settingsOpen: false,
+  // Read once at startup rather than defaulting blind, so the choice
+  // survives a reload like the mode does.
+  gridVisible: typeof window === "undefined" || localStorage.getItem("jarvis_grid") !== "off",
   activeTab: null,
-  metrics: { ...rollMetrics(), latencyMs: null },
+  signals: {
+    link: "idle",
+    latencyMs: null,
+    latencyHistory: [],
+    turns: 0,
+    toolsUsed: [],
+    fps: 60,
+    voice: 0,
+  },
 
-  // Seeded so the panel is never empty on first paint. Every message is
-  // under 38 characters, which is what fits a 220px panel at 11px mono
-  // with 12px padding - the constraint that produced "SSION 0/10" when
-  // it was not respected.
-  logs: [
-    { id: "s1", time: "00:00:04", level: "OK", message: "Render pipeline active" },
-    { id: "s2", time: "00:00:03", level: "OK", message: "Voice module ready" },
-    { id: "s3", time: "00:00:02", level: "OK", message: "Telemetry online" },
-    { id: "s4", time: "00:00:01", level: "OK", message: "Interface initialised" },
-  ],
-
-  notifications: [
-    {
-      id: "n1",
-      time: "12:00",
-      title: "Morning Briefing",
-      description: "3 meetings, 12 emails, 2 tasks due today",
-      kind: "info",
-    },
-    {
-      id: "n2",
-      time: "11:45",
-      title: "Backup Complete",
-      description: "System backup saved to local storage",
-      kind: "success",
-    },
-    {
-      id: "n3",
-      time: "10:30",
-      title: "Update Available",
-      description: "Firmware update v2.4.1 ready to install",
-      kind: "warning",
-    },
-  ],
+  // Both start empty and fill from real events. Seeding them with
+  // invented entries ("Backup Complete", "Firmware update v2.4.1") would
+  // make the panel look busy while telling you nothing about Jarvis.
+  logs: [],
+  notifications: [],
 
   setMode: (mode) => {
     if (typeof document !== "undefined") {
@@ -166,13 +143,45 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   setStatus: (status) => set({ status }),
   setListening: (listening) => set({ listening }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+
+  setGridVisible: (gridVisible) => {
+    try {
+      localStorage.setItem("jarvis_grid", gridVisible ? "on" : "off")
+    } catch {
+      // Preference cannot be persisted; it still applies this session.
+    }
+    set({ gridVisible })
+  },
   setActiveTab: (activeTab) => set({ activeTab }),
 
-  rerollMetrics: () =>
-    set((state) => ({ metrics: { ...rollMetrics(), latencyMs: state.metrics.latencyMs } })),
-
   setLatency: (ms) =>
-    set((state) => ({ metrics: { ...state.metrics, latencyMs: Math.round(ms) } })),
+    set((state) => {
+      const rounded = Math.round(ms)
+      return {
+        signals: {
+          ...state.signals,
+          link: "up",
+          latencyMs: rounded,
+          latencyHistory: [...state.signals.latencyHistory, rounded].slice(-LATENCY_HISTORY),
+        },
+      }
+    }),
+
+  setLinkDown: () => set((state) => ({ signals: { ...state.signals, link: "down" } })),
+
+  setTurns: (turns) => set((state) => ({ signals: { ...state.signals, turns } })),
+
+  addToolsUsed: (names) =>
+    set((state) => ({
+      signals: {
+        ...state.signals,
+        toolsUsed: Array.from(new Set([...state.signals.toolsUsed, ...names])),
+      },
+    })),
+
+  setFps: (fps) => set((state) => ({ signals: { ...state.signals, fps } })),
+
+  setVoice: (voice) => set((state) => ({ signals: { ...state.signals, voice } })),
 
   pushLog: (level, message) =>
     set((state) => ({
@@ -188,6 +197,20 @@ export const useJarvis = create<JarvisState>((set, get) => ({
         },
         ...state.logs,
       ].slice(0, MAX_LOGS),
+    })),
+
+  notify: (kind, title, description) =>
+    set((state) => ({
+      notifications: [
+        {
+          id: crypto.randomUUID(),
+          time: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+          title,
+          description,
+          kind,
+        },
+        ...state.notifications,
+      ].slice(0, MAX_NOTIFICATIONS),
     })),
 
   dismissNotification: (id) =>
