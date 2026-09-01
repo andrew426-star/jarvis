@@ -258,3 +258,28 @@ export async function getPortfolio(token: string): Promise<PortfolioResult> {
   const res = await jarvisFetch("/panels/portfolio", token, { method: "GET" })
   return res.json()
 }
+
+// --- Integration health -----------------------------------------------
+// Backed by GET /status (app/api/routes/status.py). Authenticated,
+// because it reveals which accounts are linked; returns presence and
+// identity only, never a token.
+
+export type ConnectionStatus = "connected" | "disconnected" | "not_configured" | "unknown"
+
+export interface ConnectionInfo {
+  provider: string
+  status: ConnectionStatus
+  /** Email or display name of the linked account, when there is one. */
+  account: string | null
+  updated_at: string | null
+}
+
+export interface StatusResult {
+  ok: boolean
+  connections: ConnectionInfo[]
+}
+
+export async function getStatus(token: string): Promise<StatusResult> {
+  const res = await jarvisFetch("/status", token, { method: "GET" })
+  return res.json()
+}

@@ -4,7 +4,7 @@ import { useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react"
 
-import { apiOrigin } from "@/lib/jarvis-client"
+import { apiOrigin, type ConnectionStatus } from "@/lib/jarvis-client"
 import { CONTEXT_WINDOW_TURNS, useJarvis } from "@/lib/store"
 
 // Everything in this panel is either wired to something real or is not
@@ -59,39 +59,78 @@ function Row({ label, value, color }: { label: string; value: string; color?: st
   )
 }
 
+const STATUS_STYLE: Record<ConnectionStatus, { color: string; text: string }> = {
+  connected: { color: "var(--success)", text: "LINKED" },
+  disconnected: { color: "var(--warning)", text: "NOT LINKED" },
+  not_configured: { color: "var(--text-secondary)", text: "NO CREDS" },
+  unknown: { color: "var(--text-secondary)", text: "UNKNOWN" },
+}
+
 function Connections() {
+  const connections = useJarvis((state) => state.connections)
+
   return (
     <>
-      {CONNECTIONS.map((connection) => (
-        <a
-          key={connection.key}
-          href={`${apiOrigin()}${connection.path}`}
-          className="btn"
-          style={{ justifyContent: "space-between", padding: "var(--sp-2) var(--sp-2)" }}
-        >
-          <span className="flex min-w-0 flex-col items-start">
-            <span className="truncate-1">{connection.label}</span>
+      {CONNECTIONS.map((connection) => {
+        const live = connections?.find((entry) => entry.provider === connection.key)
+        const status: ConnectionStatus | null = live?.status ?? null
+        const style = status ? STATUS_STYLE[status] : null
+        // Nothing to connect to when the server has no credentials for
+        // it - offering the link would just walk into a 500.
+        const linkable = status !== "not_configured"
+
+        return (
+          <div key={connection.key} className="flex flex-col" style={{ gap: "var(--sp-1)" }}>
+            <div className="flex min-w-0 items-center justify-between" style={{ gap: "var(--sp-2)" }}>
+              <div className="flex min-w-0 items-center" style={{ gap: "var(--sp-1)" }}>
+                <span
+                  className="size-1.5 shrink-0 rounded-full"
+                  style={{ background: style?.color ?? "var(--text-secondary)" }}
+                />
+                <span
+                  className="truncate-1"
+                  style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}
+                >
+                  {connection.label}
+                </span>
+              </div>
+              <span
+                className="t-label truncate-1 shrink-0"
+                style={{ color: style?.color ?? "var(--text-secondary)" }}
+              >
+                {connections === null ? "CHECKING" : (style?.text ?? "UNKNOWN")}
+              </span>
+            </div>
+
             <span
-              className="truncate-1"
-              style={{
-                fontSize: "11px",
-                letterSpacing: 0,
-                textTransform: "none",
-                color: "var(--text-secondary)",
-              }}
+              className="t-label truncate-1"
+              style={{ color: "var(--text-secondary)" }}
+              title={live?.account ?? connection.note}
             >
-              {connection.note}
+              {live?.account ?? connection.note}
             </span>
-          </span>
-          <ExternalLinkIcon size={13} className="shrink-0" />
-        </a>
-      ))}
+
+            {linkable && (
+              <a
+                href={`${apiOrigin()}${connection.path}`}
+                className="btn"
+                style={{ justifyContent: "space-between", padding: "4px var(--sp-2)" }}
+              >
+                <span className="truncate-1">
+                  {status === "connected" ? "Reconnect" : "Connect"}
+                </span>
+                <ExternalLinkIcon size={12} className="shrink-0" />
+              </a>
+            )}
+          </div>
+        )
+      })}
       <p
         className="wrap-words"
         style={{ fontSize: "11px", color: "var(--text-secondary)", lineHeight: 1.4 }}
       >
-        Opens Google&apos;s consent screen. Connection state lives server-side; this app cannot
-        read it back yet.
+        Live from GET /status. &quot;No creds&quot; means the server has no client ID for that
+        provider - an environment variable, not a consent screen.
       </p>
     </>
   )

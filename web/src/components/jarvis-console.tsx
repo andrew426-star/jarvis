@@ -25,6 +25,7 @@ import {
   JarvisApiError,
   JarvisAuthError,
   JarvisNetworkError,
+  getStatus,
   invoke,
   type MarketHistory,
   type MarketSnapshot,
@@ -144,6 +145,7 @@ function Shell({
     setFps,
     setVoice,
     setLinkDown,
+    setConnections,
     pushLog,
     notify,
   } = useJarvis()
@@ -197,6 +199,42 @@ function Shell({
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
   }, [setFps, setVoice])
+
+  // Integration health, once on mount. Doubles as the first real call
+  // of the session, so LINK and LAT show something true immediately
+  // rather than sitting at IDLE until the user says something.
+  useEffect(() => {
+    let cancelled = false
+
+    getStatus(token)
+      .then((result) => {
+        if (cancelled) return
+        setConnections(result.connections)
+        pushLog("OK", "Integration status read")
+
+        for (const connection of result.connections) {
+          // "not_configured" is a deployment choice, not a fault, and
+          // "unknown" means the check itself failed - neither deserves
+          // to be reported to the user as a broken integration.
+          if (connection.status !== "disconnected") continue
+          notify(
+            "warning",
+            `${connection.provider} not linked`,
+            "Connect it from Settings to let Jarvis use it."
+          )
+        }
+      })
+      .catch(() => {
+        if (cancelled) return
+        // Leaves connections null, which the panel renders as CHECKING
+        // rather than inventing a disconnected state.
+        pushLog("WARN", "Integration status unavailable")
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [token, setConnections, pushLog, notify])
 
   // Assistant turns held in the backend's rolling context window.
   useEffect(() => {

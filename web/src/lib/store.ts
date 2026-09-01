@@ -2,6 +2,8 @@
 
 import { create } from "zustand"
 
+import type { ConnectionInfo } from "@/lib/jarvis-client"
+
 export type Mode = "normal" | "serious"
 export type AgentStatus = "idle" | "listening" | "speaking" | "thinking"
 export type TabKey = "markets" | "intel" | "assets"
@@ -71,6 +73,8 @@ interface JarvisState {
   signals: Signals
   logs: LogEntry[]
   notifications: Notification[]
+  /** null until GET /status has answered once. */
+  connections: ConnectionInfo[] | null
 
   setMode: (mode: Mode) => void
   toggleMode: () => void
@@ -85,6 +89,7 @@ interface JarvisState {
   addToolsUsed: (names: string[]) => void
   setFps: (fps: number) => void
   setVoice: (level: number) => void
+  setConnections: (connections: ConnectionInfo[]) => void
   pushLog: (level: LogLevel, message: string) => void
   notify: (kind: Notification["kind"], title: string, description: string) => void
   dismissNotification: (id: string) => void
@@ -121,6 +126,7 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   // make the panel look busy while telling you nothing about Jarvis.
   logs: [],
   notifications: [],
+  connections: null,
 
   setMode: (mode) => {
     if (typeof document !== "undefined") {
@@ -182,6 +188,8 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   setFps: (fps) => set((state) => ({ signals: { ...state.signals, fps } })),
 
   setVoice: (voice) => set((state) => ({ signals: { ...state.signals, voice } })),
+
+  setConnections: (connections) => set({ connections }),
 
   pushLog: (level, message) =>
     set((state) => ({
