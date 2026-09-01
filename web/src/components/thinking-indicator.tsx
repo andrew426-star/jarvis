@@ -1,19 +1,21 @@
 // A filling block meter rather than three bouncing dots - it reads as a
-// machine working through something, which is what is actually
-// happening, and matches the segmented language of the status ring.
+// machine working through something, and matches the segmented language
+// of the status ring.
 export function ThinkingIndicator() {
   return (
-    <div className="boot-up flex items-center gap-2">
-      <span className="label-hud" style={{ color: "var(--hud)" }}>
-        Processing
+    <div className="flex items-center" style={{ gap: "var(--sp-2)" }}>
+      <span className="t-label" style={{ color: "var(--accent)" }}>
+        PROCESSING
       </span>
-      <span className="flex gap-[3px]">
+      <span className="flex" style={{ gap: "3px" }}>
         {[0, 1, 2, 3, 4, 5].map((i) => (
           <span
             key={i}
-            className="h-2 w-1 animate-pulse-dot"
+            className="anim-dot"
             style={{
-              background: "var(--hud)",
+              width: "3px",
+              height: "10px",
+              background: "var(--accent)",
               animationDelay: `${i * 110}ms`,
             }}
           />

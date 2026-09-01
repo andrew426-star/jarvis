@@ -1,10 +1,10 @@
 const TOOL_LABELS: Record<string, string> = {
   database_agent: "Contacts",
-  web_research: "Web Research",
+  web_research: "Research",
   think: "Reasoning",
-  calculator: "Calculator",
-  market_analysis: "Market Data",
-  market_history: "Market History",
+  calculator: "Calc",
+  market_analysis: "Markets",
+  market_history: "History",
   portfolio: "Portfolio",
   company_financials: "Financials",
   kivaro_pipeline: "Pipeline",
@@ -12,21 +12,24 @@ const TOOL_LABELS: Record<string, string> = {
   github: "GitHub",
   google_titan: "Google",
   spotify: "Spotify",
-  zoho_mail: "Zoho Mail",
+  zoho_mail: "Mail",
 }
 
-// Chamfered on the leading edge only - a cut corner rather than a
-// rounded pill, matching the angular language everything else uses.
+// Same language as every other interactive-looking element: transparent
+// fill, 1px accent border, 2px radius. Never a solid chip.
 export function ToolBadge({ tool }: { tool: string }) {
   return (
     <span
-      className="label-hud inline-flex items-center px-1.5 py-0.5"
+      className="t-label truncate-1 inline-flex shrink-0 items-center"
       style={{
-        color: "var(--hud)",
-        border: "1px solid hsl(var(--hue) 70% 55% / 0.35)",
-        background: "hsl(var(--hue-alt) 60% 12% / 0.6)",
-        clipPath: "polygon(5px 0, 100% 0, 100% 100%, 0 100%, 0 5px)",
+        maxWidth: "88px",
+        padding: "1px 6px",
+        border: "1px solid rgba(var(--accent-rgb), 0.4)",
+        borderRadius: "var(--radius)",
+        background: "transparent",
+        color: "var(--accent)",
       }}
+      title={TOOL_LABELS[tool] ?? tool}
     >
       {TOOL_LABELS[tool] ?? tool}
     </span>

@@ -1,20 +1,40 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { motion } from "framer-motion"
 
-import type { CoreState } from "@/components/arc-reactor"
-import { HudFrame } from "@/components/hud-frame"
-import { JarvisStage, type PanelKey } from "@/components/jarvis-stage"
+import { ArcReactor } from "@/components/hud/arc-reactor"
+import { AudioVisualizer } from "@/components/hud/audio-visualizer"
+import { BottomBar } from "@/components/hud/bottom-bar"
+import { ChatInterface } from "@/components/hud/chat-interface"
+import type { ChatMessageData } from "@/components/hud/chat-message"
+import { DataStream } from "@/components/hud/data-stream"
+import { GlobalEffects } from "@/components/hud/global-effects"
+import { HolographicGrid } from "@/components/hud/holographic-grid"
+import { LeftPanel } from "@/components/hud/left-panel"
+import { RightPanel } from "@/components/hud/right-panel"
+import { SettingsPanel } from "@/components/hud/settings-panel"
+import { StatusRing } from "@/components/hud/status-ring"
+import { TopBar } from "@/components/hud/top-bar"
 import { LoginGate } from "@/components/login-gate"
-import { ModeToggle } from "@/components/mode-toggle"
-import { BootStage, useBoot } from "@/lib/use-boot"
-import type {
-  MarketHistory,
-  MarketSnapshot,
-  NewsResult,
-  PortfolioResult,
-  ToolResult,
+import type { MicButtonHandle } from "@/components/mic-button"
+import { MarketsPanel } from "@/components/panels/markets-panel"
+import { NewsPanel } from "@/components/panels/news-panel"
+import { PortfolioPanel } from "@/components/panels/portfolio-panel"
+import {
+  JarvisApiError,
+  JarvisAuthError,
+  JarvisNetworkError,
+  invoke,
+  type MarketHistory,
+  type MarketSnapshot,
+  type NewsResult,
+  type PortfolioResult,
+  type ToolResult,
 } from "@/lib/jarvis-client"
+import { stopNarration } from "@/lib/narration"
+import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store"
+import { useBoot } from "@/lib/use-boot"
 import {
   clearSession,
   clearStoredToken,
@@ -23,20 +43,11 @@ import {
   setStoredToken,
 } from "@/lib/storage"
 
-// tool_results names that map onto a panel - the same tool a reply used
-// is the panel that should come forward.
-const TOOL_PANEL_MAP: Record<string, PanelKey> = {
+const TOOL_PANEL_MAP: Record<string, TabKey> = {
   market_analysis: "markets",
   market_history: "markets",
-  news_feed: "news",
-  portfolio: "portfolio",
-}
-
-const STATUS_LABEL: Record<CoreState, string> = {
-  idle: "Standing By",
-  thinking: "Processing",
-  speaking: "Responding",
-  listening: "Listening",
+  news_feed: "intel",
+  portfolio: "assets",
 }
 
 type Status = "resolving" | "unauthenticated" | "authenticated"
@@ -47,41 +58,36 @@ export function JarvisConsole() {
   const [sessionId, setSessionId] = useState("")
   const [loginError, setLoginError] = useState<string | null>(null)
 
-  // Resolved on mount, not read during render - localStorage does not
-  // exist during the static export, the same class of bug as `window is
-  // not defined`. Rendering a neutral placeholder until this runs avoids
-  // a hydration mismatch.
   useEffect(() => {
-    // A completed Google sign-in lands back here as ?session=... (or
-    // ?login_error=...), since the callback has to hand the browser its
-    // credential somehow and this app talks Bearer, not cookies.
+    // A completed Google sign-in lands back here as ?session=... since
+    // the callback has to hand the browser its credential somehow and
+    // this app talks Bearer, not cookies.
     const params = new URLSearchParams(window.location.search)
-    const grantedSession = params.get("session")
+    const granted = params.get("session")
     const failure = params.get("login_error")
 
-    if (grantedSession || failure) {
-      // Strip it immediately: a session token sitting in the address bar
-      // ends up in history, bookmarks, and any screenshot of the app.
+    if (granted || failure) {
+      // Strip it immediately: a session token in the address bar ends up
+      // in history, bookmarks, and any screenshot of the app.
       window.history.replaceState({}, "", window.location.pathname)
     }
 
-    if (grantedSession) {
-      setStoredToken(grantedSession)
-      setToken(grantedSession)
+    if (granted) {
+      setStoredToken(granted)
+      setToken(granted)
       setSessionId(getOrCreateSessionId())
       setStatus("authenticated")
       return
     }
-
     if (failure) {
       setLoginError(failure)
       setStatus("unauthenticated")
       return
     }
 
-    const storedToken = getStoredToken()
-    if (storedToken) {
-      setToken(storedToken)
+    const stored = getStoredToken()
+    if (stored) {
+      setToken(stored)
       setSessionId(getOrCreateSessionId())
       setStatus("authenticated")
     } else {
@@ -96,163 +102,278 @@ export function JarvisConsole() {
     setStatus("unauthenticated")
   }
 
-  if (status === "resolving") {
-    return <div className="min-h-screen" />
-  }
+  if (status === "resolving") return <div style={{ height: "100vh" }} />
+  if (status === "unauthenticated" || !token) return <LoginGate loginError={loginError} />
 
-  if (status === "unauthenticated" || !token) {
-    return <LoginGate loginError={loginError} />
-  }
-
-  // Keyed on the token so signing out and back in genuinely remounts the
-  // shell, replaying the boot sequence rather than snapping straight to
-  // a live HUD.
-  return <ConsoleShell key={token} token={token} sessionId={sessionId} onAuthError={handleAuthError} />
+  // Keyed on the token so signing out and back in remounts the shell and
+  // replays the boot sequence rather than snapping to a live HUD.
+  return <Shell key={token} token={token} sessionId={sessionId} onAuthError={handleAuthError} />
 }
 
-interface ConsoleShellProps {
+function Shell({
+  token,
+  sessionId,
+  onAuthError,
+}: {
   token: string
   sessionId: string
   onAuthError: () => void
-}
+}) {
+  const boot = useBoot()
+  const micRef = useRef<MicButtonHandle>(null)
 
-// Split out so useBoot mounts with the authenticated HUD. Run at the
-// top level it would start counting down while the login screen is
-// still up, and someone who took a minute to sign in would arrive after
-// the sequence had already finished.
-function ConsoleShell({ token, sessionId, onAuthError }: ConsoleShellProps) {
-  const { stage } = useBoot()
+  const {
+    mode,
+    activeTab,
+    listening,
+    setStatus: setAgentStatus,
+    rerollMetrics,
+    pushLog,
+  } = useJarvis()
 
-  const [activePanel, setActivePanel] = useState<PanelKey>("markets")
-  const [panelSignals, setPanelSignals] = useState<Record<PanelKey, number | null>>({
-    markets: null,
-    news: null,
-    portfolio: null,
-  })
-  const [mobileView, setMobileView] = useState<"console" | "data">("console")
-
-  const [isPending, setIsPending] = useState(false)
-  const [isSpeaking, setIsSpeaking] = useState(false)
-  const [isListening, setIsListening] = useState(false)
-  const [turns, setTurns] = useState(0)
+  const [messages, setMessages] = useState<ChatMessageData[]>([])
+  const [pending, setPending] = useState(false)
+  const [speaking, setSpeaking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const [liveMarketSnapshot, setLiveMarketSnapshot] = useState<MarketSnapshot | undefined>()
   const [liveMarketHistory, setLiveMarketHistory] = useState<MarketHistory | undefined>()
   const [liveNews, setLiveNews] = useState<NewsResult | undefined>()
   const [livePortfolio, setLivePortfolio] = useState<PortfolioResult | undefined>()
 
-  function handleToolResults(results: ToolResult[]) {
-    const touched: PanelKey[] = []
-    for (const entry of results) {
-      if (entry.name === "market_analysis") {
-        setLiveMarketSnapshot(entry.result as MarketSnapshot)
-        touched.push("markets")
-      }
-      if (entry.name === "market_history") {
-        setLiveMarketHistory(entry.result as MarketHistory)
-        touched.push("markets")
-      }
-      if (entry.name === "news_feed") {
-        setLiveNews(entry.result as NewsResult)
-        touched.push("news")
-      }
-      if (entry.name === "portfolio") {
-        setLivePortfolio(entry.result as PortfolioResult)
-        touched.push("portfolio")
-      }
-    }
-    if (touched.length === 0) return
-
-    const now = Date.now()
-    setPanelSignals((prev) => {
-      const next = { ...prev }
-      for (const key of touched) next[key] = now
-      return next
-    })
-
-    const firstMapped = results.find((entry) => TOOL_PANEL_MAP[entry.name])
-    if (firstMapped) setActivePanel(TOOL_PANEL_MAP[firstMapped.name])
-  }
-
-  function handleFocusPanel(key: PanelKey) {
-    setActivePanel(key)
-    // Opening a panel by hand is real relevance too - someone checking
-    // Assets without asking Jarvis anything should not leave the tab
-    // looking permanently dormant.
-    setPanelSignals((prev) => ({ ...prev, [key]: Date.now() }))
-  }
-
   // Listening outranks speaking: during a barge-in the mic opens in the
   // same tick narration is cut, and the reactor should read as listening
   // immediately rather than flickering through "responding" on the way.
-  const coreState: CoreState = isListening
+  const agentStatus: AgentStatus = listening
     ? "listening"
-    : isSpeaking
+    : speaking
       ? "speaking"
-      : isPending
+      : pending
         ? "thinking"
         : "idle"
 
-  const chromeUp = stage >= BootStage.Panels
+  useEffect(() => {
+    setAgentStatus(agentStatus)
+  }, [agentStatus, setAgentStatus])
+
+  // Simulated host metrics, on the spec's 5s cadence.
+  useEffect(() => {
+    const id = window.setInterval(rerollMetrics, 5000)
+    return () => window.clearInterval(id)
+  }, [rerollMetrics])
+
+  function handleToolResults(results: ToolResult[]) {
+    let firstPanel: TabKey | null = null
+    for (const entry of results) {
+      if (entry.name === "market_analysis") setLiveMarketSnapshot(entry.result as MarketSnapshot)
+      if (entry.name === "market_history") setLiveMarketHistory(entry.result as MarketHistory)
+      if (entry.name === "news_feed") setLiveNews(entry.result as NewsResult)
+      if (entry.name === "portfolio") setLivePortfolio(entry.result as PortfolioResult)
+      const mapped = TOOL_PANEL_MAP[entry.name]
+      if (mapped && !firstPanel) firstPanel = mapped
+      pushLog("OK", `Tool ${entry.name}`)
+    }
+    if (firstPanel) useJarvis.getState().setActiveTab(firstPanel)
+  }
+
+  async function handleSend(text: string, viaVoice: boolean) {
+    setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), role: "user", content: text, time: clockTime() },
+    ])
+    setPending(true)
+    setError(null)
+    pushLog("NONE", viaVoice ? "Voice command received" : "Command received")
+
+    try {
+      const result = await invoke(text, sessionId, token)
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: result.response,
+          time: clockTime(),
+          toolsUsed: result.tools_used,
+          autoPlay: true,
+          reopenMicAfter: viaVoice,
+        },
+      ])
+      if (result.tool_results.length > 0) handleToolResults(result.tool_results)
+    } catch (err) {
+      if (err instanceof JarvisAuthError) {
+        pushLog("ERR", "Session rejected")
+        onAuthError()
+        return
+      }
+      const message =
+        err instanceof JarvisNetworkError || err instanceof JarvisApiError
+          ? err.message
+          : "Something went wrong."
+      setError(message)
+      pushLog("ERR", message)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  function handleReactorToggle() {
+    if (listening) {
+      micRef.current?.stopRecording()
+      return
+    }
+    // Barge-in. Narration is cut first so the mic never records Jarvis
+    // talking over the user; a no-op when nothing is playing.
+    stopNarration()
+    micRef.current?.startRecording()
+  }
+
+  const serious = mode === "serious"
 
   return (
-    <div className="relative flex h-screen w-full flex-col overflow-hidden">
-      <HudFrame bootStage={stage} />
+    <div className="hud-grid">
+      <HolographicGrid serious={serious} />
+      <DataStream visible={boot.streams} serious={serious} />
 
-      <header
-        className="relative z-10 flex shrink-0 items-center justify-between px-5 pt-5 sm:px-9 sm:pt-7"
-        style={{
-          opacity: chromeUp ? 1 : 0,
-          transition: "opacity 600ms ease-in-out",
-        }}
+      {/* Step 2 of the boot: a single line draws across the centre.
+          scaleX, not width - rule 10 allows transform and opacity only,
+          and a width animation would relayout every frame. */}
+      {!boot.chrome && (
+        <div
+          className="pointer-events-none fixed top-1/2 right-0 left-0"
+          style={{ zIndex: 40 }}
+          aria-hidden
+        >
+          <div
+            style={{
+              height: "1px",
+              background: "var(--accent)",
+              boxShadow: "0 0 12px var(--accent)",
+              transform: `scaleX(${boot.line ? 1 : 0})`,
+              transition: "transform 300ms ease-in-out",
+            }}
+          />
+        </div>
+      )}
+
+      <motion.div
+        className="bar-full"
+        initial={{ y: -48, opacity: 0 }}
+        animate={boot.chrome ? { y: 0, opacity: 1 } : { y: -48, opacity: 0 }}
+        transition={{ duration: 0.3, ease: "easeOut" }}
+        style={{ zIndex: 20 }}
       >
-        <div className="flex items-baseline gap-3">
-          <span className="font-display text-gradient-hud text-sm sm:text-base">
-            J.A.R.V.I.S.
-          </span>
-          <span className="label-hud hidden sm:inline">Mark VII</span>
-        </div>
+        <TopBar />
+      </motion.div>
 
-        <div className="flex items-center gap-3 sm:gap-5">
-          <div className="flex items-center gap-2">
-            <span
-              className={`size-1.5 ${coreState !== "idle" ? "animate-pulse-dot" : "opacity-40"}`}
-              style={{
-                background: "var(--hud)",
-                boxShadow: coreState !== "idle" ? "0 0 8px var(--hud)" : "none",
-              }}
-            />
-            <span className="label-hud" style={{ color: "var(--hud)" }}>
-              {STATUS_LABEL[coreState]}
-            </span>
+      <motion.div
+        className="hud-side min-h-0"
+        initial={{ x: -220, opacity: 0 }}
+        animate={boot.chrome ? { x: 0, opacity: 1 } : { x: -220, opacity: 0 }}
+        transition={{ duration: 0.3, ease: "easeOut", delay: 0.08 }}
+        style={{ zIndex: 20, display: "flex" }}
+      >
+        <LeftPanel />
+      </motion.div>
+
+      {/* Centre column. Flex rather than the spec's absolute positioning:
+          absolute children cannot participate in min-h-0, so a long chat
+          would have escaped its region - which rules 1 and 2 forbid. */}
+      <main
+        className="relative flex min-h-0 flex-col overflow-hidden"
+        style={{ padding: "var(--sp-4) var(--sp-5)", gap: "var(--sp-3)", zIndex: 10 }}
+      >
+        <div className="relative flex min-h-0 flex-1 items-center justify-center">
+          <div className="relative aspect-square h-full max-h-full">
+            <StatusRing visible={boot.statusRing} />
+            <div className="absolute inset-[13%]">
+              <ArcReactor
+                status={agentStatus}
+                onToggle={handleReactorToggle}
+                ringsRevealed={boot.rings}
+              />
+            </div>
           </div>
-          <ModeToggle />
         </div>
-      </header>
 
-      <JarvisStage
-        token={token}
-        sessionId={sessionId}
-        coreState={coreState}
-        bootStage={stage}
-        onAuthError={onAuthError}
-        onToolResults={handleToolResults}
-        onSpeakingChange={setIsSpeaking}
-        onPendingChange={setIsPending}
-        onTurnsChange={setTurns}
-        turns={turns}
-        isListening={isListening}
-        onListeningChange={setIsListening}
-        activePanel={activePanel}
-        panelSignals={panelSignals}
-        onFocusPanel={handleFocusPanel}
-        mobileView={mobileView}
-        onMobileViewChange={setMobileView}
-        liveMarketSnapshot={liveMarketSnapshot}
-        liveMarketHistory={liveMarketHistory}
-        liveNews={liveNews}
-        livePortfolio={livePortfolio}
-      />
+        {/* Comms terminal, or a data panel when a tab is selected. Same
+            region either way, capped at 40% of the column so the reactor
+            is never pushed off screen. */}
+        <div
+          className="flex min-h-0 flex-col"
+          style={{
+            maxHeight: "40%",
+            opacity: boot.chat ? 1 : 0,
+            transition: "opacity 400ms ease",
+          }}
+        >
+          {activeTab === null ? (
+            <ChatInterface
+              messages={messages}
+              pending={pending}
+              error={error}
+              token={token}
+              onAuthError={onAuthError}
+              onSpeakingChange={setSpeaking}
+              onReopenMic={() => micRef.current?.startRecording()}
+            />
+          ) : (
+            <div className="card min-h-0 flex-1 overflow-y-auto" style={{ padding: "var(--sp-3)" }}>
+              <div className={activeTab === "markets" ? "" : "hidden"}>
+                <MarketsPanel
+                  token={token}
+                  onAuthError={onAuthError}
+                  liveSnapshot={liveMarketSnapshot}
+                  liveHistory={liveMarketHistory}
+                />
+              </div>
+              <div className={activeTab === "intel" ? "" : "hidden"}>
+                <NewsPanel token={token} onAuthError={onAuthError} liveNews={liveNews} />
+              </div>
+              <div className={activeTab === "assets" ? "" : "hidden"}>
+                <PortfolioPanel
+                  token={token}
+                  onAuthError={onAuthError}
+                  livePortfolio={livePortfolio}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="shrink-0">
+          <AudioVisualizer status={agentStatus} visible={boot.visualizer} />
+        </div>
+      </main>
+
+      <motion.div
+        className="hud-side min-h-0"
+        initial={{ x: 220, opacity: 0 }}
+        animate={boot.chrome ? { x: 0, opacity: 1 } : { x: 220, opacity: 0 }}
+        transition={{ duration: 0.3, ease: "easeOut", delay: 0.08 }}
+        style={{ zIndex: 20, display: "flex" }}
+      >
+        <RightPanel />
+      </motion.div>
+
+      <motion.div
+        className="bar-full"
+        initial={{ y: 56, opacity: 0 }}
+        animate={boot.chrome ? { y: 0, opacity: 1 } : { y: 56, opacity: 0 }}
+        transition={{ duration: 0.3, ease: "easeOut", delay: 0.16 }}
+        style={{ zIndex: 20 }}
+      >
+        <BottomBar
+          token={token}
+          disabled={pending}
+          onSend={handleSend}
+          onAuthError={onAuthError}
+          micRef={micRef}
+        />
+      </motion.div>
+
+      <SettingsPanel />
+      <GlobalEffects />
     </div>
   )
 }

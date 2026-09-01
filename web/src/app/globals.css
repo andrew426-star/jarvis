@@ -2,500 +2,456 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* ============================================================
+   JARVIS HUD v2
+   Every value here is from the spec. The accent is a single CSS
+   custom property so the Normal/Serious toggle is one attribute flip
+   and no component can be left holding a stale colour.
+   ============================================================ */
+
+:root {
+  /* Accent - the only thing the mode toggle changes */
+  --accent: #00d4ff;
+  --accent-rgb: 0, 212, 255;
+
+  /* Fixed palette */
+  --bg-base: #050508;
+  --bg-grad-a: #0a0e1a;
+  --bg-grad-b: #0d1117;
+  --stark-blue: #0080ff;
+  --stark-blue-deep: #0066cc;
+  --text-primary: #e0f7ff;
+  --text-secondary: #7a8a9a;
+  --warning: #ffaa00;
+  --error: #ff3333;
+  --success: #00ff88;
+
+  /* Spacing scale - 4px based. No arbitrary values anywhere. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+
+  /* Sharp, military. 2px everywhere except circular badges. */
+  --radius: 2px;
+
+  color-scheme: dark;
+
+  /* --- shadcn compatibility ---------------------------------------
+     The three data panels (markets/intel/assets) are built on shadcn
+     primitives. Rather than rewrite them, their token contract is
+     remapped onto this palette so they inherit the HUD automatically -
+     including the Normal/Serious sweep, since these all resolve
+     through --accent. */
+  --background: var(--bg-base);
+  --foreground: var(--text-primary);
+  --card: rgba(10, 14, 26, 0.5);
+  --card-foreground: var(--text-primary);
+  --popover: rgba(5, 5, 10, 0.95);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--accent);
+  --primary-foreground: var(--bg-base);
+  --secondary: rgba(10, 14, 26, 0.8);
+  --secondary-foreground: var(--text-primary);
+  --muted: rgba(10, 14, 26, 0.6);
+  --muted-foreground: var(--text-secondary);
+  --accent-foreground: var(--bg-base);
+  --destructive: var(--error);
+  --border: rgba(var(--accent-rgb), 0.15);
+  --input: rgba(var(--accent-rgb), 0.2);
+  --ring: var(--accent);
+}
+
+:root.serious {
+  --accent: #ffaa00;
+  --accent-rgb: 255, 170, 0;
+}
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-rajdhani);
-  --font-mono: var(--font-mono-hud);
-  --font-heading: var(--font-orbitron);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --color-hud: var(--hud);
-  --color-hud-dim: var(--hud-dim);
-  --color-hud-bright: var(--hud-bright);
-  --color-hud-grid: var(--hud-grid);
-  --radius-sm: 0px;
-  --radius-md: 0px;
-  --radius-lg: 0px;
-  --radius-xl: 0px;
-  --radius-2xl: 0px;
-  --radius-3xl: 0px;
-  --radius-4xl: 0px;
+  --color-textp: var(--text-primary);
+  --color-texts: var(--text-secondary);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+  --color-success: var(--success);
+  --font-display: var(--font-orbitron);
+  --font-body: var(--font-inter);
+  --font-hud: var(--font-rajdhani);
+  --font-mono: var(--font-jetbrains);
 }
 
-/* ============================================================
-   MODE - one hue channel, two settings.
-   Normal is cyan, Serious shifts to amber. Every colour below derives
-   from --hue / --hue-alt rather than being written out, so the toggle
-   is a two-number change and no component can be left behind holding
-   an old palette value.
-   ============================================================ */
-:root {
-  --hue: 190;
-  --hue-alt: 205;
-  --sat: 95%;
-
-  --hud: hsl(var(--hue) var(--sat) 55%);
-  --hud-bright: hsl(var(--hue) 100% 72%);
-  --hud-dim: hsl(var(--hue) 60% 38%);
-  --hud-grid: hsl(var(--hue-alt) 70% 30%);
-
-  --background: hsl(210 45% 3%);
-  --foreground: hsl(var(--hue) 25% 92%);
-  --card: hsl(var(--hue-alt) 45% 6% / 0.55);
-  --card-foreground: hsl(var(--hue) 25% 92%);
-  --popover: hsl(var(--hue-alt) 45% 7%);
-  --popover-foreground: hsl(var(--hue) 25% 92%);
-  --primary: hsl(var(--hue) var(--sat) 55%);
-  --primary-foreground: hsl(210 45% 3%);
-  --secondary: hsl(var(--hue-alt) 40% 11%);
-  --secondary-foreground: hsl(var(--hue) 25% 88%);
-  --muted: hsl(var(--hue-alt) 30% 12%);
-  --muted-foreground: hsl(var(--hue) 18% 58%);
-  --accent: hsl(var(--hue-alt) 90% 60%);
-  --accent-foreground: hsl(210 45% 3%);
-  --destructive: hsl(0 85% 62%);
-  --border: hsl(var(--hue) 60% 45% / 0.25);
-  --input: hsl(var(--hue) 60% 45% / 0.25);
-  --ring: hsl(var(--hue) var(--sat) 55%);
-  --radius: 0px;
+* {
+  box-sizing: border-box;
+  /* Mode switch sweeps every accent-coloured element at once. */
+  transition-property: color, border-color, background-color, box-shadow, fill, stroke;
+  transition-duration: 500ms;
+  transition-timing-function: ease;
 }
 
-:root[data-mode="serious"] {
-  --hue: 38;
-  --hue-alt: 28;
-  --sat: 100%;
-  --background: hsl(24 45% 3%);
-}
-
-/* @property makes --hue a real animatable number rather than a token
-   swap, so a mode change sweeps through the intermediate hues instead
-   of cutting. Browsers without it just get the instant switch. */
-@property --hue {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 190;
-}
-
-@property --hue-alt {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 205;
-}
-
-@layer base {
-  * {
-    @apply border-border outline-ring/50;
-    /* Sharp, mechanical motion throughout - no springs, no overshoot.
-       Set globally rather than per-component so nothing drifts back to
-       a bouncy default. */
-    transition-timing-function: ease-in-out;
-  }
-  :root {
-    transition:
-      --hue 600ms ease-in-out,
-      --hue-alt 600ms ease-in-out;
-  }
-  body {
-    @apply bg-background text-foreground;
-    font-family: var(--font-rajdhani), ui-sans-serif, system-ui, sans-serif;
-    letter-spacing: 0.01em;
-  }
-  h1, h2, h3, h4, h5, h6 {
-    font-family: var(--font-orbitron), var(--font-rajdhani), sans-serif;
-    letter-spacing: 0.08em;
-  }
-}
-
-/* ============================================================
-   TYPOGRAPHY
-   ============================================================ */
-
-.font-display {
-  font-family: var(--font-orbitron), sans-serif;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.label-hud {
-  font-family: var(--font-orbitron), sans-serif;
-  font-size: 0.5625rem;
-  line-height: 1.4;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--hud-dim);
-}
-
-.readout {
-  font-family: var(--font-mono-hud), ui-monospace, monospace;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.06em;
-}
-
-/* ============================================================
-   BACKGROUND - perspective grid, data streams, scan lines, CRT
-   ============================================================ */
-
-/* Floor and ceiling planes pitched away from the camera. The gradient
-   scrolls on background-position rather than transform, so the
-   perspective stays fixed while the grid rushes toward the horizon. */
-.perspective-grid {
-  position: absolute;
-  inset: 0;
+html,
+body {
+  height: 100%;
+  margin: 0;
+  /* The app owns the viewport; nothing scrolls at the document level. */
   overflow: hidden;
-  perspective: 340px;
-  perspective-origin: 50% 50%;
-  pointer-events: none;
 }
 
-.perspective-grid::before,
-.perspective-grid::after {
-  content: "";
-  position: absolute;
-  left: -60%;
-  width: 220%;
-  height: 190%;
-  background-image:
-    linear-gradient(hsl(var(--hue-alt) 70% 45% / 0.30) 1px, transparent 1px),
-    linear-gradient(90deg, hsl(var(--hue-alt) 70% 45% / 0.30) 1px, transparent 1px);
-  background-size: 52px 52px;
-  animation: grid-run 4s linear infinite;
-}
-
-.perspective-grid::before {
-  top: 50%;
-  transform-origin: 50% 0;
-  transform: rotateX(76deg);
-  mask-image: linear-gradient(to bottom, transparent, black 22%, black 55%, transparent 88%);
-}
-
-/* The mirrored ceiling is what sells "inside a helmet" rather than
-   "standing on a floor". */
-.perspective-grid::after {
-  bottom: 50%;
-  transform-origin: 50% 100%;
-  transform: rotateX(-76deg);
-  mask-image: linear-gradient(to top, transparent, black 22%, black 55%, transparent 88%);
-  animation-direction: reverse;
-}
-
-@keyframes grid-run {
-  from { background-position: 0 0; }
-  to   { background-position: 0 52px; }
-}
-
-/* Vertical data streams - thin falling light columns, sparse enough to
-   read as peripheral telemetry rather than a Matrix homage. */
-.data-stream {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    hsl(var(--hue) var(--sat) 60% / 0.5) 42%,
-    hsl(var(--hue) 100% 78% / 0.95) 50%,
-    hsl(var(--hue) var(--sat) 60% / 0.5) 58%,
-    transparent 100%
-  );
-  background-size: 100% 240px;
-  background-repeat: no-repeat;
-  animation-name: stream-fall;
-  animation-timing-function: linear;
-  animation-iteration-count: infinite;
-  opacity: 0.45;
-}
-
-@keyframes stream-fall {
-  from { background-position: 0 -260px; }
-  to   { background-position: 0 110vh; }
-}
-
-/* Static CRT raster plus a slow sweeping bar. Fixed and non-interactive
-   so it overlays everything without ever eating a click. */
-.crt-overlay {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 60;
-  background: repeating-linear-gradient(
-    to bottom,
-    hsl(0 0% 0% / 0.20) 0px,
-    hsl(0 0% 0% / 0.20) 1px,
-    transparent 1px,
-    transparent 3px
-  );
-}
-
-.crt-overlay::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 22vh;
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    hsl(var(--hue) var(--sat) 70% / 0.05),
-    transparent
-  );
-  animation: crt-sweep 7s linear infinite;
-}
-
-@keyframes crt-sweep {
-  from { top: -25vh; }
-  to   { top: 100vh; }
-}
-
-/* Drawn separately from .crt-overlay so the sweep above is not dimmed
-   by the vignette it passes through. */
-.crt-vignette {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 59;
-  background: radial-gradient(ellipse at center, transparent 50%, hsl(210 60% 2% / 0.88) 100%);
+body {
+  background:
+    radial-gradient(ellipse at 50% 40%, var(--bg-grad-a) 0%, var(--bg-base) 70%),
+    linear-gradient(160deg, var(--bg-grad-a), var(--bg-grad-b));
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* ============================================================
-   ANGULAR FRAMES - sharp corners, chamfered edges, bracket ticks
+   TYPOGRAPHY - the strict hierarchy. Nothing goes below 11px:
+   text that does not fit is truncated, never shrunk.
    ============================================================ */
 
-/* The corner notch is the clip-path, so the border has to be drawn by a
-   matching inset pseudo-element - border-radius plays no part anywhere
-   in this design. */
-.hud-panel {
-  position: relative;
-  background: var(--card);
-  clip-path: polygon(
-    0 10px, 10px 0,
-    calc(100% - 10px) 0, 100% 10px,
-    100% calc(100% - 10px), calc(100% - 10px) 100%,
-    10px 100%, 0 calc(100% - 10px)
-  );
-  backdrop-filter: blur(2px);
+.t-header {
+  font-family: var(--font-orbitron), sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
-.hud-panel::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  border: 1px solid hsl(var(--hue) 70% 55% / 0.35);
-  clip-path: inherit;
+.t-panel-header {
+  font-family: var(--font-orbitron), sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
 }
 
-/* Two opposing corner ticks, scalable at any size via --tick. */
-.bracket-frame {
-  position: relative;
-  --tick: 10px;
+.t-body {
+  font-family: var(--font-inter), sans-serif;
+  font-size: 13px;
+  font-weight: 400;
 }
 
-.bracket-frame::before,
-.bracket-frame::after {
-  content: "";
-  position: absolute;
-  width: var(--tick);
-  height: var(--tick);
-  border-color: var(--hud);
-  pointer-events: none;
-  opacity: 0.75;
+.t-value {
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
-.bracket-frame::before {
-  top: 0;
-  left: 0;
-  border-top: 1.5px solid;
-  border-left: 1.5px solid;
+.t-label {
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
 }
 
-.bracket-frame::after {
-  bottom: 0;
-  right: 0;
-  border-bottom: 1.5px solid;
-  border-right: 1.5px solid;
+.t-time {
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary);
 }
 
-.glow-hud {
-  box-shadow:
-    0 0 18px hsl(var(--hue) var(--sat) 55% / 0.18),
-    0 0 55px hsl(var(--hue) var(--sat) 55% / 0.07);
+.t-status {
+  font-family: var(--font-rajdhani), sans-serif;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+}
+
+/* ============================================================
+   TEXT OVERFLOW - rule 1. Single-line text truncates; multi-line
+   wraps on words. Nothing is ever allowed to spill or collide.
+   `min-width: 0` is the half everyone forgets: without it a flex
+   child refuses to shrink below its content and ellipsis never
+   triggers, which is exactly how "SSION 0/10" happened.
+   ============================================================ */
+
+.truncate-1 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wrap-words {
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ============================================================
+   BUTTONS - rule 3. One language: transparent fill, 1px accent
+   border at 40%, accent text. Emphasis raises border opacity and
+   glow. There is no filled variant, deliberately.
+   ============================================================ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  background: transparent;
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  border-radius: var(--radius);
+  color: var(--accent);
+  font-family: var(--font-orbitron), sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: all 200ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: rgba(var(--accent-rgb), 1);
+  background: rgba(var(--accent-rgb), 0.05);
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.2);
+}
+
+.btn:active:not(:disabled) {
+  background: rgba(var(--accent-rgb), 0.15);
+}
+
+.btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.btn[data-active="true"] {
+  border-color: rgba(var(--accent-rgb), 1);
+  background: rgba(var(--accent-rgb), 0.1);
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.2);
+}
+
+.btn-icon {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  flex: none;
+}
+
+.btn-circle {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  flex: none;
+  border-radius: 50%;
+}
+
+/* ============================================================
+   PANELS & CARDS
+   ============================================================ */
+
+.panel {
+  background: rgba(5, 5, 10, 0.6);
+  backdrop-filter: blur(8px);
+}
+
+.card {
+  background: rgba(10, 14, 26, 0.5);
+  border: 1px solid rgba(var(--accent-rgb), 0.15);
+  border-radius: var(--radius);
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+
+.card:hover {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.1);
+}
+
+.glow-std {
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.2);
+}
+
+.glow-intense {
+  box-shadow: 0 0 20px rgba(var(--accent-rgb), 0.4);
 }
 
 .text-glow {
-  text-shadow: 0 0 10px hsl(var(--hue) var(--sat) 60% / 0.55);
-}
-
-.text-gradient-hud {
-  background: linear-gradient(
-    100deg,
-    hsl(var(--hue) var(--sat) 55%),
-    hsl(var(--hue) 100% 78%),
-    hsl(var(--hue-alt) 90% 62%)
-  );
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  text-shadow: 0 0 8px rgba(var(--accent-rgb), 0.3);
 }
 
 /* ============================================================
-   BOOT SEQUENCE
-   Stage-gated from JS (use-boot.ts). The timings here describe only how
-   each stage plays, never when it starts.
+   BACKGROUND LAYERS
    ============================================================ */
 
-@keyframes boot-fade-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-@keyframes boot-ring-draw {
-  from { stroke-dashoffset: var(--ring-len); opacity: 0; }
-  15%  { opacity: 1; }
-  to   { stroke-dashoffset: 0; opacity: 1; }
-}
-
-@keyframes boot-slide-left {
-  from { opacity: 0; transform: translateX(-28px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes boot-slide-right {
-  from { opacity: 0; transform: translateX(28px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes boot-slide-up {
-  from { opacity: 0; transform: translateY(24px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-.boot-grid  { animation: boot-fade-in 900ms ease-in-out both; }
-.boot-left  { animation: boot-slide-left 520ms ease-in-out both; }
-.boot-right { animation: boot-slide-right 520ms ease-in-out both; }
-.boot-up    { animation: boot-slide-up 520ms ease-in-out both; }
-
-/* ============================================================
-   ARC REACTOR
-   ============================================================ */
-
-@keyframes reactor-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-
-@keyframes reactor-spin-rev {
-  from { transform: rotate(360deg); }
-  to   { transform: rotate(0deg); }
-}
-
-/* Breathing is opacity and scale only. Deliberately not a filter
-   animation: filter on an SVG this size repaints the whole subtree
-   every frame and visibly costs frames on a cold first paint. */
-@keyframes reactor-breathe {
-  0%, 100% { opacity: 0.55; transform: scale(1); }
-  50%      { opacity: 1;    transform: scale(1.045); }
-}
-
-.reactor-ring {
+/* Perspective grid. One infinite animation (1 of 3 budgeted). */
+.holo-grid {
+  position: absolute;
+  inset: -50%;
+  background-image:
+    linear-gradient(rgba(var(--accent-rgb), 1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--accent-rgb), 1) 1px, transparent 1px);
+  background-size: 50px 50px;
+  transform: perspective(500px) rotateX(60deg) translateZ(0);
   transform-origin: 50% 50%;
-  transform-box: fill-box;
+  will-change: transform;
+  animation: grid-pan 60s linear infinite;
+}
+
+@keyframes grid-pan {
+  from { transform: perspective(500px) rotateX(60deg) translateZ(0) translateY(0); }
+  to   { transform: perspective(500px) rotateX(60deg) translateZ(0) translateY(50px); }
+}
+
+/* Data streams. translateY only - never top/margin. */
+@keyframes stream-up {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-50%); }
+}
+
+.data-stream-col {
+  position: absolute;
+  top: 0;
+  font-family: var(--font-jetbrains), monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--accent);
+  white-space: pre;
+  will-change: transform;
+  animation-name: stream-up;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
 }
 
 /* ============================================================
-   TERMINAL CHAT
+   GLOBAL EFFECTS
    ============================================================ */
+
+.scanlines {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1000;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px,
+    transparent 3px,
+    rgba(var(--accent-rgb), 0.03) 3px,
+    rgba(var(--accent-rgb), 0.03) 4px
+  );
+}
+
+.vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.6) 100%);
+}
+
+/* ============================================================
+   SCROLLBARS - 4px, accent at 30%
+   ============================================================ */
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(var(--accent-rgb), 0.3);
+  border-radius: var(--radius);
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(var(--accent-rgb), 0.5); }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--accent-rgb), 0.3) transparent;
+}
+
+/* ============================================================
+   ANIMATIONS
+   Budget: 3 concurrent infinite animations on screen. Spent on the
+   grid pan, the reactor core breathe, and the status dot. Everything
+   else is either rAF-driven (canvas, reactor rings) or transient.
+   ============================================================ */
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%      { opacity: 1; transform: scale(1.06); }
+}
+
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+@keyframes ring-ping {
+  from { transform: scale(1); opacity: 0.6; }
+  to   { transform: scale(1.5); opacity: 0; }
+}
 
 @keyframes caret-blink {
   0%, 49%   { opacity: 1; }
   50%, 100% { opacity: 0; }
 }
 
-.terminal-caret {
+@keyframes bar-sweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+
+.anim-breathe { animation: breathe 2s ease-in-out infinite; }
+.anim-dot { animation: dot-pulse 2s ease-in-out infinite; }
+.anim-ping { animation: ring-ping 1.5s ease-out infinite; }
+
+.caret {
   display: inline-block;
-  width: 0.5em;
-  height: 1em;
-  margin-left: 3px;
+  width: 1px;
+  height: 13px;
+  background: var(--accent);
   vertical-align: text-bottom;
-  background: var(--hud);
   animation: caret-blink 1s step-end infinite;
 }
 
-/* Bracketed body: ticks on the leading edge only, so the speaker reads
-   at a glance without heavier chrome around every line. */
-.terminal-line {
-  position: relative;
-  padding-left: 0.85rem;
-  border-left: 1px solid hsl(var(--hue) 70% 55% / 0.28);
+/* Top bar sweep - transform only. */
+.bar-sweep {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
-.terminal-line::before,
-.terminal-line::after {
+.bar-sweep::after {
   content: "";
   position: absolute;
-  left: -1px;
-  width: 5px;
-  height: 5px;
-  border-left: 1px solid var(--hud);
-}
-
-.terminal-line::before {
   top: 0;
-  border-top: 1px solid var(--hud);
-}
-
-.terminal-line::after {
   bottom: 0;
-  border-bottom: 1px solid var(--hud);
+  width: 30%;
+  background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), 0.08), transparent);
+  animation: bar-sweep 8s linear infinite;
+  will-change: transform;
 }
 
-/* ============================================================
-   MISC
-   ============================================================ */
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 0.25; }
-  50%      { opacity: 1; }
+/* Inputs */
+input,
+select,
+textarea {
+  font-family: inherit;
+  border-radius: var(--radius);
 }
 
-.animate-pulse-dot {
-  animation: pulse-dot 1.4s ease-in-out infinite;
+input::placeholder {
+  color: var(--text-secondary);
 }
 
-.noise-overlay::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 58;
-  opacity: 0.03;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  background-size: 256px 256px;
-  mix-blend-mode: overlay;
-}
-
-/* Themed, so the chat column does not punch a bright OS-grey hole
-   through the HUD. */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: hsl(var(--hue) 60% 45% / 0.45) transparent;
+button {
+  font-family: inherit;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -505,5 +461,36 @@
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+/* ============================================================
+   MAIN GRID - 220px | 1fr | 220px over 48px | 1fr | 56px.
+   The app owns the viewport exactly; nothing scrolls at body level.
+   ============================================================ */
+
+.hud-grid {
+  display: grid;
+  grid-template-columns: 220px 1fr 220px;
+  grid-template-rows: 48px 1fr 56px;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.hud-grid > .bar-full {
+  grid-column: 1 / -1;
+}
+
+/* Below 1280 the side panels are dropped rather than reduced to 60px
+   icon strips. A donut chart, a sparkline and a scrolling log have no
+   honest single-glyph representation - a strip of icons that expand
+   nothing would be decoration pretending to be navigation. */
+@media (max-width: 1279px) {
+  .hud-grid {
+    grid-template-columns: 0 1fr 0;
+  }
+  .hud-side {
+    display: none;
   }
 }

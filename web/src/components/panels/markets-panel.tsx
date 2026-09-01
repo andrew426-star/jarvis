@@ -134,10 +134,18 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
                   key={q.symbol}
                   type="button"
                   onClick={() => loadHistory(q.symbol)}
-                  className="glow-border-hover flex flex-col items-start gap-0.5 rounded-lg p-2.5 text-left"
+                  className="card flex min-w-0 flex-col items-start gap-0.5 p-2.5 text-left"
                 >
-                  <span className="text-xs text-muted-foreground">{q.symbol}</span>
-                  <span className="font-heading text-lg">${q.price.toFixed(2)}</span>
+                  {/* truncate-1 carries min-width:0, without which this
+                      flex child refuses to shrink and a long ticker
+                      overruns the price beneath it. */}
+                  <span
+                    className="truncate-1 w-full text-xs text-muted-foreground"
+                    title={q.symbol}
+                  >
+                    {q.symbol}
+                  </span>
+                  <span className="truncate-1 w-full text-lg">${q.price.toFixed(2)}</span>
                   <span
                     className={`flex items-center gap-1 text-xs ${up ? "text-primary" : "text-destructive"}`}
                   >
@@ -163,14 +171,15 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
               placeholder="Symbol, e.g. AAPL"
               className="h-8 w-40"
             />
-            <Button
+            <button
               type="button"
-              size="sm"
+              className="btn"
+              style={{ padding: "0 var(--sp-3)" }}
               onClick={() => loadHistory(symbolInput)}
               disabled={loadingHistory || !symbolInput.trim()}
             >
               Chart
-            </Button>
+            </button>
           </div>
           {history?.ok === false && <p className="text-sm text-destructive">{history.error}</p>}
           {history?.ok && history.candles && (

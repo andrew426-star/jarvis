@@ -178,28 +178,38 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
   }
 
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      disabled={disabled || state === "transcribing"}
-      aria-label={state === "recording" ? "Stop recording" : "Record a voice message"}
-      aria-pressed={state === "recording"}
-      className="bracket-frame flex size-7 items-center justify-center transition-colors duration-200 disabled:opacity-30"
-      style={{
-        ["--tick" as string]: "5px",
-        color: state === "error" ? "var(--destructive)" : "var(--hud)",
-        background: state === "recording" ? "hsl(var(--hue) var(--sat) 55% / 0.14)" : "transparent",
-      }}
-    >
-      {state === "transcribing" ? (
-        <Loader2Icon className="size-3.5 animate-spin" />
-      ) : state === "error" ? (
-        <MicOffIcon className="size-3.5" />
-      ) : state === "recording" ? (
-        <SquareIcon className="size-3 animate-pulse-dot" />
-      ) : (
-        <MicIcon className="size-3.5" />
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={disabled || state === "transcribing"}
+        aria-label={state === "recording" ? "Stop recording" : "Record a voice message"}
+        aria-pressed={state === "recording"}
+        data-active={state === "recording"}
+        className="btn btn-circle"
+        style={state === "error" ? { color: "var(--error)", borderColor: "var(--error)" } : undefined}
+      >
+        {state === "transcribing" ? (
+          <Loader2Icon size={16} className="animate-spin" />
+        ) : state === "error" ? (
+          <MicOffIcon size={16} />
+        ) : state === "recording" ? (
+          <SquareIcon size={14} />
+        ) : (
+          <MicIcon size={16} />
+        )}
+      </button>
+
+      {/* Expanding ring while listening. Pure transform + opacity, and
+          only mounted during recording, so it never counts against the
+          three-concurrent-animation budget at rest. */}
+      {state === "recording" && (
+        <span
+          className="anim-ping pointer-events-none absolute inset-0 rounded-full"
+          style={{ border: "1px solid var(--accent)" }}
+          aria-hidden
+        />
       )}
-    </button>
+    </div>
   )
 })

@@ -2,60 +2,90 @@
 
 import { useEffect, useState } from "react"
 
-// The power-on sequence: black, then the grid, then the reactor rings
-// drawing one at a time, then the panels sliding in.
+// The power-on sequence, on the spec's schedule.
 //
-// Numeric so components can ask `stage >= BootStage.Rings` rather than
-// matching a set of string literals - adding a stage later then means
-// inserting a number, not auditing every comparison in the tree.
-export const BootStage = {
-  Black: 0,
-  Grid: 1,
-  Rings: 2,
-  Panels: 3,
-  Ready: 4,
-} as const
+// Exposed as a flat set of booleans plus a ring counter rather than a
+// single enum: several steps overlap in the timeline, and encoding that
+// as ordered stages would force components to compare against numbers
+// that no longer mean anything once a step is inserted.
+export interface BootState {
+  /** The single line that draws across the centre first. */
+  line: boolean
+  grid: boolean
+  /** 0-3, how many reactor rings have appeared, inner to outer. */
+  rings: number
+  statusRing: boolean
+  chrome: boolean
+  streams: boolean
+  chat: boolean
+  visualizer: boolean
+  done: boolean
+}
 
-export type BootStage = (typeof BootStage)[keyof typeof BootStage]
+const INITIAL: BootState = {
+  line: false,
+  grid: false,
+  rings: -1,
+  statusRing: false,
+  chrome: false,
+  streams: false,
+  chat: false,
+  visualizer: false,
+  done: false,
+}
 
-// Cumulative milliseconds from mount. Rings gets the longest slice
-// because five of them draw in sequence inside it (see arc-reactor.tsx,
-// which staggers its own children within this window).
-const SCHEDULE: ReadonlyArray<readonly [BootStage, number]> = [
-  [BootStage.Grid, 260],
-  [BootStage.Rings, 1150],
-  [BootStage.Panels, 2600],
-  [BootStage.Ready, 3200],
+const READY: BootState = {
+  line: true,
+  grid: true,
+  rings: 3,
+  statusRing: true,
+  chrome: true,
+  streams: true,
+  chat: true,
+  visualizer: true,
+  done: true,
+}
+
+// [delay from mount, patch]. Matches the spec's timings; the four ring
+// steps inside the 900-1500ms window are what "rings appear one by one"
+// means in practice.
+const SCHEDULE: [number, Partial<BootState>][] = [
+  [100, { line: true }],
+  [400, { grid: true }],
+  [900, { rings: 0 }],
+  [1050, { rings: 1 }],
+  [1200, { rings: 2 }],
+  [1350, { rings: 3 }],
+  [1500, { statusRing: true }],
+  [1900, { chrome: true }],
+  [2200, { streams: true }],
+  [2500, { chat: true }],
+  [3500, { visualizer: true, done: true }],
 ]
 
-export function useBoot(): { stage: BootStage; skip: () => void } {
-  const [stage, setStage] = useState<BootStage>(BootStage.Black)
+export function useBoot(): BootState {
+  const [state, setState] = useState<BootState>(INITIAL)
 
   useEffect(() => {
-    const timers = SCHEDULE.map(([next, at]) =>
-      window.setTimeout(() => setStage(next), at)
+    const timers = SCHEDULE.map(([at, patch]) =>
+      window.setTimeout(() => setState((prev) => ({ ...prev, ...patch })), at)
     )
 
-    // Any deliberate input cuts straight to the end. A boot animation is
-    // a delight exactly once; someone who has just reloaded for the
-    // fourth time debugging something should not have to sit through it.
-    const skipNow = () => {
+    // Any deliberate keypress cuts to the end. A boot animation is a
+    // delight exactly once; someone reloading for the fourth time while
+    // debugging should not have to sit through it again.
+    const skip = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" && event.key !== " ") return
       timers.forEach(window.clearTimeout)
-      setStage(BootStage.Ready)
+      setState(READY)
     }
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" || event.key === " ") skipNow()
-    }
-    window.addEventListener("keydown", onKey)
+    window.addEventListener("keydown", skip)
 
     return () => {
       timers.forEach(window.clearTimeout)
-      window.removeEventListener("keydown", onKey)
+      window.removeEventListener("keydown", skip)
     }
   }, [])
 
-  return {
-    stage,
-    skip: () => setStage(BootStage.Ready),
-  }
+  return state
 }

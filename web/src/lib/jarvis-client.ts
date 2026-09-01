@@ -1,4 +1,4 @@
-import { recordLatency } from "@/lib/telemetry"
+import { useJarvis } from "@/lib/store"
 
 // Empty string = same origin, which is the production shape: FastAPI
 // serves this bundle and the API off one port, so "/invoke" is already
@@ -59,7 +59,9 @@ async function jarvisFetch(path: string, token: string, init: RequestInit): Prom
   } catch {
     throw new JarvisNetworkError()
   } finally {
-    recordLatency(performance.now() - startedAt)
+    // Straight into the store rather than a separate telemetry
+    // module: one owner for every number the HUD displays.
+    useJarvis.getState().setLatency(performance.now() - startedAt)
   }
 
   if (res.status === 401) throw new JarvisAuthError()
