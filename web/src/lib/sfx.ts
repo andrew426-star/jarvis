@@ -91,37 +91,61 @@ function startBed(): void {
   bedGain.gain.value = 0.0
   bedGain.connect(master)
 
-  // Filtered air: white noise with everything below 2 kHz removed, which
-  // reads as a clean room tone rather than hiss.
+  // A trace of filtered air, well under the hum. At 0.05 this was the
+  // loudest thing in the bed and read as static; it is here to give the
+  // tone somewhere to sit, not to be heard on its own.
   const air = context.createBufferSource()
   air.buffer = noiseBuffer(context)
   air.loop = true
   const airFilter = context.createBiquadFilter()
   airFilter.type = "highpass"
-  airFilter.frequency.value = 2400
+  airFilter.frequency.value = 3200
   const airGain = context.createGain()
-  airGain.gain.value = 0.05
+  airGain.gain.value = 0.011
   air.connect(airFilter)
   airFilter.connect(airGain)
   airGain.connect(bedGain)
   air.start()
 
-  // A quiet fifth, slowly breathing. Two partials only - more turns into
-  // a chord, and a chord has an opinion the room shouldn't have.
-  for (const [freq, gain] of [[196, 0.035], [294, 0.022]] as const) {
-    const osc = context.createOscillator()
-    osc.type = "sine"
-    osc.frequency.value = freq
+  // The hum. A fundamental with its harmonics falling away above it -
+  // that decreasing series is what the ear reads as one warm tone rather
+  // than as several oscillators playing a chord.
+  //
+  // Every partial is doubled a fraction of a hertz off its twin. Those
+  // pairs beat against each other slowly, which is the difference between
+  // a hum that breathes and a test tone. It stays clear of Ultron's
+  // register: nothing here is below 98 Hz, where his drone lives.
+  const warm = context.createBiquadFilter()
+  warm.type = "lowpass"
+  warm.frequency.value = 900
+  warm.connect(bedGain)
+
+  const partials: [number, number][] = [
+    [98, 0.055],
+    [147, 0.030],
+    [196, 0.024],
+    [294, 0.011],
+  ]
+
+  for (const [freq, gain] of partials) {
     const g = context.createGain()
     g.gain.value = gain
-    osc.connect(g)
-    g.connect(bedGain)
-    osc.start()
+    g.connect(warm)
 
+    for (const detune of [0, 0.35]) {
+      const osc = context.createOscillator()
+      osc.type = "sine"
+      osc.frequency.value = freq + detune
+      osc.connect(g)
+      osc.start()
+    }
+
+    // Slow amplitude drift, different per partial so they never swell
+    // together and give away the trick.
     const lfo = context.createOscillator()
-    lfo.frequency.value = 0.07 + Math.random() * 0.05
+    lfo.frequency.value = 0.05 + Math.random() * 0.06
     const lfoGain = context.createGain()
-    lfoGain.gain.value = gain * 0.6
+    lfoGain.gain.value = gain * 0.45
     lfo.connect(lfoGain)
     lfoGain.connect(g.gain)
     lfo.start()
