@@ -1,17 +1,18 @@
 "use client"
 
-// Synthesised, not sampled.
+// A recorded bed under synthesised cues.
 //
-// An mp3 bed would mean binary assets in the repo, a second thing to cache
-// and a loop point you eventually start hearing. Everything here is built
-// from oscillators and one noise buffer at runtime, which costs a few
-// kilobytes of code, never repeats, and can follow the agent's state -
-// the thinking texture is literally driven by `status`, not crossfaded
-// underneath it.
+// The bed is Andrew's own ambience file, shared with Ultron and filtered
+// differently here: a low-pass at 760 Hz takes the edge off so it sits
+// behind the interface rather than in front of it. One asset, two
+// treatments - a separately mixed "calm" file would be a second 4 MB
+// download and a second thing to keep in step with the first.
 //
-// Jarvis's palette: clean, high, precise. Filtered air, short bright
-// clicks, two-note confirmations. Nothing below ~180 Hz, because the low
-// end is Ultron's register and the two consoles should not be mistakable.
+// Everything that reacts is still synthesised, and has to be: the clicks,
+// the thinking tick and the confirmations are driven by `status` at the
+// moment it changes, which is not something a recording can do. The
+// oscillator bed remains as startSynthBed, the fallback when the file
+// cannot be fetched or played.
 
 type Status = "idle" | "listening" | "speaking" | "thinking"
 
@@ -26,6 +27,7 @@ let master: GainNode | null = null
 let bedGain: GainNode | null = null
 let noise: AudioBuffer | null = null
 let thinkTimer: ReturnType<typeof setInterval> | null = null
+let bedEl: HTMLAudioElement | null = null
 let muted = false
 let started = false
 
@@ -83,7 +85,55 @@ export function unlockAudio(): void {
   }
 }
 
+// Served from web/public, so it ships with the static export and is
+// same-origin - a MediaElementSource cannot be routed through the graph
+// otherwise.
+const AMBIENCE_URL = "/ambience.mp3"
+
 function startBed(): void {
+  const context = ensure()
+  if (!context || !master) return
+
+  bedGain = context.createGain()
+  bedGain.gain.value = 0.0
+  bedGain.connect(master)
+
+  const el = new Audio(AMBIENCE_URL)
+  el.loop = true
+  el.preload = "auto"
+  bedEl = el
+
+  // Calmer than Ultron's, from the same recording. A low-pass at 760 Hz
+  // takes the edge and detail off it so it sits behind the interface
+  // rather than in front of it, and a high-pass clears the rumble a
+  // lowpassed bed otherwise leaves sitting on the speaker. Same file,
+  // different treatment - a second mix would be a second 4 MB asset and
+  // a second thing to keep in step.
+  const tone = context.createBiquadFilter()
+  tone.type = "lowpass"
+  tone.frequency.value = 760
+  tone.Q.value = 0.4
+
+  const rumble = context.createBiquadFilter()
+  rumble.type = "highpass"
+  rumble.frequency.value = 70
+
+  const source = context.createMediaElementSource(el)
+  source.connect(rumble)
+  rumble.connect(tone)
+  tone.connect(bedGain)
+
+  // A missing or unplayable file falls back to the synthesised bed
+  // rather than leaving the console silent. Worth having: the asset is
+  // 4 MB, and a slow or failed fetch is a real state, not a theoretical
+  // one.
+  el.addEventListener("error", () => startSynthBed(), { once: true })
+  void el.play().catch(() => startSynthBed())
+
+  bedGain.gain.linearRampToValueAtTime(0.6, context.currentTime + 3)
+}
+
+function startSynthBed(): void {
   const context = ensure()
   if (!context || !master) return
 
@@ -240,6 +290,12 @@ export const sfx = {
     const context = ensure()
     if (context && master) {
       master.gain.linearRampToValueAtTime(next ? 0 : MASTER_GAIN, context.currentTime + 0.2)
+    }
+    // Actually stop the stream. Turning the gain down leaves it decoding
+    // a looping 4 MB file for nothing.
+    if (bedEl) {
+      if (next) bedEl.pause()
+      else void bedEl.play().catch(() => {})
     }
   },
   toggleMuted(): boolean {

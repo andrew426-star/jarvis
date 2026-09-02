@@ -69,6 +69,9 @@ def health() -> dict:
 # the wrong type costs correct caching and compression for the largest
 # static assets the page loads.
 mimetypes.add_type("font/woff2", ".woff2")
+# Same reasoning as woff2: the ambience bed is served from the static
+# export, and a wrong Content-Type makes it silently unplayable.
+mimetypes.add_type("audio/mpeg", ".mp3")
 mimetypes.add_type("font/woff", ".woff")
 
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "web" / "out"
