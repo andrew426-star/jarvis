@@ -1,6 +1,8 @@
 "use client"
 
+import { useEffect, useState } from "react"
 
+import { sfx } from "@/lib/sfx"
 import { useClock } from "@/lib/use-clock"
 import { CONTEXT_WINDOW_TURNS, useJarvis, type TabKey } from "@/lib/store"
 
@@ -35,6 +37,12 @@ function Metric({ label, value, color }: { label: string; value: string; color?:
 }
 
 export function TopBar() {
+  // sfx owns the mute state (it persists it); this mirrors it for the
+  // button label. Read after mount because localStorage does not exist
+  // during the static export's server render.
+  const [muted, setMuted] = useState(false)
+  useEffect(() => setMuted(sfx.isMuted()), [])
+
   const { activeTab, setActiveTab, mode, toggleMode, signals } = useJarvis()
   // 0 until the first client tick - see use-clock.ts for why the clock
   // is an external store rather than state driven by an effect.
@@ -112,8 +120,18 @@ export function TopBar() {
         </span>
       </div>
 
-      {/* Right: mode toggle and live link health */}
+      {/* Right: audio, mode toggle and live link health */}
       <div className="relative flex min-w-0 shrink-0 items-center" style={{ gap: "var(--sp-4)" }}>
+        <button
+          type="button"
+          onClick={() => setMuted(sfx.toggleMuted())}
+          aria-pressed={muted}
+          className="btn shrink-0"
+          style={{ padding: "4px 12px" }}
+        >
+          {muted ? "Muted" : "Audio"}
+        </button>
+
         <button
           type="button"
           onClick={toggleMode}

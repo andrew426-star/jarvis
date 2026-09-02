@@ -35,6 +35,7 @@ import {
 } from "@/lib/jarvis-client"
 import { audioAmplitude } from "@/lib/audio-amplitude"
 import { stopNarration } from "@/lib/narration"
+import { sfx, unlockAudio } from "@/lib/sfx"
 import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store"
 import { useBoot } from "@/lib/use-boot"
 import {
@@ -173,7 +174,33 @@ function Shell({
 
   useEffect(() => {
     setAgentStatus(agentStatus)
+    // The ambience follows the same state the reactor and EQ do, so the
+    // room reacts to thinking and ducks under narration for free.
+    sfx.setStatus(agentStatus)
   }, [agentStatus, setAgentStatus])
+
+  // Browsers keep an AudioContext suspended until a real gesture, so the
+  // bed cannot start on load however much we would like it to.
+  useEffect(() => {
+    const start = () => unlockAudio()
+    window.addEventListener("pointerdown", start, { once: true })
+    window.addEventListener("keydown", start, { once: true })
+
+    // Delegated rather than an onClick on every control: one listener
+    // covers buttons that do not exist yet, and nothing has to import
+    // sfx to make a sound.
+    const click = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest("button, [role=\"button\"], a[href]")) sfx.click()
+    }
+    window.addEventListener("pointerdown", click)
+
+    return () => {
+      window.removeEventListener("pointerdown", start)
+      window.removeEventListener("keydown", start)
+      window.removeEventListener("pointerdown", click)
+    }
+  }, [])
 
   // Real render health and voice level, sampled twice a second. The
   // reactor and the EQ read amplitude directly at frame rate; only the
@@ -271,6 +298,7 @@ function Shell({
     ])
     setPending(true)
     setError(null)
+    sfx.send()
     pushLog("NONE", viaVoice ? "Voice command received" : "Command received")
 
     try {
@@ -313,6 +341,7 @@ function Shell({
           ? err.message
           : "Something went wrong."
       setError(message)
+      sfx.alert()
       pushLog("ERR", message)
       notify("warning", "Request failed", message)
     } finally {
