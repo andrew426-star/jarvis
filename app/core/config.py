@@ -112,15 +112,18 @@ class Settings(BaseSettings):
     zoho_accounts_domain: str = "accounts.zoho.com"
     zoho_api_domain: str = "mail.zoho.com"
 
-    # ElevenLabs TTS — optional for the same reason as Spotify above:
-    # credentials aren't in hand yet, and a missing one must not break the
-    # already-running app's boot. elevenlabs_voice_id has no hardcoded
-    # fallback on purpose (voice choice is Andrew's call, not a guessable
-    # default) — /speak returns a clear "not configured" error if either
-    # is unset, rather than the app failing to start.
-    elevenlabs_api_key: str | None = None
-    elevenlabs_voice_id: str | None = None
-    elevenlabs_model_id: str = "eleven_flash_v2_5"
+    # Fish Audio TTS — replaced ElevenLabs so Jarvis and Ultron share one
+    # provider, one bill and one integration to keep working. Optional for
+    # the same reason as Spotify above: a missing credential must not break
+    # the already-running app's boot. fish_audio_voice_id is Fish's
+    # `reference_id`, which carries a catalogue voice, a Voice Design
+    # result or a clone interchangeably — so changing Jarvis's voice is one
+    # value, not a second integration. No hardcoded fallback on purpose
+    # (the voice is Andrew's call) — /speak returns a clear "not
+    # configured" error if either is unset.
+    fish_audio_api_key: str | None = None
+    fish_audio_voice_id: str | None = None
+    fish_audio_model: str = "s2.1-pro"
 
     # JARVIS_ACCESS_TOKEN — the ORIGINAL shared-secret gate. Google
     # sign-in (above) is now the console's way in; this stays as the
@@ -130,7 +133,7 @@ class Settings(BaseSettings):
     # was the only gate.
     # shared-secret gate for /invoke and /speak, added
     # to an already-deployed service, so it must stay Optional the same way
-    # spotify_*/elevenlabs_* are (a missing value can't break boot) — but
+    # spotify_*/fish_audio_* are (a missing value can't break boot) — but
     # unlike those, an unset value here does NOT mean "degrade gracefully":
     # app/core/auth.py fails CLOSED (401s everything) until this is set,
     # since this is a security gate being deliberately added, not a
