@@ -90,6 +90,11 @@ def main() -> int:
     )
     parser.add_argument("--skip", action="append", default=[], help="Key to leave alone (repeatable)")
     parser.add_argument("--apply", action="store_true", help="Actually write. Without this, dry run.")
+    parser.add_argument(
+        "--no-deploy",
+        action="store_true",
+        help="Write the values but do not restart the service (it keeps its old environment)",
+    )
     args = parser.parse_args()
 
     api_key = os.environ.get("RENDER_API_KEY")
@@ -148,7 +153,23 @@ def main() -> int:
     payload = [{"key": k, "value": v} for k, v in sorted(local.items())]
     res = client.put(f"{API}/services/{service['id']}/env-vars", json=payload)
     res.raise_for_status()
-    print("\nWritten. Render redeploys the service automatically on an env-var change.")
+    print("\nWritten.")
+
+    # A dashboard edit restarts the service; this API write does not. The
+    # values sit on the service while the running container keeps the
+    # environment it booted with, so the sync looks applied and changes
+    # nothing until something else deploys. Observed exactly once, which
+    # was enough: /speak went on reporting "voice is not configured" with
+    # the credentials plainly present on the service.
+    if args.no_deploy:
+        print("Not deploying. The running container keeps its old environment until you do.")
+        return 0
+
+    res = client.post(
+        f"{API}/services/{service['id']}/deploys", json={"clearCache": "do_not_clear"}
+    )
+    res.raise_for_status()
+    print(f"Deploy triggered: {res.json().get('id', '?')}")
     return 0
 
 
