@@ -169,7 +169,16 @@ def main() -> int:
         f"{API}/services/{service['id']}/deploys", json={"clearCache": "do_not_clear"}
     )
     res.raise_for_status()
-    print(f"Deploy triggered: {res.json().get('id', '?')}")
+
+    # Render answers 202 with an empty body here, so there is no JSON to
+    # read. Parsing it unconditionally turned a successful write and a
+    # successful deploy into a traceback, which is a worse lie than no
+    # output at all.
+    try:
+        deploy_id = res.json().get("id", "accepted")
+    except ValueError:
+        deploy_id = "accepted"
+    print(f"Deploy triggered: {deploy_id}")
     return 0
 
 
