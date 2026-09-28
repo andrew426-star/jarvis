@@ -4,6 +4,7 @@ from app.tools.database_agent import database_agent
 from app.tools.github import github
 from app.tools.google_titan import google_titan
 from app.tools.kivaro_pipeline import kivaro_pipeline
+from app.tools.launch_tracker import launch_tracker
 from app.tools.market_analysis import market_analysis
 from app.tools.market_history import market_history
 from app.tools.news_feed import news_feed
@@ -309,6 +310,51 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "launch_tracker",
+            "description": (
+                "Kivaro AI's launch tracker, shared with K.I.V.'s Launch page and Slack agents. "
+                "operation=status returns days to the January 2027 launch, the current phase "
+                "(Discovery, Pilots, Commitments, Launch) with its goal and days left, logged "
+                "conversations, pilots, commitments, publicity actions and content against each "
+                "phase's target, conversations by target segment, and recent activity. "
+                "operation=log records one thing that actually happened. Only log what Andrew "
+                "says really happened, never a plan or an idea."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {"type": "string", "enum": ["status", "log"]},
+                    "kind": {
+                        "type": "string",
+                        "enum": ["conversation", "pilot", "commitment", "publicity", "content"],
+                        "description": "Required for log.",
+                    },
+                    "company": {"type": "string", "description": "Firm or outlet involved."},
+                    "contact": {"type": "string", "description": "Person involved, with title if known."},
+                    "segment": {
+                        "type": "string",
+                        "enum": [
+                            "hedge_fund",
+                            "research_analytics",
+                            "investor_relations",
+                            "quant",
+                            "venture_capital",
+                            "private_equity",
+                        ],
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "What was said or learned, next step, price discussed.",
+                    },
+                    "occurred_on": {"type": "string", "description": "YYYY-MM-DD. Omit for today."},
+                },
+                "required": ["operation"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "github",
             "description": (
                 "Open a real GitHub issue in Jarvis's own repo proposing a workflow, feature, "
@@ -459,6 +505,7 @@ DISPATCH = {
     "portfolio": portfolio,
     "company_financials": company_financials,
     "kivaro_pipeline": kivaro_pipeline,
+    "launch_tracker": launch_tracker,
     "github": github,
     "news_feed": news_feed,
     "spotify": spotify,
