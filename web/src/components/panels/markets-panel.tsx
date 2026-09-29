@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { motion } from "framer-motion"
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { TrendingDownIcon, TrendingUpIcon } from "lucide-react"
@@ -45,36 +45,50 @@ const PERIODS = [
 // Change bars are scaled against this move; anything bigger pins the bar.
 const FULL_SCALE_PCT = 5
 
+type Sourced<T> = { data: T; source: "fetch" | "live"; at: Date | null }
+
 export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: MarketsPanelProps) {
-  const [snapshot, setSnapshot] = useState<MarketSnapshot | null>(null)
+  // A live tool result from a chat turn seeds the panel when it opens and
+  // replaces what's shown whenever a new one arrives. The background fetch
+  // on mount only fills in if nothing live got there first, so a slow
+  // watchlist request can't clobber a fresher, more relevant quote.
+  const [view, setView] = useState<Sourced<MarketSnapshot> | null>(() =>
+    liveSnapshot ? { data: liveSnapshot, source: "live", at: null } : null,
+  )
+  const [history, setHistory] = useState<MarketHistory | null>(liveHistory ?? null)
+  const [symbolInput, setSymbolInput] = useState(liveHistory?.symbol ?? "")
   const [loadingSnapshot, setLoadingSnapshot] = useState(true)
-  const [syncedAt, setSyncedAt] = useState<Date | null>(null)
-  const [symbolInput, setSymbolInput] = useState("")
-  const [history, setHistory] = useState<MarketHistory | null>(null)
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [days, setDays] = useState<number>(30)
 
-  // Guards against the initial background fetch resolving *after* a fresher
-  // live tool result already arrived from a chat turn — without this, a
-  // slow watchlist fetch could clobber a just-arrived, more relevant quote.
-  const hasLiveSnapshotRef = useRef(false)
-  const hasLiveHistoryRef = useRef(false)
-
-  function applySnapshot(result: MarketSnapshot) {
-    setSnapshot(result)
-    if (result.ok) setSyncedAt(new Date())
+  // "Adjusting state when a prop changes", done during render as React
+  // recommends rather than in an effect.
+  const [prevLiveSnapshot, setPrevLiveSnapshot] = useState(liveSnapshot)
+  if (liveSnapshot !== prevLiveSnapshot) {
+    setPrevLiveSnapshot(liveSnapshot)
+    if (liveSnapshot) setView({ data: liveSnapshot, source: "live", at: null })
   }
+  const [prevLiveHistory, setPrevLiveHistory] = useState(liveHistory)
+  if (liveHistory !== prevLiveHistory) {
+    setPrevLiveHistory(liveHistory)
+    if (liveHistory) {
+      setHistory(liveHistory)
+      setSymbolInput(liveHistory.symbol)
+    }
+  }
+
+  const snapshot = view?.data ?? null
 
   async function refreshSnapshot() {
     setLoadingSnapshot(true)
     try {
-      applySnapshot(await getMarketSnapshot(token))
+      setView({ data: await getMarketSnapshot(token), source: "fetch", at: new Date() })
     } catch (err) {
       if (err instanceof JarvisAuthError) {
         onAuthError()
         return
       }
-      setSnapshot({ ok: false, quotes: [], error: "Could not load market data." })
+      setView({ data: { ok: false, quotes: [], error: "Could not load market data." }, source: "fetch", at: null })
     } finally {
       setLoadingSnapshot(false)
     }
@@ -83,7 +97,6 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
   async function loadHistory(symbol: string, period = days) {
     const clean = symbol.trim().toUpperCase()
     if (!clean) return
-    hasLiveHistoryRef.current = false
     setSymbolInput(clean)
     setLoadingHistory(true)
     try {
@@ -102,47 +115,46 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
   useEffect(() => {
     getMarketSnapshot(token)
       .then((result) => {
-        if (hasLiveSnapshotRef.current) return
-        applySnapshot(result)
-        // Open on a chart rather than an empty box: the first watchlist name.
+        const fetched: Sourced<MarketSnapshot> = { data: result, source: "fetch", at: new Date() }
+        setView((prev) => prev ?? fetched)
+        // Open on a chart rather than an empty box: the first watchlist
+        // name, unless a chat turn already put a chart here.
         const first = result.ok ? result.quotes[0]?.symbol : undefined
-        if (first && !hasLiveHistoryRef.current) loadHistory(first)
+        if (first) {
+          getMarketHistory(first, token, 30)
+            .then((h) => {
+              setHistory((prev) => prev ?? h)
+              setSymbolInput((prev) => prev || first)
+            })
+            .catch(() => {})
+        }
       })
       .catch((err) => {
         if (err instanceof JarvisAuthError) {
           onAuthError()
           return
         }
-        if (!hasLiveSnapshotRef.current) {
-          setSnapshot({ ok: false, quotes: [], error: "Could not load market data." })
+        const failed: Sourced<MarketSnapshot> = {
+          data: { ok: false, quotes: [], error: "Could not load market data." },
+          source: "fetch",
+          at: null,
         }
+        setView((prev) => prev ?? failed)
       })
       .finally(() => setLoadingSnapshot(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(() => {
-    if (liveSnapshot) {
-      hasLiveSnapshotRef.current = true
-      applySnapshot(liveSnapshot)
-    }
-  }, [liveSnapshot])
-
-  useEffect(() => {
-    if (liveHistory) {
-      hasLiveHistoryRef.current = true
-      setHistory(liveHistory)
-      setSymbolInput(liveHistory.symbol)
-    }
-  }, [liveHistory])
-
   const quotes = snapshot?.quotes ?? []
 
   return (
-    <div className="flex flex-col" style={{ gap: "var(--sp-3)" }}>
+    <div
+      className="grid grid-cols-1 items-start @4xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]"
+      style={{ gap: "var(--sp-3)" }}
+    >
       <PanelSection
         title="Watchlist"
-        meta={syncStamp(syncedAt)}
+        meta={view?.source === "live" ? "FROM CHAT" : syncStamp(view?.at ?? null)}
         action={<RefreshButton loading={loadingSnapshot} onClick={refreshSnapshot} label="Refresh watchlist" />}
       >
         {snapshot?.ok === false && (
@@ -154,7 +166,7 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
         {quotes.length > 0 && <Breadth quotes={quotes} />}
         {quotes.length > 0 && (
           <motion.div
-            className="grid grid-cols-2 sm:grid-cols-3"
+            className="grid grid-cols-2 @xl:grid-cols-3 @4xl:grid-cols-2 @6xl:grid-cols-3"
             style={{ gap: "var(--sp-2)" }}
             variants={listVariants}
             initial="hidden"
@@ -371,7 +383,8 @@ function HistoryChart({ history, loading }: { history: MarketHistory; loading: b
         animate={{ opacity: 1 }}
         transition={{ duration: 0.4 }}
       >
-        <ResponsiveContainer width="100%" height={200}>
+        <div className="h-[220px] @4xl:h-[380px]">
+        <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={candles} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
@@ -418,6 +431,7 @@ function HistoryChart({ history, loading }: { history: MarketHistory; loading: b
             />
           </AreaChart>
         </ResponsiveContainer>
+        </div>
       </motion.div>
     </div>
   )

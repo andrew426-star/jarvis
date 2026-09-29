@@ -29,6 +29,10 @@ let noise: AudioBuffer | null = null
 let thinkTimer: ReturnType<typeof setInterval> | null = null
 let bedEl: HTMLAudioElement | null = null
 let muted = false
+let mutedLoaded = false
+// The top bar's Audio/Muted label reads mute state as an external store
+// (useSyncExternalStore) rather than copying it into React state.
+const muteListeners = new Set<() => void>()
 let started = false
 
 function readMuted(): boolean {
@@ -39,6 +43,17 @@ function readMuted(): boolean {
     // the sane default and the toggle still works for the session.
     return false
   }
+}
+
+// Loaded lazily, on first read in the browser: the static export's server
+// render has no localStorage, and nothing should need an AudioContext just
+// to know whether audio is muted.
+function currentMuted(): boolean {
+  if (!mutedLoaded && typeof window !== "undefined") {
+    muted = readMuted()
+    mutedLoaded = true
+  }
+  return muted
 }
 
 function noiseBuffer(context: AudioContext): AudioBuffer {
@@ -57,7 +72,7 @@ function ensure(): AudioContext | null {
     const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (!Ctor) return null
     ctx = new Ctor()
-    muted = readMuted()
+    currentMuted()
 
     // A limiter rather than trusting the arithmetic: a click landing on
     // top of the bed and a ping should never clip.
@@ -278,10 +293,16 @@ export const sfx = {
   },
 
   isMuted(): boolean {
-    return muted
+    return currentMuted()
+  },
+  subscribeMuted(listener: () => void): () => void {
+    muteListeners.add(listener)
+    return () => muteListeners.delete(listener)
   },
   setMuted(next: boolean): void {
     muted = next
+    mutedLoaded = true
+    muteListeners.forEach((listener) => listener())
     try {
       localStorage.setItem(STORAGE_KEY, next ? "1" : "0")
     } catch {

@@ -57,32 +57,39 @@ export function NewsPanel({ token, onAuthError, liveNews }: NewsPanelProps) {
   const [error, setError] = useState<string | null>(null)
   const [syncedAt, setSyncedAt] = useState<Date | null>(null)
 
-  async function loadCategories() {
+  // One request per theme, in parallel. State is only set once the
+  // requests settle, so the mount effect can start it directly; the
+  // Refresh button also turns the spinner back on first.
+  function fetchCategories() {
+    return Promise.all(NEWS_CATEGORIES.map((c) => getNews(token, c.query)))
+      .then((results) => {
+        setCategories(
+          NEWS_CATEGORIES.map((c, i) => ({
+            id: c.id,
+            label: c.label,
+            articles: results[i].ok ? (results[i].articles ?? []) : [],
+          })),
+        )
+        setSyncedAt(new Date())
+      })
+      .catch((err) => {
+        if (err instanceof JarvisAuthError) {
+          onAuthError()
+          return
+        }
+        setError("Could not load news.")
+      })
+      .finally(() => setLoading(false))
+  }
+
+  function loadCategories() {
     setLoading(true)
     setError(null)
-    try {
-      const results = await Promise.all(NEWS_CATEGORIES.map((c) => getNews(token, c.query)))
-      setCategories(
-        NEWS_CATEGORIES.map((c, i) => ({
-          id: c.id,
-          label: c.label,
-          articles: results[i].ok ? (results[i].articles ?? []) : [],
-        })),
-      )
-      setSyncedAt(new Date())
-    } catch (err) {
-      if (err instanceof JarvisAuthError) {
-        onAuthError()
-        return
-      }
-      setError("Could not load news.")
-    } finally {
-      setLoading(false)
-    }
+    void fetchCategories()
   }
 
   useEffect(() => {
-    loadCategories()
+    void fetchCategories()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -173,10 +180,10 @@ export function NewsPanel({ token, onAuthError, liveNews }: NewsPanelProps) {
               initial="hidden"
               animate="show"
               exit={{ opacity: 0, transition: { duration: 0.12 } }}
-              className="flex flex-col"
-              style={{ gap: "var(--sp-1)" }}
+              className="grid grid-cols-1 @4xl:grid-cols-2"
+              style={{ gap: "var(--sp-1) var(--sp-3)" }}
             >
-              <span className="t-label" style={{ color: "var(--text-secondary)" }}>
+              <span className="t-label @4xl:col-span-2" style={{ color: "var(--text-secondary)" }}>
                 {active.label.toUpperCase()}
               </span>
               {active.articles.length === 0 ? (

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { motion } from "framer-motion"
 
 import {
@@ -36,30 +36,34 @@ interface PortfolioPanelProps {
 // rainbow.
 const SEGMENT_OPACITY = [1, 0.75, 0.55, 0.4, 0.3, 0.22]
 
+type Sourced<T> = { data: T; source: "fetch" | "live"; at: Date | null }
+
 export function PortfolioPanel({ token, onAuthError, livePortfolio }: PortfolioPanelProps) {
-  const [portfolio, setPortfolio] = useState<PortfolioResult | null>(null)
+  // Same live-first rule as the Markets tab: a chat turn's portfolio result
+  // seeds and replaces what's shown; the mount fetch only fills a gap.
+  const [view, setView] = useState<Sourced<PortfolioResult> | null>(() =>
+    livePortfolio ? { data: livePortfolio, source: "live", at: null } : null,
+  )
   const [loading, setLoading] = useState(true)
-  const [syncedAt, setSyncedAt] = useState<Date | null>(null)
 
-  // Guards against the initial background fetch resolving after a fresher
-  // live tool result already arrived from a chat turn.
-  const hasLivePortfolioRef = useRef(false)
-
-  function apply(result: PortfolioResult) {
-    setPortfolio(result)
-    if (result.ok) setSyncedAt(new Date())
+  const [prevLive, setPrevLive] = useState(livePortfolio)
+  if (livePortfolio !== prevLive) {
+    setPrevLive(livePortfolio)
+    if (livePortfolio) setView({ data: livePortfolio, source: "live", at: null })
   }
+
+  const portfolio = view?.data ?? null
 
   async function refreshPortfolio() {
     setLoading(true)
     try {
-      apply(await getPortfolio(token))
+      setView({ data: await getPortfolio(token), source: "fetch", at: new Date() })
     } catch (err) {
       if (err instanceof JarvisAuthError) {
         onAuthError()
         return
       }
-      setPortfolio({ ok: false, error: "Could not load portfolio." })
+      setView({ data: { ok: false, error: "Could not load portfolio." }, source: "fetch", at: null })
     } finally {
       setLoading(false)
     }
@@ -68,25 +72,24 @@ export function PortfolioPanel({ token, onAuthError, livePortfolio }: PortfolioP
   useEffect(() => {
     getPortfolio(token)
       .then((result) => {
-        if (!hasLivePortfolioRef.current) apply(result)
+        const fetched: Sourced<PortfolioResult> = { data: result, source: "fetch", at: new Date() }
+        setView((prev) => prev ?? fetched)
       })
       .catch((err) => {
         if (err instanceof JarvisAuthError) {
           onAuthError()
           return
         }
-        if (!hasLivePortfolioRef.current) setPortfolio({ ok: false, error: "Could not load portfolio." })
+        const failed: Sourced<PortfolioResult> = {
+          data: { ok: false, error: "Could not load portfolio." },
+          source: "fetch",
+          at: null,
+        }
+        setView((prev) => prev ?? failed)
       })
       .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  useEffect(() => {
-    if (livePortfolio) {
-      hasLivePortfolioRef.current = true
-      apply(livePortfolio)
-    }
-  }, [livePortfolio])
 
   const account = portfolio?.account
   const positions = useMemo(
@@ -100,10 +103,13 @@ export function PortfolioPanel({ token, onAuthError, livePortfolio }: PortfolioP
   const equityFlash = useChangeFlash(account?.equity)
 
   return (
-    <div className="flex flex-col" style={{ gap: "var(--sp-3)" }}>
+    <div
+      className="grid grid-cols-1 items-start @4xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]"
+      style={{ gap: "var(--sp-3)" }}
+    >
       <PanelSection
         title="Account"
-        meta={syncStamp(syncedAt)}
+        meta={view?.source === "live" ? "FROM CHAT" : syncStamp(view?.at ?? null)}
         action={<RefreshButton loading={loading} onClick={refreshPortfolio} label="Refresh portfolio" />}
       >
         {portfolio?.ok === false && (
