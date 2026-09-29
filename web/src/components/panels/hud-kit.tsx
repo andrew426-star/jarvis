@@ -5,6 +5,7 @@ import { motion } from "framer-motion"
 import { RefreshCwIcon } from "lucide-react"
 
 import { useAnimatedNumber } from "@/lib/use-animated-number"
+import { centralTime, centralZoneLabel } from "@/lib/time"
 
 // Shared building blocks for the three data tabs (Markets, Intel, Assets)
 // so they speak the same HUD language as the rest of the console: sharp
@@ -222,7 +223,7 @@ export function ScanRows({ rows = 3, height = 36 }: { rows?: number; height?: nu
 
 export function syncStamp(date: Date | null): string | null {
   if (!date) return null
-  return `SYNC ${date.toLocaleTimeString("en-US", { hour12: false })}`
+  return `SYNC ${centralTime(date)} ${centralZoneLabel(date)}`
 }
 
 export function relativeTime(iso: string, now = Date.now()): string {

@@ -5,6 +5,7 @@ import { useSyncExternalStore } from "react"
 import { sfx } from "@/lib/sfx"
 import { useClock } from "@/lib/use-clock"
 import { CONTEXT_WINDOW_TURNS, useJarvis, type TabKey } from "@/lib/store"
+import { centralDate, centralTime, centralZoneLabel } from "@/lib/time"
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "markets", label: "Markets" },
@@ -110,11 +111,11 @@ export function TopBar() {
             lineHeight: 1.1,
           }}
         >
-          {now ? now.toLocaleTimeString("en-GB", { hour12: false }) : "--:--:--"}
+          {now ? centralTime(now) : "--:--:--"}
         </span>
         <span className="t-time">
           {now
-            ? now.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+            ? `${centralDate(now)} · ${centralZoneLabel(now)}`
             : ""}
         </span>
       </div>

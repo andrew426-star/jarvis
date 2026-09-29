@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from app.core.config import get_settings
 from app.core.groq_client import get_groq_client
+from app.core.local_time import now_for_prompt
 from app.memory.interaction_log import fetch_recent_turns, write_interaction
 from app.memory.semantic_recall import get_relevant_context, record_interaction
 from app.memory.session_buffer import append_turn, get_recent_turns
@@ -181,7 +182,11 @@ def run_invoke(message: str, session_id: str | None) -> dict:
     client = get_groq_client()
     started = time.monotonic()
 
-    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages: list[dict] = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        # Jarvis has no clock of his own; without this, "today" is a guess.
+        {"role": "system", "content": now_for_prompt()},
+    ]
 
     recall_block = get_relevant_context(message)
     if recall_block:

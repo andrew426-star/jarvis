@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.core.auth import require_access_token
 from app.core.config import get_settings
 from app.core.google_oauth import get_google_access_token
-from app.core.local_time import local_today
+from app.core.local_time import LOCAL_TZ, local_today
 from app.core.supabase_client import get_supabase_client
 from app.integrations import google_api
 from app.services.orchestrator import run_invoke
@@ -36,12 +36,17 @@ def _evening_has_something_open() -> str | None:
 @dataclass(frozen=True)
 class Routine:
     name: str
+    # Central wall-clock time it runs at. days: 0 = Sunday ... 6 = Saturday,
+    # None = every day.
+    hour: int
+    minute: int
     subject: Callable[[date], str]
     request: str
     # Returns a reason to skip today's run, or None to send.
     skip_if: Callable[[], str | None] | None = None
     # Session ids are "<prefix>-<date>"; the once-a-day guard keys on them.
     session_prefix: str | None = None
+    days: tuple[int, ...] | None = None
 
 
 # Jarvis's scheduled routines, each triggered by a GitHub Actions cron
@@ -51,6 +56,8 @@ class Routine:
 ROUTINES: dict[str, Routine] = {
     "morning-brief": Routine(
         name="morning-brief",
+        hour=7,
+        minute=0,
         subject=lambda d: f"Morning brief · {d.strftime('%A, %b')} {d.day}",
         request="Give me my morning brief." + EMAIL_NOTE,
         # What /brief/run used before routines existed; kept so the guard
@@ -59,6 +66,8 @@ ROUTINES: dict[str, Routine] = {
     ),
     "evening-checkin": Routine(
         name="evening-checkin",
+        hour=20,
+        minute=30,
         subject=lambda d: f"Evening check-in · {d.strftime('%A, %b')} {d.day}",
         request=(
             "Evening check-in. Use habits (status), italian (progress), kiv_tasks (list, "
@@ -72,6 +81,9 @@ ROUTINES: dict[str, Routine] = {
     ),
     "weekly-review": Routine(
         name="weekly-review",
+        hour=17,
+        minute=0,
+        days=(0,),
         subject=lambda d: f"Weekly review · week of {d.strftime('%b')} {d.day}",
         request=(
             "Sunday weekly review. Use launch_tracker (status), habits (status), italian "
@@ -85,6 +97,27 @@ ROUTINES: dict[str, Routine] = {
         + EMAIL_NOTE,
     ),
 }
+
+
+def central_utc_offset_hours(now: datetime | None = None) -> int:
+    """5 in daylight time (CDT), 6 in standard time (CST)."""
+    now = now or datetime.now(LOCAL_TZ)
+    offset = now.astimezone(LOCAL_TZ).utcoffset()
+    return int(-offset.total_seconds() // 3600)
+
+
+def utc_cron(routine: Routine, offset: int) -> str:
+    """The GitHub (UTC) cron that fires this routine at its Central time,
+    for one of the two offsets. GitHub cron has no time zones, so
+    .github/workflows/jarvis-routines.yml lists both and the route keeps
+    whichever matches the offset in effect."""
+    total = routine.hour + offset
+    hour = total % 24
+    if routine.days is None:
+        days = "*"
+    else:
+        days = ",".join(str(d) for d in sorted((d + total // 24) % 7 for d in routine.days))
+    return f"{routine.minute} {hour} * * {days}"
 
 
 def _recipient() -> str | None:
@@ -156,10 +189,16 @@ def _run(routine: Routine, force: bool) -> dict:
 
 # Sync on purpose, like /invoke.
 @router.post("/routines/{name}/run", dependencies=[Depends(require_access_token)])
-def run_routine(name: str, force: bool = False) -> dict:
+def run_routine(name: str, force: bool = False, schedule: str | None = None) -> dict:
     routine = ROUTINES.get(name)
     if routine is None:
         raise HTTPException(status_code=404, detail=f"Unknown routine: {name}. Known: {', '.join(ROUTINES)}")
+    # A scheduled run passes the cron that fired; only the one for Central's
+    # current offset proceeds. Manual runs pass none.
+    if schedule:
+        expected = utc_cron(routine, central_utc_offset_hours())
+        if schedule != expected:
+            return {"ok": True, "routine": name, "skipped": f"Not this season's schedule ({expected} is)."}
     return _run(routine, force)
 
 
