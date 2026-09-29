@@ -104,7 +104,16 @@ def _recipient() -> str | None:
 
 def _run(routine: Routine, force: bool) -> dict:
     today = local_today()
-    access_token = get_google_access_token()
+    try:
+        access_token = get_google_access_token()
+    except RuntimeError as exc:
+        # Typically invalid_grant: the refresh token was revoked or expired
+        # (Google expires them after 7 days while the OAuth app is in
+        # Testing mode). Say what fixes it rather than a bare 500.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Google connection expired; reconnect at /auth/google/connect. ({exc})",
+        ) from exc
     if not access_token:
         raise HTTPException(status_code=409, detail="Google not connected; visit /auth/google/connect.")
     recipient = _recipient()
