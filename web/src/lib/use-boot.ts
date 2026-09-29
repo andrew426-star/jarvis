@@ -67,22 +67,55 @@ export function useBoot(): BootState {
   const [state, setState] = useState<BootState>(INITIAL)
 
   useEffect(() => {
-    const timers = SCHEDULE.map(([at, patch]) =>
-      window.setTimeout(() => setState((prev) => ({ ...prev, ...patch })), at)
-    )
+    let timers: number[] = []
+    const clear = () => {
+      timers.forEach(window.clearTimeout)
+      timers = []
+    }
+    const play = () => {
+      clear()
+      timers = SCHEDULE.map(([at, patch]) =>
+        window.setTimeout(() => setState((prev) => ({ ...prev, ...patch })), at)
+      )
+    }
+
+    // Only start once the page is actually on screen. The free Render
+    // instance can take ~50s to wake, and a page that finishes loading in
+    // a background tab would otherwise play the whole sequence unseen and
+    // greet Andrew with a HUD that just appears.
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return
+      document.removeEventListener("visibilitychange", onVisible)
+      play()
+    }
+    if (document.visibilityState === "visible") play()
+    else document.addEventListener("visibilitychange", onVisible)
+
+    // Coming back with Back/Forward restores the page from the browser's
+    // cache exactly as it was left; replay the sequence rather than
+    // snapping to a finished HUD.
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return
+      setState(INITIAL)
+      play()
+    }
+    window.addEventListener("pageshow", onPageShow)
 
     // Any deliberate keypress cuts to the end. A boot animation is a
     // delight exactly once; someone reloading for the fourth time while
     // debugging should not have to sit through it again.
     const skip = (event: KeyboardEvent) => {
       if (event.key !== "Escape" && event.key !== " ") return
-      timers.forEach(window.clearTimeout)
+      clear()
+      document.removeEventListener("visibilitychange", onVisible)
       setState(READY)
     }
     window.addEventListener("keydown", skip)
 
     return () => {
-      timers.forEach(window.clearTimeout)
+      clear()
+      document.removeEventListener("visibilitychange", onVisible)
+      window.removeEventListener("pageshow", onPageShow)
       window.removeEventListener("keydown", skip)
     }
   }, [])
