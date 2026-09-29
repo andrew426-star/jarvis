@@ -12,5 +12,5 @@ router = APIRouter()
 # automatically rather than blocking the event loop.
 @router.post("/invoke", response_model=InvokeResponse, dependencies=[Depends(require_access_token)])
 def invoke(request: InvokeRequest) -> InvokeResponse:
-    result = run_invoke(request.message, request.session_id)
+    result = run_invoke(request.message, request.session_id, channel=request.channel)
     return InvokeResponse(**result)
