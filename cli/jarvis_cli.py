@@ -216,6 +216,7 @@ def cmd_run(argv: list[str]) -> int:
     if code == 0 and not args.always:
         return 0
 
+    sys.stdout.flush()  # the program's output first, then Jarvis
     status = f"exited with code {code}" if code else "succeeded"
     parts = [
         f"I ran `{line}` in {Path.cwd().as_posix()} and it {status}. "
