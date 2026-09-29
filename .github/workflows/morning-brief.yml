@@ -1,0 +1,27 @@
+name: Morning brief
+
+# Asks Jarvis for the morning brief and has him email it (POST /brief/run,
+# app/api/routes/brief.py), so it's waiting before the first class instead
+# of needing to be asked for.
+#
+# 12:00 UTC is 7am in Ruston during daylight time and 6am after the
+# November clock change. GitHub cron has no time zones.
+#
+# Needs one repo secret: JARVIS_ACCESS_TOKEN (same value as the Render
+# service's JARVIS_ACCESS_TOKEN).
+on:
+  schedule:
+    - cron: "0 12 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  send-brief:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger morning brief
+        run: |
+          # The free Render instance may be asleep; the first request wakes
+          # it, so allow a long timeout and one retry.
+          curl --fail-with-body --retry 2 --retry-delay 30 --max-time 240 -X POST \
+            -H "Authorization: Bearer ${{ secrets.JARVIS_ACCESS_TOKEN }}" \
+            https://jarvis-u49p.onrender.com/brief/run

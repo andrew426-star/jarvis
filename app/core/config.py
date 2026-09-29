@@ -146,6 +146,11 @@ class Settings(BaseSettings):
     # machine-generated (openssl rand -hex 32) and never typed by a human.
     jarvis_access_token: str | None = None
 
+    # Where the scheduled morning brief (POST /brief/run) is emailed.
+    # Optional: unset means the connected Google account's own address,
+    # i.e. the brief is sent from Andrew's Gmail to itself.
+    jarvis_brief_email: str | None = None
+
     # CORS only — the frontend's origin (scheme+host, no
     # trailing slash). Optional so the backend still boots before the
     # frontend has a domain; until set, only http://localhost:3000
