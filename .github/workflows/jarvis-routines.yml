@@ -1,0 +1,49 @@
+name: Jarvis routines
+
+# Jarvis's scheduled emails beyond the morning brief (morning-brief.yml):
+# an evening check-in and a Sunday weekly review. Each calls
+# POST /routines/<name>/run (app/api/routes/brief.py), which runs the normal
+# agent loop and emails the result. Each routine sends at most once a day,
+# and the evening check-in skips itself when nothing is left open.
+#
+# GitHub cron is UTC. Times are US Central daylight time; after the
+# November clock change they land an hour earlier.
+on:
+  schedule:
+    - cron: "30 1 * * *" # evening-checkin, daily 8:30pm
+    - cron: "0 22 * * 0" # weekly-review, Sundays 5:00pm
+  workflow_dispatch:
+    inputs:
+      routine:
+        description: Routine to run now
+        required: true
+        type: choice
+        options:
+          - evening-checkin
+          - weekly-review
+          - morning-brief
+
+jobs:
+  run-routine:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pick routine
+        id: pick
+        run: |
+          if [ -n "${{ inputs.routine }}" ]; then
+            routine="${{ inputs.routine }}"
+          else
+            case "${{ github.event.schedule }}" in
+              "30 1 * * *") routine=evening-checkin ;;
+              "0 22 * * 0") routine=weekly-review ;;
+              *) echo "No routine for schedule '${{ github.event.schedule }}'"; exit 1 ;;
+            esac
+          fi
+          echo "routine=$routine" >> "$GITHUB_OUTPUT"
+      - name: Run ${{ steps.pick.outputs.routine }}
+        run: |
+          # The free Render instance may be asleep; allow a long timeout and
+          # one retry (the route won't send twice in a day).
+          curl --fail-with-body --retry 2 --retry-delay 30 --max-time 240 -X POST \
+            -H "Authorization: Bearer ${{ secrets.JARVIS_ACCESS_TOKEN }}" \
+            https://jarvis-u49p.onrender.com/routines/${{ steps.pick.outputs.routine }}/run
