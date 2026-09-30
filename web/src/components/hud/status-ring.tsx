@@ -1,6 +1,6 @@
 "use client"
 
-import { CONTEXT_WINDOW_TURNS, useJarvis } from "@/lib/store"
+import { useJarvis } from "@/lib/store"
 import { useAnimatedNumber } from "@/lib/use-animated-number"
 
 // Six gauge segments around the reactor, all reading something real.
@@ -90,11 +90,11 @@ export function StatusRing({ visible }: { visible: boolean }) {
     },
     {
       label: "CTX",
-      readout: `${Math.round(turns)}/${CONTEXT_WINDOW_TURNS}`,
-      fraction: Math.min(1, signals.turns / CONTEXT_WINDOW_TURNS),
+      readout: `${Math.round(turns)}/${signals.contextWindow}`,
+      fraction: Math.min(1, signals.turns / signals.contextWindow),
       // Filling the window is normal operation, not a fault - it only
       // means the oldest turns are about to roll out of memory.
-      severity: signals.turns >= CONTEXT_WINDOW_TURNS ? "warning" : "normal",
+      severity: signals.turns >= signals.contextWindow ? "warning" : "normal",
     },
     {
       label: "TOOLS",

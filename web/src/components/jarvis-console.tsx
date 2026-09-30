@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { motion } from "framer-motion"
 
-import { ArcReactor } from "@/components/hud/arc-reactor"
 import { AudioVisualizer } from "@/components/hud/audio-visualizer"
 import { BottomBar } from "@/components/hud/bottom-bar"
+import { CoreCipher } from "@/components/hud/core-cipher"
 import { DataWindow } from "@/components/hud/data-window"
 import { ChatInterface } from "@/components/hud/chat-interface"
 import type { ChatMessageData } from "@/components/hud/chat-message"
@@ -16,6 +16,10 @@ import { LeftPanel } from "@/components/hud/left-panel"
 import { RightPanel } from "@/components/hud/right-panel"
 import { SettingsPanel } from "@/components/hud/settings-panel"
 import { StatusRing } from "@/components/hud/status-ring"
+import { CameraPreview } from "@/components/spatial/camera-preview"
+import { HandCursors } from "@/components/spatial/hand-cursors"
+import { HologramLayer } from "@/components/spatial/hologram-layer"
+import { Workshop } from "@/components/workshop/workshop"
 import { TopBar } from "@/components/hud/top-bar"
 import { LoginGate } from "@/components/login-gate"
 import type { MicButtonHandle } from "@/components/mic-button"
@@ -26,17 +30,31 @@ import {
   JarvisApiError,
   JarvisAuthError,
   JarvisNetworkError,
+  getSessionContext,
   getStatus,
-  invoke,
+  invokeStream,
   type MarketHistory,
   type MarketSnapshot,
   type NewsResult,
   type PortfolioResult,
   type ToolResult,
 } from "@/lib/jarvis-client"
+import type { Attachment } from "@/lib/attachments"
 import { audioAmplitude } from "@/lib/audio-amplitude"
+import { captureFrame, startCamera, stopCamera } from "@/lib/camera"
+import {
+  consoleState,
+  runConsoleActions,
+  runWorkshopActions,
+  type ConsoleAction,
+  type WorkshopAction,
+} from "@/lib/console-commands"
+import { emitCore } from "@/lib/core-events"
+import { startHands, stopHands } from "@/lib/hand-tracking"
 import { stopNarration } from "@/lib/narration"
 import { sfx, unlockAudio } from "@/lib/sfx"
+import { SpeechQueue } from "@/lib/speech-queue"
+import { useSpatial } from "@/lib/spatial-store"
 import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store"
 import { useBoot } from "@/lib/use-boot"
 import {
@@ -153,7 +171,7 @@ function Shell({
     listening,
     gridVisible,
     setStatus: setAgentStatus,
-    setTurns,
+    setContext,
     addToolsUsed,
     setFps,
     setVoice,
@@ -167,6 +185,7 @@ function Shell({
   const [pending, setPending] = useState(false)
   const [speaking, setSpeaking] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [standby, setStandby] = useState(false)
 
   const [liveMarketSnapshot, setLiveMarketSnapshot] = useState<MarketSnapshot | undefined>()
   const [liveMarketHistory, setLiveMarketHistory] = useState<MarketHistory | undefined>()
@@ -183,6 +202,12 @@ function Shell({
       : pending
         ? "thinking"
         : "idle"
+
+  // Serious mode runs its own ambience layer. Keyed on the mode itself,
+  // so it also applies on load after a reload in serious mode.
+  useEffect(() => {
+    sfx.setAmbience(mode)
+  }, [mode])
 
   useEffect(() => {
     setAgentStatus(agentStatus)
@@ -203,7 +228,10 @@ function Shell({
     // sfx to make a sound.
     const click = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null
-      if (target?.closest("button, [role=\"button\"], a[href]")) sfx.click()
+      if (target?.closest("button, [role=\"button\"], a[href]")) {
+        sfx.click()
+        emitCore({ kind: "click", x: event.clientX, y: event.clientY })
+      }
     }
     window.addEventListener("pointerdown", click)
 
@@ -275,19 +303,77 @@ function Shell({
     }
   }, [token, setConnections, pushLog, notify])
 
-  // Assistant turns held in the backend's rolling context window.
+  // Signing out unmounts the shell but not the camera stream; without
+  // this the light would stay on behind the login screen.
   useEffect(() => {
-    setTurns(messages.filter((message) => message.role === "assistant").length)
-  }, [messages, setTurns])
+    return () => {
+      stopHands()
+      stopCamera()
+      useSpatial.getState().setCameraOn(false)
+    }
+  }, [])
+
+  // How much Jarvis remembers of this session, read from the backend on
+  // load. The chat on screen starts empty after a reload, but the session
+  // and its memory carry on, so counting messages here would read 0 while
+  // he still remembers the last several exchanges.
+  useEffect(() => {
+    let cancelled = false
+    getSessionContext(sessionId, token)
+      .then((context) => {
+        if (!cancelled && context.turns !== null) setContext(context.turns, context.window)
+      })
+      .catch(() => {
+        // Leaves the gauge where it is; the next reply corrects it.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [sessionId, token, setContext])
+
+  // Close the console: everything that runs stops, and the shell shows a
+  // standby screen (a browser tab cannot close itself unless a script
+  // opened it, so window.close() is only a best effort).
+  function closeConsole() {
+    stopHands()
+    stopCamera()
+    useSpatial.getState().setCameraOn(false)
+    useSpatial.getState().setWorkshopOpen(false)
+    useJarvis.getState().setActiveTab(null)
+    useJarvis.getState().setSettingsOpen(false)
+    sfx.sleep()
+    pushLog("NONE", "Console closed by Jarvis")
+    setStandby(true)
+    window.close()
+  }
+
+  function wake() {
+    sfx.wake()
+    setStandby(false)
+  }
 
   function handleToolResults(results: ToolResult[]) {
     let firstPanel: TabKey | null = null
     for (const entry of results) {
+      // Jarvis operating the console himself.
+      const control = entry.result as { ok?: boolean; actions?: unknown[] } | null
+      if (control?.ok && Array.isArray(control.actions)) {
+        if (entry.name === "console") {
+          void runConsoleActions(control.actions as ConsoleAction[], { setCamera, setHands, closeConsole })
+        }
+        if (entry.name === "workshop") runWorkshopActions(control.actions as WorkshopAction[])
+      }
       if (entry.name === "market_analysis") setLiveMarketSnapshot(entry.result as MarketSnapshot)
       if (entry.name === "market_history") setLiveMarketHistory(entry.result as MarketHistory)
       if (entry.name === "news_feed") setLiveNews(entry.result as NewsResult)
       if (entry.name === "portfolio") setLivePortfolio(entry.result as PortfolioResult)
       const mapped = TOOL_PANEL_MAP[entry.name]
+      // A panel Jarvis opened or closed on purpose wins over the automatic
+      // "show the data behind that answer" switch.
+      if (entry.name === "console" || entry.name === "workshop") {
+        pushLog("OK", `Jarvis ran ${entry.name}`)
+        continue
+      }
       if (mapped && !firstPanel) firstPanel = mapped
       pushLog("OK", `Tool ${entry.name}`)
 
@@ -303,32 +389,163 @@ function Shell({
     if (firstPanel) useJarvis.getState().setActiveTab(firstPanel)
   }
 
-  async function handleSend(text: string, viaVoice: boolean) {
+  async function toggleCamera() {
+    await setCamera(!useSpatial.getState().cameraOn)
+  }
+
+  async function setCamera(on: boolean) {
+    const spatial = useSpatial.getState()
+    if (on === spatial.cameraOn) return
+    if (!on) {
+      stopHands()
+      stopCamera()
+      spatial.setCameraOn(false)
+      pushLog("NONE", "Camera off")
+      return
+    }
+    try {
+      await startCamera()
+      spatial.setCameraOn(true)
+      pushLog("OK", "Camera on")
+    } catch (err) {
+      const denied = err instanceof DOMException && err.name === "NotAllowedError"
+      notify(
+        "warning",
+        denied ? "Camera blocked" : "Camera unavailable",
+        denied
+          ? "Allow camera access for this site in the browser's address bar, then try again."
+          : "No camera could be opened. Check that one is connected and not in use."
+      )
+      pushLog("WARN", denied ? "Camera permission denied" : "Camera unavailable")
+    }
+  }
+
+  async function toggleHands() {
+    await setHands(useSpatial.getState().handsStatus !== "tracking")
+  }
+
+  async function setHands(on: boolean) {
+    const tracking = useSpatial.getState().handsStatus === "tracking"
+    if (on === tracking) return
+    if (!on) {
+      stopHands()
+      pushLog("NONE", "Hand tracking off")
+      return
+    }
+    // Hands need the camera; switching them on brings it up first.
+    if (!useSpatial.getState().cameraOn) await setCamera(true)
+    if (!useSpatial.getState().cameraOn) return
+    try {
+      await startHands()
+      pushLog("OK", "Hand tracking on")
+      notify("info", "Hands online", "Pinch to grab or tap. Pinch a hologram with both hands to resize it.")
+    } catch {
+      notify("warning", "Hand tracking failed", "The hand model could not load. Check the connection and try again.")
+      pushLog("ERR", "Hand tracking failed to load")
+    }
+  }
+
+  async function handleSend(text: string, viaVoice: boolean, look = false, attachments: Attachment[] = []) {
+    // While the camera is on every message carries a frame, and Jarvis
+    // decides whether the question needs it; the frame only goes on to
+    // the vision model if he does, or if Look was pressed.
+    const frame = useSpatial.getState().cameraOn ? captureFrame() : null
     setMessages((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), role: "user", content: text, time: clockTime() },
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: text,
+        time: clockTime(),
+        attachments: attachments.map(({ name, preview }) => ({ name, preview })),
+      },
     ])
     setPending(true)
     setError(null)
     sfx.send()
+    emitCore({ kind: "send" })
     pushLog("NONE", viaVoice ? "Voice command received" : "Command received")
 
+    // The reply appears, and is spoken, while it is still being written.
+    // Its message goes in empty and fills as text arrives; the voice line
+    // (which the server sends first) is spoken a sentence at a time.
+    const replyId = crypto.randomUUID()
+    let replyShown = false
+    const updateReply = (change: (message: ChatMessageData) => ChatMessageData) => {
+      if (!replyShown) {
+        replyShown = true
+        setMessages((prev) => [
+          ...prev,
+          change({ id: replyId, role: "assistant", content: "", time: clockTime(), streaming: true }),
+        ])
+        return
+      }
+      setMessages((prev) => prev.map((m) => (m.id === replyId ? change(m) : m)))
+    }
+    const voice = new SpeechQueue(token, {
+      onStart: () => setSpeaking(true),
+      onEnd: (completed) => {
+        setSpeaking(false)
+        // After a spoken exchange the mic reopens for the answer, unless
+        // the speech was cut off by a barge-in (which opens it itself).
+        if (completed && viaVoice) micRef.current?.startRecording()
+      },
+      onAuthError,
+    })
+
     try {
-      const result = await invoke(text, sessionId, token)
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: result.response,
-          spoken: result.spoken,
-          time: clockTime(),
-          toolsUsed: result.tools_used,
-          autoPlay: true,
-          reopenMicAfter: viaVoice,
-        },
-      ])
-      if (result.tool_results.length > 0) handleToolResults(result.tool_results)
+      const result = await invokeStream(
+        text,
+        sessionId,
+        token,
+        { image: frame?.base64, look, consoleState: consoleState(), attachments },
+        (event) => {
+          if (event.type === "text") updateReply((m) => ({ ...m, content: m.content + event.delta }))
+          else if (event.type === "reset") updateReply((m) => ({ ...m, content: "" }))
+          else if (event.type === "spoken") voice.push(event.delta)
+          else if (event.type === "tool") {
+            // Acted on the moment each tool finishes, not at the end: a
+            // panel or workshop change lands while he is still talking.
+            handleToolResults([{ name: event.name, result: event.result }])
+            emitCore({ kind: "tool", name: event.name })
+          }
+        }
+      )
+      voice.finish(result.spoken)
+      setContext(result.context_turns, result.context_window)
+      // One line per turn in the system log: which step cost what, so a
+      // slow reply can be pinned on the model, a tool, or memory.
+      if (result.timings?.length) {
+        const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`
+        const steps = result.timings
+          .filter((t) => t.step !== "total")
+          .map((t) => `${(t.model ?? t.name ?? t.step).replace("gemini-", "")} ${secs(t.ms)}`)
+        const total = result.timings.find((t) => t.step === "total")
+        pushLog("NONE", `${steps.join(" · ")}${total ? ` = ${secs(total.ms)}` : ""}`)
+      }
+      emitCore({ kind: "reply" })
+      const sight = result.tool_results.find((entry) => entry.name === "camera_look")
+      const seen = sight?.result as { ok?: boolean; description?: string } | undefined
+      if (frame && seen?.ok && seen.description) {
+        // What he saw, pinned beside the frame he saw it in, so the
+        // answer can be checked against the picture.
+        useSpatial.getState().addHologram({
+          kind: "vision",
+          title: `VISUAL · ${clockTime()}`,
+          body: seen.description,
+          image: frame.thumbnail,
+        })
+        pushLog("OK", "Frame analysed")
+      }
+      // The finished reply replaces what streamed in: the server's final
+      // text is the authoritative one (tags stripped, whitespace settled).
+      updateReply((m) => ({
+        ...m,
+        content: result.response,
+        spoken: result.spoken,
+        toolsUsed: result.tools_used,
+        streaming: false,
+      }))
 
       // Render's free tier sleeps after 15 minutes. A multi-second first
       // call is the instance waking up, not Jarvis thinking slowly, and
@@ -342,6 +559,8 @@ function Shell({
         )
       }
     } catch (err) {
+      voice.stop()
+      if (replyShown) updateReply((m) => ({ ...m, streaming: false }))
       if (err instanceof JarvisAuthError) {
         pushLog("ERR", "Session rejected")
         notify("warning", "Session expired", "Sign in again to continue.")
@@ -355,6 +574,7 @@ function Shell({
           : "Something went wrong."
       setError(message)
       sfx.alert()
+      emitCore({ kind: "error" })
       pushLog("ERR", message)
       notify("warning", "Request failed", message)
     } finally {
@@ -432,7 +652,7 @@ function Shell({
           <div className="relative aspect-square h-full max-h-full">
             <StatusRing visible={boot.statusRing} />
             <div className="absolute inset-[13%]">
-              <ArcReactor
+              <CoreCipher
                 status={agentStatus}
                 onToggle={handleReactorToggle}
                 ringsRevealed={boot.rings}
@@ -488,9 +708,10 @@ function Shell({
         <BottomBar
           token={token}
           disabled={pending}
-          onSend={handleSend}
+          onSend={(message, viaVoice, attachments) => handleSend(message, viaVoice, false, attachments)}
           onAuthError={onAuthError}
           micRef={micRef}
+          onToggleCamera={toggleCamera}
         />
       </motion.div>
 
@@ -511,7 +732,32 @@ function Shell({
         </div>
       </DataWindow>
 
+      <HologramLayer />
+      <Workshop token={token} />
+      <CameraPreview
+        lookDisabled={pending}
+        onLook={() => handleSend("What do you see?", false, true)}
+        onToggleHands={toggleHands}
+        onClose={toggleCamera}
+      />
+      <HandCursors />
+
       <SettingsPanel sessionId={sessionId} onSignOut={onSignOut} />
+
+      {standby && (
+        <button
+          type="button"
+          onClick={wake}
+          className="fixed inset-0 flex cursor-pointer flex-col items-center justify-center"
+          style={{ zIndex: 2000, background: "#020306", border: 0, gap: "var(--sp-3)" }}
+          aria-label="Wake J.A.R.V.I.S."
+        >
+          <span className="t-header" style={{ color: "var(--accent)", fontSize: 18, letterSpacing: "0.3em" }}>
+            J.A.R.V.I.S.
+          </span>
+          <span className="t-time">STANDING BY · CLICK TO RESUME</span>
+        </button>
+      )}
       <GlobalEffects />
     </div>
   )

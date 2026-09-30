@@ -1,26 +1,40 @@
+import base64
+import binascii
 import json
+import logging
 import re
 import time
 import uuid
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
+import httpx
+from google.genai import errors as genai_errors
+from google.genai import types
+
 from app.core.config import get_settings
-from app.core.groq_client import get_groq_client
+from app.core.gemini import AllModelsExhausted, GeminiNotConfigured, generate_stream
 from app.core.local_time import now_for_prompt
 from app.memory.interaction_log import fetch_recent_turns, write_interaction
 from app.memory.semantic_recall import get_relevant_context, record_interaction
-from app.memory.session_buffer import append_turn, get_recent_turns
+from app.memory.session_buffer import append_turn, count_turns, get_recent_turns
+from app.services.situation import situation_note
+from app.tools.camera import CAMERA_LOOK_SCHEMA, CAMERA_ON_NOTE, make_camera_look
+from app.tools.console_control import (
+    CONSOLE_CONTROL_NOTE,
+    CONSOLE_SCHEMA,
+    WORKSHOP_SCHEMA,
+    console,
+    state_note,
+    workshop,
+)
 from app.tools.schemas import DISPATCH, TOOL_SCHEMAS
 
 MAX_ITERATIONS = 8
 
-# How many past tool-call rounds (one assistant tool_calls message + its
-# tool-result messages) get resent to Groq per iteration, and a per-result
-# size guard — bounds the growing request payload on long multi-step turns
-# without touching the full, authoritative `messages` accumulator or the
-# audit trail written to Supabase/Pinecone.
-MAX_TOOL_ROUNDS_IN_CONTEXT = 4
+# Per-result size guard on what goes back to the model. The full result
+# still lands in the audit trail (Supabase/Pinecone) and the console.
 TOOL_RESULT_CHAR_CAP = 4000
 
 # Separate, independent pool from FastAPI/Starlette's own threadpool (which
@@ -30,6 +44,13 @@ TOOL_RESULT_CHAR_CAP = 4000
 # Finnhub/Alpaca/Stripe/NewsAPI/Tavily/GitHub/Google/Spotify), so threads
 # are the right primitive; no async rewrite of the route/handlers needed.
 _TOOL_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="jarvis-tool")
+
+# Saving a finished turn (Supabase log, Pinecone memory) happens after the
+# reply is returned, on its own small pool, so the reply never waits on it
+# and a slow write never starves the tool pool.
+_PERSIST_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="jarvis-persist")
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "You are J.A.R.V.I.S. (Just A Rather Very Intelligent System) — Andrew Thomas's personal AI "
@@ -119,11 +140,13 @@ SYSTEM_PROMPT = (
     "Keep replies tight and conversational, not a wall of text — this persona is a voice, not "
     "an excuse for padding.\n\n"
     "TWO CHANNELS, SCREEN AND VOICE: every reply is shown on screen AND read aloud, and the two "
-    "are written separately. First write the on-screen reply: plain text (the screen does not "
-    "render markdown, so no **bold**, # headers, backticks or tables), but otherwise complete: "
-    "exact figures, tickers, symbols, URLs, email addresses, IDs and code all belong here. Then "
-    "END EVERY REPLY with a <spoken>...</spoken> block: what you would actually say out loud "
-    "to Andrew, in the same voice. It is not a transcript of the screen text. Leave out anything "
+    "are written separately. BEGIN EVERY REPLY with a <spoken>...</spoken> block - it comes "
+    "first so your voice can start while the rest is still being written - holding what you "
+    "would actually say out loud to Andrew, in the same voice. Then write the on-screen reply: "
+    "plain text (the screen does not render markdown, so no **bold**, # headers, backticks or "
+    "tables), but otherwise complete: exact figures, tickers, symbols, URLs, email addresses, "
+    "IDs and code all belong there. The spoken block is not a transcript of the screen text. "
+    "Leave out anything "
     "that trips up a conversation when heard (URLs, IDs, code, long number lists, symbols) and "
     "point at the screen instead (\"the full list is on screen, sir\"). Round numbers the way a "
     "person would say them (\"about three hundred thirty-three dollars\"). Keep it to one to "
@@ -159,14 +182,27 @@ def split_reply(text: str) -> tuple[str, str]:
     return display or spoken, spoken or display
 
 
-def _execute_tool_call(tool_call) -> tuple[str, dict, dict]:
-    name = tool_call.function.name
-    try:
-        args = json.loads(tool_call.function.arguments or "{}")
-    except json.JSONDecodeError:
-        args = {}
+def _declaration(schema: dict) -> types.FunctionDeclaration:
+    """TOOL_SCHEMAS are OpenAI-shaped (what Groq took); Gemini takes the
+    same JSON Schema, just wrapped differently."""
+    fn = schema["function"]
+    return types.FunctionDeclaration(
+        name=fn["name"],
+        description=fn.get("description", ""),
+        parameters_json_schema=fn.get("parameters") or {"type": "object", "properties": {}},
+    )
 
-    handler = DISPATCH.get(name)
+
+_DECLARATIONS = [_declaration(schema) for schema in TOOL_SCHEMAS]
+_CAMERA_DECLARATION = _declaration(CAMERA_LOOK_SCHEMA)
+_CONSOLE_DECLARATIONS = [_declaration(CONSOLE_SCHEMA), _declaration(WORKSHOP_SCHEMA)]
+
+
+def _execute_tool_call(call: types.FunctionCall, handlers: dict = DISPATCH) -> tuple[str, dict, dict, int]:
+    started = time.monotonic()
+    name = call.name or ""
+    args = dict(call.args or {})
+    handler = handlers.get(name)
     if handler is None:
         result = {"ok": False, "error": f"Unknown tool: {name}"}
     else:
@@ -174,38 +210,143 @@ def _execute_tool_call(tool_call) -> tuple[str, dict, dict]:
             result = handler(args)
         except Exception as exc:  # noqa: BLE001 — never crash the loop on a tool error
             result = {"ok": False, "error": str(exc)}
-    return name, args, result
+    return name, args, result, int((time.monotonic() - started) * 1000)
 
 
-def _build_request_messages(messages: list[dict], prefix_len: int) -> list[dict]:
-    """The payload actually sent to Groq: the full fixed prefix (system
-    prompt, recall block, session history, user message) + only the most
-    recent MAX_TOOL_ROUNDS_IN_CONTEXT tool-call rounds. `messages` itself
-    is never mutated — this is a fresh, request-scoped view, so the loop's
-    own continuation logic and the audit trail stay correct either way.
-    A "round" is one assistant message with tool_calls plus every tool
-    message immediately following it — dropped as a whole unit, since
-    Groq's function-calling format requires each tool message's
-    tool_call_id to correlate to a tool_calls entry earlier in the same
-    request; splitting a round would break that pairing.
-    """
-    prefix, tail = messages[:prefix_len], messages[prefix_len:]
+def _persist(**turn) -> None:
+    """The durable record of a turn, written off the request path."""
+    try:
+        write_interaction(
+            interaction_id=turn["interaction_id"],
+            session_id=turn["session_id"],
+            user_message=turn["message"],
+            assistant_response=turn["final_text"],
+            tools_used=turn["tools_used"],
+            tool_call_trace=turn["tool_call_trace"],
+            model=turn["model"],
+            latency_ms=turn["latency_ms"],
+        )
+    except Exception:  # noqa: BLE001 — the reply has gone; losing the log must not raise into nothing
+        logger.warning("write_interaction failed for %s", turn["interaction_id"], exc_info=True)
+    record_interaction(
+        turn["interaction_id"],
+        turn["session_id"],
+        turn["message"],
+        turn["final_text"],
+        turn["tools_used"],
+        turn["created_at"],
+        model=turn["model"],
+    )
 
-    rounds: list[list[dict]] = []
-    for msg in tail:
-        if msg.get("role") == "assistant" and msg.get("tool_calls"):
-            rounds.append([msg])
-        elif rounds:
-            rounds[-1].append(msg)
 
-    kept = [m for r in rounds[-MAX_TOOL_ROUNDS_IN_CONTEXT:] for m in r]
+def _capped(result: dict) -> dict:
+    payload = json.dumps(result, default=str)
+    if len(payload) <= TOOL_RESULT_CHAR_CAP:
+        return json.loads(payload)
+    return {"truncated_json": payload[:TOOL_RESULT_CHAR_CAP] + "...[truncated]"}
 
-    def _capped(msg: dict) -> dict:
-        if msg.get("role") == "tool" and len(msg.get("content", "")) > TOOL_RESULT_CHAR_CAP:
-            return {**msg, "content": msg["content"][:TOOL_RESULT_CHAR_CAP] + "...[truncated]"}
-        return msg
 
-    return prefix + [_capped(m) for m in kept]
+def _history_contents(turns: list[dict]) -> list[types.Content]:
+    """Stored turns as Gemini contents. Consecutive same-role turns (a user
+    message whose reply was never stored) are merged, since Gemini expects
+    user and model to alternate."""
+    contents: list[types.Content] = []
+    for turn in turns:
+        role = "model" if turn["role"] == "assistant" else "user"
+        part = types.Part.from_text(text=turn["content"])
+        if contents and contents[-1].role == role:
+            contents[-1].parts.append(part)
+        else:
+            contents.append(types.Content(role=role, parts=[part]))
+    return contents
+
+
+def _reseed(base: list[types.Content], executed: list[tuple[str, dict, dict]]) -> list[types.Content]:
+    """The conversation for a model taking over mid-turn. Function-call
+    history carries thought signatures bound to the model that wrote it,
+    so the new model gets the turn from the top plus what the tools have
+    already returned, as text - and does not re-run tools with side
+    effects (a logged pilot, an opened issue) just because it switched."""
+    lines = [
+        "Tool results already gathered for this message (another model started the turn). "
+        "Use them; call a tool again only if something is missing."
+    ]
+    for name, args, result in executed:
+        lines.append(f"- {name}({json.dumps(args, default=str)}) -> {json.dumps(_capped(result), default=str)}")
+    contents = list(base)
+    contents[-1] = types.Content(
+        role="user", parts=[*contents[-1].parts, types.Part.from_text(text="\n".join(lines))]
+    )
+    return contents
+
+
+# What the model can take natively as bytes; anything else must arrive as
+# text (the console reads text-like files itself).
+_NATIVE_MIME = ("image/png", "image/jpeg", "image/webp", "image/gif", "image/heic", "image/heif", "application/pdf")
+_TEXT_ATTACHMENT_CHARS = 120_000
+
+
+def _attachment_parts(attachments: list[dict]) -> list[types.Part]:
+    parts: list[types.Part] = []
+    for attachment in attachments:
+        name = attachment.get("name") or "file"
+        mime = (attachment.get("mime") or "").lower()
+        if attachment.get("text") is not None:
+            body = attachment["text"]
+            clipped = len(body) > _TEXT_ATTACHMENT_CHARS
+            parts.append(
+                types.Part.from_text(
+                    text=f"[Attached file: {name}]\n{body[:_TEXT_ATTACHMENT_CHARS]}"
+                    + ("\n[...truncated]" if clipped else "")
+                )
+            )
+        elif attachment.get("data") and mime in _NATIVE_MIME:
+            try:
+                data = base64.b64decode(attachment["data"], validate=True)
+            except (ValueError, binascii.Error):
+                parts.append(types.Part.from_text(text=f"[Attached file {name} could not be decoded.]"))
+                continue
+            parts.append(types.Part.from_text(text=f"[Attached file: {name}]"))
+            parts.append(types.Part.from_bytes(data=data, mime_type=mime))
+        else:
+            parts.append(types.Part.from_text(text=f"[Attached file {name} ({mime or 'unknown type'}) is not a format I can read.]"))
+    return parts
+
+
+_TAG = re.compile(r"(</?spoken>)", re.IGNORECASE)
+
+
+def _stream_split(text: str) -> tuple[str, str]:
+    """(display, spoken) for a reply still being written. A tag cut off at
+    the end ("<spo") is held back until the next chunk decides it, so no
+    fragment of a tag ever reaches the screen or the voice."""
+    lowered = text.lower()
+    for tag in ("<spoken>", "</spoken>"):
+        for k in range(len(tag) - 1, 0, -1):
+            if lowered.endswith(tag[:k]):
+                text = text[: len(text) - k]
+                lowered = lowered[: len(lowered) - k]
+                break
+    display: list[str] = []
+    spoken: list[str] = []
+    inside = False
+    for piece in _TAG.split(text):
+        if piece.lower() == "<spoken>":
+            inside = True
+        elif piece.lower() == "</spoken>":
+            inside = False
+        else:
+            (spoken if inside else display).append(piece)
+    return "".join(display), "".join(spoken)
+
+
+def _quota_message(exc: AllModelsExhausted) -> str:
+    wait = max(1, int((exc.retry_at - time.time()) / 60))
+    when = f"in about {wait} minute{'s' if wait != 1 else ''}" if wait < 90 else f"in about {round(wait / 60)} hours"
+    return (
+        "Every model I have on the free tier is at its limit for the moment, sir. "
+        f"The first one frees up {when}."
+    )
 
 
 TERMINAL_MODE = (
@@ -226,73 +367,217 @@ TERMINAL_MODE = (
 )
 
 
-def run_invoke(message: str, session_id: str | None, channel: str = "console") -> dict:
+def run_invoke(*args, **kwargs) -> dict:
+    """One whole turn, for callers that want the finished reply (/invoke,
+    the terminal CLI): the streamed turn, run to its end."""
+    for event in stream_invoke(*args, **kwargs):
+        if event["type"] == "done":
+            return {k: v for k, v in event.items() if k != "type"}
+    raise RuntimeError("The turn ended without a result.")
+
+
+def stream_invoke(
+    message: str,
+    session_id: str | None,
+    channel: str = "console",
+    image: str | None = None,
+    image_type: str = "image/jpeg",
+    look: bool = False,
+    console_state: dict | None = None,
+    attachments: list[dict] | None = None,
+) -> Iterator[dict]:
+    """A turn as a stream of events, for /invoke/stream:
+
+      text    {"delta"}           more of the on-screen reply
+      spoken  {"delta"}           more of the voice line (it comes first)
+      reset   {}                  text so far was a preamble to tool calls; drop it
+      tool    {"name", "result"}  a tool finished (console actions run on this)
+      done    {...}               the finished turn, as /invoke returns it
+
+    `image` is a base64 camera frame the console attaches while its camera
+    is on; `look` means Andrew pressed Look, so the frame is described up
+    front instead of waiting for the model to ask for it."""
     session_id = session_id or str(uuid.uuid4())
     settings = get_settings()
-    client = get_groq_client()
     started = time.monotonic()
 
-    messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+    system: list[str] = [
+        SYSTEM_PROMPT,
         # Jarvis has no clock of his own; without this, "today" is a guess.
-        {"role": "system", "content": now_for_prompt()},
+        now_for_prompt(),
     ]
     if channel == "terminal":
-        messages.append({"role": "system", "content": TERMINAL_MODE})
+        system.append(TERMINAL_MODE)
 
-    recall_block = get_relevant_context(message)
-    if recall_block:
-        messages.append({"role": "system", "content": recall_block})
+    declarations = _DECLARATIONS
+    handlers = DISPATCH
+    # The console can be driven from any console message; the terminal has
+    # no console to drive.
+    if channel == "console":
+        declarations = [*_DECLARATIONS, *_CONSOLE_DECLARATIONS]
+        handlers = {**DISPATCH, "console": console, "workshop": workshop}
+        system.append(CONSOLE_CONTROL_NOTE)
+        live_state = state_note(console_state)
+        if live_state:
+            system.append(live_state)
+    camera_look = None
+    # The terminal has no camera, so a frame there could only be a bug.
+    if image and channel == "console":
+        camera_look = make_camera_look(image, image_type)
+        declarations = [*declarations, _CAMERA_DECLARATION]
+        handlers = {**handlers, "camera_look": camera_look}
+        system.append(CAMERA_ON_NOTE)
 
+    # Where the time goes, per step, returned to the console's log.
+    timings: list[dict] = []
+
+    # Long-term recall (Pinecone) and recent history (Redis, else Supabase)
+    # are independent network round trips; run them side by side.
+    step = time.monotonic()
+    recall_future = _TOOL_EXECUTOR.submit(get_relevant_context, message)
     recent_turns = get_recent_turns(session_id)
     if not recent_turns:  # None (Redis failure) or [] (empty/expired) — fall back to Supabase
         recent_turns = fetch_recent_turns(session_id)
-    messages.extend(recent_turns)
-
-    messages.append({"role": "user", "content": message})
-    prefix_len = len(messages)
+    # The moment he is speaking in (hour, day, gap, calendar), built while
+    # recall is still in flight.
+    situation_future = _TOOL_EXECUTOR.submit(situation_note, session_id, recent_turns)
+    recall_block = recall_future.result()
+    if recall_block:
+        system.append(recall_block)
+    try:
+        system.append(situation_future.result(timeout=3))
+    except Exception:  # noqa: BLE001 — tone guidance is never worth failing a turn over
+        logger.warning("situation note failed", exc_info=True)
+    timings.append({"step": "memory", "ms": int((time.monotonic() - step) * 1000)})
 
     tools_used: list[str] = []
     tool_call_trace: list[dict] = []
+    executed: list[tuple[str, dict, dict]] = []
     final_text = ""
 
-    for _ in range(MAX_ITERATIONS):
-        response = client.chat.completions.create(
-            model=settings.groq_model,
-            messages=_build_request_messages(messages, prefix_len),
-            tools=TOOL_SCHEMAS,
-            tool_choice="auto",
-            temperature=0.3,
-            # Code needs room; a spoken reply shouldn't run long.
-            max_completion_tokens=4096 if channel == "terminal" else 1024,
-        )
-        choice = response.choices[0].message
-        messages.append(choice.model_dump(exclude_none=True))
+    user_parts = [types.Part.from_text(text=message)]
+    user_parts.extend(_attachment_parts(attachments or []))
+    # History keeps a note of what was attached, not the files themselves.
+    if attachments:
+        message = f"{message}\n[Attached: {', '.join(a['name'] for a in attachments)}]"
+    # Look pressed: describe the frame before the first call, so the answer
+    # is grounded in it even if the model would not have thought to ask.
+    if look and camera_look is not None:
+        args = {"question": message}
+        result = camera_look(args)
+        tools_used.append("camera_look")
+        tool_call_trace.append({"name": "camera_look", "args": args, "result": result})
+        seen = result.get("description") or f"(the look failed: {result.get('error')})"
+        user_parts.append(types.Part.from_text(text=f"[Camera look taken for this message. It showed: {seen}]"))
 
-        if not choice.tool_calls:
-            final_text = choice.content or ""
+    base = _history_contents(recent_turns)
+    if base and base[-1].role == "user":
+        base[-1].parts.extend(user_parts)
+    else:
+        base.append(types.Content(role="user", parts=user_parts))
+    contents = list(base)
+
+    config = types.GenerateContentConfig(
+        system_instruction="\n\n".join(system),
+        tools=[types.Tool(function_declarations=declarations)],
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        # Low thinking keeps a spoken exchange quick. Thinking tokens count
+        # against the output limit, hence the room above a reply's length.
+        thinking_config=types.ThinkingConfig(thinking_level="low"),
+        max_output_tokens=8192 if channel == "terminal" else 4096,
+    )
+
+    turn_model: str | None = None
+    used_model = ""
+    for _ in range(MAX_ITERATIONS):
+        step = time.monotonic()
+        try:
+            if turn_model and executed:
+                # Tool history in `contents` is bound to turn_model, so only
+                # it may continue. If it has run out, hand the turn to the
+                # ladder as text instead of as that history.
+                try:
+                    chunks, used_model = generate_stream(contents, config, only=turn_model)
+                except AllModelsExhausted:
+                    contents = _reseed(base, executed)
+                    chunks, used_model = generate_stream(contents, config)
+            else:
+                chunks, used_model = generate_stream(contents, config, prefer=turn_model)
+        except AllModelsExhausted as exc:
+            final_text = _quota_message(exc)
             break
+        except GeminiNotConfigured:
+            final_text = "My reasoning model isn't configured, sir: GEMINI_API_KEY needs to be set on the server."
+            break
+        turn_model = used_model
+
+        # Read the round as it streams: text goes straight out as screen
+        # and voice deltas; function calls are collected for after.
+        round_parts: list[types.Part] = []
+        calls: list[types.FunctionCall] = []
+        text = ""
+        sent_display = sent_spoken = 0
+        finish = None
+        try:
+            for chunk in chunks:
+                candidate = chunk.candidates[0] if chunk.candidates else None
+                if candidate is None:
+                    continue
+                finish = candidate.finish_reason or finish
+                for part in (candidate.content.parts if candidate.content else None) or []:
+                    round_parts.append(part)
+                    if part.function_call:
+                        calls.append(part.function_call)
+                    elif part.text and not part.thought:
+                        text += part.text
+                        display, spoken = _stream_split(text)
+                        if len(spoken) > sent_spoken:
+                            yield {"type": "spoken", "delta": spoken[sent_spoken:]}
+                            sent_spoken = len(spoken)
+                        if len(display) > sent_display:
+                            yield {"type": "text", "delta": display[sent_display:]}
+                            sent_display = len(display)
+        except (genai_errors.APIError, httpx.HTTPError) as exc:
+            logger.warning("Gemini stream broke on %s: %s", used_model, exc)
+            final_text = text or "The line to my reasoning model dropped mid-thought, sir. Would you ask again?"
+            break
+        timings.append({"step": "model", "model": used_model, "ms": int((time.monotonic() - step) * 1000)})
+
+        if not calls:
+            final_text = text
+            if not final_text.strip():
+                final_text = f"I lost the thread of that one, sir ({finish or 'empty reply'}). Would you ask again?"
+            break
+
+        # Text before a tool call is a preamble ("let me check"), not the
+        # reply; the console drops what it showed of it.
+        if text:
+            yield {"type": "reset"}
+
+        # The model's own turn goes back verbatim: it carries the thought
+        # signatures Gemini needs to continue a function-calling turn.
+        contents.append(types.Content(role="model", parts=round_parts))
 
         # Submitted up front so every call in this round starts running
         # concurrently; results are applied in original order (not
         # completion order) so tool_call_trace/tools_used stay stable.
-        futures = [_TOOL_EXECUTOR.submit(_execute_tool_call, tc) for tc in choice.tool_calls]
-        for tool_call, future in zip(choice.tool_calls, futures):
+        futures = [_TOOL_EXECUTOR.submit(_execute_tool_call, call, handlers) for call in calls]
+        parts: list[types.Part] = []
+        for call, future in zip(calls, futures):
             try:
-                name, args, result = future.result()
+                name, args, result, ms = future.result()
             except Exception as exc:  # noqa: BLE001 — defense-in-depth; _execute_tool_call already catches handler errors
-                name, args, result = tool_call.function.name, {}, {"ok": False, "error": str(exc)}
+                name, args, result, ms = call.name or "", {}, {"ok": False, "error": str(exc)}, 0
 
             tools_used.append(name)
-            tool_call_trace.append({"name": name, "args": args, "result": result})
-            messages.append(
-                {
-                    "tool_call_id": tool_call.id,
-                    "role": "tool",
-                    "name": name,
-                    "content": json.dumps(result),
-                }
+            tool_call_trace.append({"name": name, "args": args, "result": result, "ms": ms})
+            timings.append({"step": "tool", "name": name, "ms": ms})
+            yield {"type": "tool", "name": name, "result": result}
+            executed.append((name, args, result))
+            parts.append(
+                types.Part(function_response=types.FunctionResponse(id=call.id, name=name, response=_capped(result)))
             )
+        contents.append(types.Content(role="user", parts=parts))
     else:
         final_text = (
             "I've rather run up against my tool-call ceiling on that one, sir. "
@@ -307,25 +592,48 @@ def run_invoke(message: str, session_id: str | None, channel: str = "console") -
     interaction_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat()
 
-    write_interaction(
+    # Redis first and in-line: the next message reads its history from
+    # there, so it must land before this reply does. The rest can follow.
+    append_turn(session_id, interaction_id, message, final_text, created_at)
+    _PERSIST_EXECUTOR.submit(
+        _persist,
         interaction_id=interaction_id,
         session_id=session_id,
-        user_message=message,
-        assistant_response=final_text,
+        message=message,
+        final_text=final_text,
         tools_used=tools_used,
         tool_call_trace=tool_call_trace,
-        model=settings.groq_model,
+        model=used_model or "none",
         latency_ms=latency_ms,
+        created_at=created_at,
     )
-    append_turn(session_id, interaction_id, message, final_text, created_at)
-    record_interaction(interaction_id, session_id, message, final_text, tools_used, created_at)
+    timings.append({"step": "total", "ms": latency_ms})
+    logger.info(
+        "invoke %sms: %s",
+        latency_ms,
+        ", ".join(f"{t.get('model') or t.get('name') or t['step']} {t['ms']}ms" for t in timings[:-1]),
+    )
 
     tool_results = [{"name": t["name"], "result": t["result"]} for t in tool_call_trace]
 
-    return {
+    # The console's CTX gauge. Read back from Redis rather than counted in
+    # the browser, which starts from zero on every reload even though the
+    # session (and its memory) carries on. If Redis is unreachable, the
+    # history loaded this turn plus this exchange is the best estimate.
+    window = settings.redis_session_window_turns
+    context_turns = count_turns(session_id)
+    if context_turns is None:
+        loaded = sum(1 for turn in recent_turns if turn["role"] == "user")
+        context_turns = min(loaded + 1, window)
+
+    yield {
+        "type": "done",
         "response": final_text,
         "spoken": spoken_text,
         "tools_used": tools_used,
         "tool_results": tool_results,
         "session_id": session_id,
+        "context_turns": context_turns,
+        "context_window": window,
+        "timings": timings,
     }

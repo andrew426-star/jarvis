@@ -76,6 +76,26 @@ mimetypes.add_type("font/woff2", ".woff2")
 mimetypes.add_type("audio/mpeg", ".mp3")
 mimetypes.add_type("font/woff", ".woff")
 
+
+
+class _ConsoleFiles(StaticFiles):
+    """The static export with caching that fits it. Without explicit
+    headers, browsers heuristically cache index.html and keep showing the
+    previous build after a deploy. Pages revalidate on every load (a cheap
+    304 via the ETag when nothing changed); /_next/static/ files carry a
+    content hash in their names, so they are cached for good - which also
+    keeps the 11 MB OpenSCAD chunk from downloading more than once."""
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        path = scope.get("path", "")
+        if path.startswith("/_next/static/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif str(full_path).endswith(".html") or path in ("", "/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "web" / "out"
 if _FRONTEND_DIST.is_dir():
-    app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="frontend")
+    app.mount("/", _ConsoleFiles(directory=_FRONTEND_DIST, html=True), name="frontend")

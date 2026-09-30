@@ -1,10 +1,10 @@
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.core.auth import require_access_token
+from app.core.auth import require_routine_access
 from app.core.config import get_settings
 from app.core.google_oauth import get_google_access_token
 from app.core.local_time import LOCAL_TZ, local_today
@@ -49,8 +49,8 @@ class Routine:
     days: tuple[int, ...] | None = None
 
 
-# Jarvis's scheduled routines, each triggered by a GitHub Actions cron
-# (.github/workflows/jarvis-routines.yml, plus morning-brief.yml), run
+# Jarvis's scheduled routines, each triggered by Supabase pg_cron
+# (supabase/migrations/0006_jarvis_routine_scheduler.sql), run
 # through the ordinary agent loop in a session of its own per day, and
 # emailed from the connected Gmail account to Andrew.
 ROUTINES: dict[str, Routine] = {
@@ -107,10 +107,10 @@ def central_utc_offset_hours(now: datetime | None = None) -> int:
 
 
 def utc_cron(routine: Routine, offset: int) -> str:
-    """The GitHub (UTC) cron that fires this routine at its Central time,
-    for one of the two offsets. GitHub cron has no time zones, so
-    .github/workflows/jarvis-routines.yml lists both and the route keeps
-    whichever matches the offset in effect."""
+    """The UTC cron that fires this routine at its Central time, for one
+    of the two offsets. pg_cron has no time zones, so the scheduler
+    migration lists both and the route keeps whichever matches the offset
+    in effect."""
     total = routine.hour + offset
     hour = total % 24
     if routine.days is None:
@@ -118,6 +118,24 @@ def utc_cron(routine: Routine, offset: int) -> str:
     else:
         days = ",".join(str(d) for d in sorted((d + total // 24) % 7 for d in routine.days))
     return f"{routine.minute} {hour} * * {days}"
+
+
+# A scheduled run that arrives later than this after its slot is dropped,
+# not sent. (GitHub Actions, the previous scheduler, once started an 8:30pm
+# check-in at 2:11am; pg_cron is punctual, but this stays as a backstop.)
+MAX_LATE = timedelta(minutes=90)
+
+
+def last_occurrence(routine: Routine, now: datetime | None = None) -> datetime:
+    """The most recent Central time this routine was due, at or before now."""
+    now = (now or datetime.now(LOCAL_TZ)).astimezone(LOCAL_TZ)
+    for back in range(8):
+        day = now.date() - timedelta(days=back)
+        slot = datetime(day.year, day.month, day.day, routine.hour, routine.minute, tzinfo=LOCAL_TZ)
+        # isoweekday: Monday 1 ... Sunday 7; the routine's days count Sunday as 0.
+        if slot <= now and (routine.days is None or day.isoweekday() % 7 in routine.days):
+            return slot
+    raise ValueError(f"{routine.name} has no occurrence in the past week")
 
 
 def _recipient() -> str | None:
@@ -135,8 +153,10 @@ def _recipient() -> str | None:
     return rows[0]["google_email"] if rows else None
 
 
-def _run(routine: Routine, force: bool) -> dict:
-    today = local_today()
+def _run(routine: Routine, force: bool, due: datetime | None = None) -> dict:
+    """`due` is the slot a scheduled run is for: it dates the email and
+    bounds the once-per-slot guard. Manual runs have none and go by today."""
+    today = due.date() if due else local_today()
     try:
         access_token = get_google_access_token()
     except RuntimeError as exc:
@@ -155,18 +175,20 @@ def _run(routine: Routine, force: bool) -> dict:
 
     # The crons retry when the Render instance is slow to wake, and a
     # timed-out first attempt may still have finished on the server. Each
-    # routine sends at most once a day: if today's session already has a
-    # turn, don't resend.
+    # routine sends at most once per slot: if this session already has a
+    # turn since the slot came due, don't resend. Counting only from the
+    # slot means a stray late send (say at 2am) cannot block that
+    # evening's real one.
     session_id = f"{routine.session_prefix or routine.name}-{today.isoformat()}"
-    already = (
+    query = (
         get_supabase_client()
         .table("jarvis_interaction_log")
         .select("id")
         .eq("session_id", session_id)
-        .limit(1)
-        .execute()
-        .data
     )
+    if due:
+        query = query.gte("created_at", due.astimezone(timezone.utc).isoformat())
+    already = query.limit(1).execute().data
     if already and not force:
         return {"ok": True, "routine": routine.name, "skipped": "Already sent today."}
     if routine.skip_if and not force:
@@ -188,7 +210,7 @@ def _run(routine: Routine, force: bool) -> dict:
 
 
 # Sync on purpose, like /invoke.
-@router.post("/routines/{name}/run", dependencies=[Depends(require_access_token)])
+@router.post("/routines/{name}/run", dependencies=[Depends(require_routine_access)])
 def run_routine(name: str, force: bool = False, schedule: str | None = None) -> dict:
     routine = ROUTINES.get(name)
     if routine is None:
@@ -199,11 +221,22 @@ def run_routine(name: str, force: bool = False, schedule: str | None = None) -> 
         expected = utc_cron(routine, central_utc_offset_hours())
         if schedule != expected:
             return {"ok": True, "routine": name, "skipped": f"Not this season's schedule ({expected} is)."}
+        due = last_occurrence(routine)
+        late = datetime.now(LOCAL_TZ) - due
+        if late > MAX_LATE and not force:
+            hours = late.total_seconds() / 3600
+            return {
+                "ok": True,
+                "routine": name,
+                "skipped": f"GitHub started this run {hours:.1f}h after its {due:%I:%M %p} slot; "
+                "dropped rather than sent late.",
+            }
+        return _run(routine, force, due)
     return _run(routine, force)
 
 
 # The original morning-brief path, kept so morning-brief.yml and anything
 # else already calling it keeps working.
-@router.post("/brief/run", dependencies=[Depends(require_access_token)])
+@router.post("/brief/run", dependencies=[Depends(require_routine_access)])
 def run_brief(force: bool = False) -> dict:
     return _run(ROUTINES["morning-brief"], force)

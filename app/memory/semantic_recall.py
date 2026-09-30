@@ -15,6 +15,7 @@ def record_interaction(
     assistant_response: str,
     tools_used: list[str],
     created_at: str,
+    model: str = "",
 ) -> None:
     """Tier 3 (Pinecone) write — one combined record per turn, so a later
     semantic search can match on either the question or the answer.
@@ -35,7 +36,7 @@ def record_interaction(
                     "session_id": session_id,
                     "created_at": created_at,
                     "tools_used": tools_used,
-                    "model": settings.groq_model,
+                    "model": model,
                 }
             ],
             namespace=settings.pinecone_namespace,

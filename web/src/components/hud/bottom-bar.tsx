@@ -1,9 +1,20 @@
 "use client"
 
-import { useRef, useState, type KeyboardEvent } from "react"
-import { BriefcaseIcon, MailIcon, SettingsIcon, TrendingUpIcon } from "lucide-react"
+import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react"
+import {
+  BriefcaseIcon,
+  CameraIcon,
+  CameraOffIcon,
+  MailIcon,
+  PaperclipIcon,
+  SettingsIcon,
+  TrendingUpIcon,
+  XIcon,
+} from "lucide-react"
 
 import { MicButton, type MicButtonHandle } from "@/components/mic-button"
+import { addAttachments, type Attachment } from "@/lib/attachments"
+import { useSpatial } from "@/lib/spatial-store"
 import { useJarvis } from "@/lib/store"
 
 // The spec's Search / Screenshot / Open App buttons had nothing behind
@@ -102,22 +113,82 @@ function ActionButton({
 interface BottomBarProps {
   token: string
   disabled: boolean
-  onSend: (message: string, viaVoice: boolean) => void
+  onSend: (message: string, viaVoice: boolean, attachments?: Attachment[]) => void
   onAuthError: () => void
   micRef: React.RefObject<MicButtonHandle | null>
+  onToggleCamera: () => void
 }
 
-export function BottomBar({ token, disabled, onSend, onAuthError, micRef }: BottomBarProps) {
+export function BottomBar({
+  token,
+  disabled,
+  onSend,
+  onAuthError,
+  micRef,
+  onToggleCamera,
+}: BottomBarProps) {
+  const cameraOn = useSpatial((state) => state.cameraOn)
   const [value, setValue] = useState("")
   const [focused, setFocused] = useState(false)
   const setSettingsOpen = useJarvis((state) => state.setSettingsOpen)
   const setListening = useJarvis((state) => state.setListening)
+  const notify = useJarvis((state) => state.notify)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [dragging, setDragging] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+  // Read through a ref by the window drop handler, which is bound once.
+  const attachmentsRef = useRef(attachments)
+  useEffect(() => {
+    attachmentsRef.current = attachments
+  }, [attachments])
+
+  async function attach(files: File[]) {
+    if (!files.length) return
+    const { attachments: next, problems } = await addAttachments(attachmentsRef.current, files)
+    setAttachments(next)
+    for (const problem of problems) notify("warning", "Attachment skipped", problem)
+  }
+
+  // Files dropped anywhere on the console attach to the next message.
+  useEffect(() => {
+    const over = (event: DragEvent) => {
+      if (!event.dataTransfer?.types.includes("Files")) return
+      event.preventDefault()
+      setDragging(true)
+    }
+    const leave = (event: DragEvent) => {
+      if (event.relatedTarget === null) setDragging(false)
+    }
+    const drop = (event: DragEvent) => {
+      if (!event.dataTransfer?.files.length) return
+      event.preventDefault()
+      setDragging(false)
+      void attach(Array.from(event.dataTransfer.files))
+    }
+    window.addEventListener("dragover", over)
+    window.addEventListener("dragleave", leave)
+    window.addEventListener("drop", drop)
+    return () => {
+      window.removeEventListener("dragover", over)
+      window.removeEventListener("dragleave", leave)
+      window.removeEventListener("drop", drop)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- attach reads state through a ref
+  }, [])
+
+  function handlePaste(event: ClipboardEvent<HTMLInputElement>) {
+    const files = Array.from(event.clipboardData.files)
+    if (!files.length) return
+    event.preventDefault()
+    void attach(files)
+  }
 
   function submit() {
     const trimmed = value.trim()
-    if (!trimmed || disabled) return
-    onSend(trimmed, false)
+    if ((!trimmed && !attachments.length) || disabled) return
+    onSend(trimmed || "Take a look at what I've attached.", false, attachments)
     setValue("")
+    setAttachments([])
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -129,7 +200,7 @@ export function BottomBar({ token, disabled, onSend, onAuthError, micRef }: Bott
 
   return (
     <footer
-      className="flex items-center"
+      className="relative flex items-center"
       style={{
         height: "56px",
         padding: "0 var(--sp-4)",
@@ -169,6 +240,7 @@ export function BottomBar({ token, disabled, onSend, onAuthError, micRef }: Bott
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           placeholder={disabled ? "Standby..." : "Enter command or speak..."}
@@ -184,7 +256,56 @@ export function BottomBar({ token, disabled, onSend, onAuthError, micRef }: Bott
           }}
         />
         {focused && value.length === 0 && <span className="caret shrink-0" aria-hidden />}
+        <button
+          type="button"
+          className="shrink-0 cursor-pointer"
+          onClick={() => fileRef.current?.click()}
+          disabled={disabled}
+          aria-label="Attach files"
+          title="Attach images, PDFs or text files (or drop / paste them)"
+          style={{ background: "transparent", border: 0, color: attachments.length ? "var(--accent)" : "var(--text-secondary)" }}
+        >
+          <PaperclipIcon size={15} />
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          hidden
+          accept="image/*,.pdf,.txt,.md,.csv,.tsv,.json,.yaml,.yml,.xml,.html,.js,.ts,.tsx,.py,.c,.cpp,.h,.ino,.java,.go,.rs,.sql,.log"
+          onChange={(event) => {
+            void attach(Array.from(event.target.files ?? []))
+            event.target.value = ""
+          }}
+        />
       </div>
+
+      {/* Pending attachments float just above the bar. */}
+      {(attachments.length > 0 || dragging) && (
+        <div
+          className="absolute flex flex-wrap items-center"
+          style={{ left: "50%", transform: "translateX(-50%)", bottom: 62, maxWidth: 600, gap: 6 }}
+        >
+          {dragging && <span className="t-label attachment-chip" data-drop>DROP TO ATTACH</span>}
+          {attachments.map((file, index) => (
+            <span key={`${file.name}-${index}`} className="t-label attachment-chip flex items-center" style={{ gap: 6 }}>
+              {file.preview && (
+                // eslint-disable-next-line @next/next/no-img-element -- a local data URL thumbnail
+                <img src={file.preview} alt="" style={{ height: 18, borderRadius: 2 }} />
+              )}
+              {file.name}
+              <button
+                type="button"
+                onClick={() => setAttachments((all) => all.filter((_, i) => i !== index))}
+                aria-label={`Remove ${file.name}`}
+                style={{ background: "transparent", border: 0, color: "inherit", cursor: "pointer", padding: 0 }}
+              >
+                <XIcon size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="flex shrink-0 items-center" style={{ gap: "var(--sp-2)" }}>
         {ACTIONS.map((action) => (
@@ -196,6 +317,11 @@ export function BottomBar({ token, disabled, onSend, onAuthError, micRef }: Bott
             onClick={() => onSend(action.prompt, false)}
           />
         ))}
+        <ActionButton
+          label={cameraOn ? "Turn camera off" : "Turn camera on"}
+          Icon={cameraOn ? CameraOffIcon : CameraIcon}
+          onClick={onToggleCamera}
+        />
         <ActionButton
           label="Settings"
           Icon={SettingsIcon}

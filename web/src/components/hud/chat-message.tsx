@@ -1,12 +1,13 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Loader2Icon, SquareIcon, Volume2Icon } from "lucide-react"
+import { Loader2Icon, PinIcon, SquareIcon, Volume2Icon } from "lucide-react"
 
 import { ToolBadge } from "@/components/tool-badge"
 import { startAudioAnalysis, stopAudioAnalysis } from "@/lib/audio-amplitude"
 import { JarvisAuthError, speak } from "@/lib/jarvis-client"
 import { clearNarration, registerNarration, stopNarration } from "@/lib/narration"
+import { useSpatial } from "@/lib/spatial-store"
 import { useTypewriter } from "@/lib/use-typewriter"
 
 export interface ChatMessageData {
@@ -18,6 +19,10 @@ export interface ChatMessageData {
   time: string
   toolsUsed?: string[]
   autoPlay?: boolean
+  /** Still arriving from /invoke/stream: shown as it grows, with a caret. */
+  streaming?: boolean
+  /** Files sent with a user message: names, and a thumbnail for images. */
+  attachments?: { name: string; preview?: string }[]
   reopenMicAfter?: boolean
 }
 
@@ -128,8 +133,28 @@ export function ChatMessage({
           boxShadow: isUser ? "none" : "0 0 12px rgba(var(--accent-rgb), 0.1)",
         }}
       >
+        {message.attachments?.length ? (
+          <div className="flex flex-wrap" style={{ gap: 6, marginBottom: message.content ? 6 : 0 }}>
+            {message.attachments.map((file) =>
+              file.preview ? (
+                // eslint-disable-next-line @next/next/no-img-element -- a local data URL thumbnail
+                <img
+                  key={file.name}
+                  src={file.preview}
+                  alt={file.name}
+                  title={file.name}
+                  style={{ height: 64, borderRadius: "var(--radius)", border: "1px solid rgba(var(--accent-rgb), 0.3)" }}
+                />
+              ) : (
+                <span key={file.name} className="t-label attachment-chip">
+                  {file.name}
+                </span>
+              )
+            )}
+          </div>
+        ) : null}
         {isUser ? message.content : shown}
-        {!isUser && !done && <span className="caret" aria-hidden />}
+        {!isUser && (!done || message.streaming) && <span className="caret" aria-hidden />}
       </div>
 
       <div
@@ -156,6 +181,22 @@ export function ChatMessage({
               ) : (
                 <Volume2Icon size={11} />
               )}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                useSpatial.getState().addHologram({
+                  kind: "note",
+                  title: `JARVIS · ${message.time}`,
+                  body: message.content,
+                })
+              }
+              aria-label="Pin reply as a hologram"
+              title="Pin to space"
+              className="cursor-pointer"
+              style={{ background: "transparent", border: 0, color: "var(--text-secondary)" }}
+            >
+              <PinIcon size={11} />
             </button>
           </>
         )}

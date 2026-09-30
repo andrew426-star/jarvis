@@ -3,7 +3,7 @@ def think(args: dict) -> dict:
     Every tool call (including this one) already lands durably in
     jarvis_interaction_log.tool_call_trace via the orchestrator's dispatch
     loop, so a separate reasoning-log table would just duplicate that.
-    Deliberately doesn't echo the thought text back — Groq's own message
+    Deliberately doesn't echo the thought text back — the model's own message
     history already carries the full argument.
     """
     thought = str(args.get("thought") or "").strip()

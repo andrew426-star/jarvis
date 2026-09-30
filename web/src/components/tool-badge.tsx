@@ -18,6 +18,9 @@ const TOOL_LABELS: Record<string, string> = {
   google_titan: "Google",
   spotify: "Spotify",
   zoho_mail: "Mail",
+  camera_look: "Vision",
+  console: "Console",
+  workshop: "Workshop",
 }
 
 // Same language as every other interactive-looking element: transparent

@@ -6,9 +6,25 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Groq now only transcribes voice (Whisper). Jarvis's brain and eyes
+    # are Gemini, below.
     groq_api_key: str
-    groq_model: str = "openai/gpt-oss-120b"
     groq_whisper_model: str = "whisper-large-v3-turbo"
+
+    # Gemini: the agent loop and camera vision. Optional so a deploy that
+    # has not set it yet still boots; /invoke then says what is missing.
+    gemini_api_key: str | None = None
+    # Best first. app/core/gemini.py uses the first one with quota left and
+    # falls down the list on quota errors, so this order is also the order
+    # of preference. Free-tier quotas are per model, so every entry adds
+    # headroom.
+    gemini_models: str = (
+        "gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,"
+        "gemini-3.1-flash-lite,gemini-3.5-flash-lite"
+    )
+    # Image models for workshop renders (app/integrations/gemini_render.py),
+    # best first, on the same quota-aware fallback.
+    gemini_image_models: str = "gemini-3.1-flash-image,gemini-3.1-flash-lite-image,gemini-3-pro-image"
 
     supabase_url: str
     supabase_service_role_key: str

@@ -3,8 +3,9 @@
 import { useSyncExternalStore } from "react"
 
 import { sfx } from "@/lib/sfx"
+import { useSpatial } from "@/lib/spatial-store"
 import { useClock } from "@/lib/use-clock"
-import { CONTEXT_WINDOW_TURNS, useJarvis, type TabKey } from "@/lib/store"
+import { useJarvis, type TabKey } from "@/lib/store"
 import { centralDate, centralTime, centralZoneLabel } from "@/lib/time"
 
 const TABS: { key: TabKey; label: string }[] = [
@@ -44,6 +45,7 @@ export function TopBar() {
   const muted = useSyncExternalStore(sfx.subscribeMuted, sfx.isMuted, () => false)
 
   const { activeTab, setActiveTab, mode, toggleMode, signals } = useJarvis()
+  const setWorkshopOpen = useSpatial((state) => state.setWorkshopOpen)
   // 0 until the first client tick - see use-clock.ts for why the clock
   // is an external store rather than state driven by an effect.
   const epoch = useClock()
@@ -97,6 +99,17 @@ export function TopBar() {
               {tab.label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab(null)
+              setWorkshopOpen(true)
+            }}
+            className="btn"
+            style={{ padding: "4px 12px" }}
+          >
+            Workshop
+          </button>
         </nav>
       </div>
 
@@ -134,7 +147,10 @@ export function TopBar() {
 
         <button
           type="button"
-          onClick={toggleMode}
+          onClick={(event) => {
+            const box = event.currentTarget.getBoundingClientRect()
+            toggleMode({ x: box.left + box.width / 2, y: box.top + box.height / 2 })
+          }}
           aria-pressed={serious}
           className="btn shrink-0"
           style={{ padding: "4px 12px" }}
@@ -167,7 +183,7 @@ export function TopBar() {
                     : "var(--success)"
             }
           />
-          <Metric label="CTX" value={`${signals.turns}/${CONTEXT_WINDOW_TURNS}`} />
+          <Metric label="CTX" value={`${signals.turns}/${signals.contextWindow}`} />
         </div>
       </div>
     </header>

@@ -92,17 +92,137 @@ export interface InvokeResult {
   tools_used: string[]
   tool_results: ToolResult[]
   session_id: string
+  context_turns: number
+  context_window: number
+  /** Where the time went: memory, each model call, each tool, total. */
+  timings?: { step: string; model?: string; name?: string; ms: number }[]
+}
+
+export interface InvokeOptions {
+  /** Base64 JPEG camera frame, sent while the camera is on. */
+  image?: string
+  /** Describe the frame up front (the Look button). */
+  look?: boolean
+  /** What the console has open, so Jarvis can operate it. */
+  consoleState?: Record<string, unknown>
+  /** Files attached to the message (lib/attachments.ts). */
+  attachments?: { name: string; mime: string; data?: string; text?: string }[]
+}
+
+// Only what the server reads: previews and sizes stay in the browser.
+function wireAttachments(options: InvokeOptions) {
+  return (options.attachments ?? []).map(({ name, mime, data, text }) => ({ name, mime, data, text }))
 }
 
 export async function invoke(
   message: string,
   sessionId: string,
-  token: string
+  token: string,
+  options: InvokeOptions = {}
 ): Promise<InvokeResult> {
   const res = await jarvisFetch("/invoke", token, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({
+      message,
+      session_id: sessionId,
+      image: options.image,
+      look: options.look ?? false,
+      console_state: options.consoleState,
+      attachments: wireAttachments(options),
+    }),
+  })
+  return res.json()
+}
+
+export interface SessionContext {
+  /** Null when the backend could not read its memory store. */
+  turns: number | null
+  window: number
+}
+
+export async function getSessionContext(sessionId: string, token: string): Promise<SessionContext> {
+  const params = new URLSearchParams({ session_id: sessionId })
+  const res = await jarvisFetch(`/session/context?${params}`, token, { method: "GET" })
+  return res.json()
+}
+
+export type StreamEvent =
+  | { type: "text"; delta: string }
+  | { type: "spoken"; delta: string }
+  | { type: "reset" }
+  | { type: "tool"; name: string; result: unknown }
+  | ({ type: "done" } & InvokeResult)
+  | { type: "error"; message: string }
+
+/** /invoke/stream: the same turn as invoke(), delivered as it is written.
+ *  Events go to onEvent as they arrive; resolves with the finished turn. */
+export async function invokeStream(
+  message: string,
+  sessionId: string,
+  token: string,
+  options: InvokeOptions,
+  onEvent: (event: StreamEvent) => void
+): Promise<InvokeResult> {
+  const res = await jarvisFetch("/invoke/stream", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message,
+      session_id: sessionId,
+      image: options.image,
+      look: options.look ?? false,
+      console_state: options.consoleState,
+      attachments: wireAttachments(options),
+    }),
+  })
+  if (!res.body) throw new JarvisApiError("The reply stream never opened.")
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let pending = ""
+  let result: InvokeResult | null = null
+  const handle = (line: string) => {
+    if (!line.trim()) return
+    const event = JSON.parse(line) as StreamEvent
+    if (event.type === "error") throw new JarvisApiError(event.message)
+    if (event.type === "done") result = event
+    onEvent(event)
+  }
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      pending += decoder.decode(value, { stream: true })
+      // Newline-delimited JSON: complete lines are events, the tail waits.
+      let newline: number
+      while ((newline = pending.indexOf("\n")) >= 0) {
+        handle(pending.slice(0, newline))
+        pending = pending.slice(newline + 1)
+      }
+    }
+    handle(pending)
+  } catch (err) {
+    if (err instanceof JarvisApiError) throw err
+    throw new JarvisNetworkError()
+  }
+  if (!result) throw new JarvisApiError("The reply stream ended early.")
+  return result
+}
+
+export interface RenderResult {
+  image: string
+  mime: string
+  model: string
+  note: string
+}
+
+/** A photoreal render of a workshop view, by Gemini's image models. */
+export async function renderView(image: string, prompt: string | undefined, token: string): Promise<RenderResult> {
+  const res = await jarvisFetch("/render", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image, image_type: "image/png", prompt }),
   })
   return res.json()
 }

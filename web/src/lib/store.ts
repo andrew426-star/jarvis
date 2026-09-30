@@ -3,6 +3,7 @@
 import { create } from "zustand"
 
 import type { ConnectionInfo } from "@/lib/jarvis-client"
+import { playModeTransition } from "@/lib/mode-fx"
 import { centralTime } from "@/lib/time"
 
 export type Mode = "normal" | "serious"
@@ -45,8 +46,11 @@ export interface Signals {
   latencyMs: number | null
   /** Recent latencies, oldest first, for the sparkline. */
   latencyHistory: number[]
-  /** Assistant turns held in the backend's rolling context window. */
+  /** Exchanges held in the backend's rolling context window, as the
+   *  backend reports them (not counted from the chat on screen). */
   turns: number
+  /** Size of that window, also from the backend. */
+  contextWindow: number
   /** Distinct tools the agent has invoked this session. */
   toolsUsed: string[]
   /** Rendering health, sampled from real frame times. */
@@ -55,9 +59,9 @@ export interface Signals {
   voice: number
 }
 
-// Mirrors REDIS_SESSION_WINDOW_TURNS in app/core/config.py. If that is
-// raised, follow it here - the gauge would otherwise sit pinned at full
-// and quietly stop meaning anything.
+// REDIS_SESSION_WINDOW_TURNS's default in app/core/config.py. Only a
+// placeholder until the backend's first answer, which carries the real
+// window size, so raising it there no longer needs a change here.
 export const CONTEXT_WINDOW_TURNS = 10
 
 const LATENCY_HISTORY = 24
@@ -78,7 +82,8 @@ interface JarvisState {
   connections: ConnectionInfo[] | null
 
   setMode: (mode: Mode) => void
-  toggleMode: () => void
+  /** `origin` is where the mode wipe starts, usually the button clicked. */
+  toggleMode: (origin?: { x: number; y: number }) => void
   setStatus: (status: AgentStatus) => void
   setListening: (listening: boolean) => void
   setSettingsOpen: (open: boolean) => void
@@ -86,7 +91,7 @@ interface JarvisState {
   setActiveTab: (tab: TabKey | null) => void
   setLatency: (ms: number) => void
   setLinkDown: () => void
-  setTurns: (turns: number) => void
+  setContext: (turns: number, contextWindow: number) => void
   addToolsUsed: (names: string[]) => void
   setFps: (fps: number) => void
   setVoice: (level: number) => void
@@ -103,8 +108,21 @@ export function clockTime(date = new Date()): string {
   return centralTime(date)
 }
 
+function readStoredMode(): Mode {
+  if (typeof window === "undefined") return "normal"
+  try {
+    return localStorage.getItem("jarvis_mode") === "serious" ? "serious" : "normal"
+  } catch {
+    return "normal"
+  }
+}
+
 export const useJarvis = create<JarvisState>((set, get) => ({
-  mode: "normal",
+  // Read at startup like gridVisible below. layout.tsx already puts the
+  // serious class on <html> before first paint; defaulting to "normal"
+  // here left the store disagreeing with the screen after every reload
+  // in serious mode (wrong toggle label, normal grid, normal ambience).
+  mode: readStoredMode(),
   status: "idle",
   listening: false,
   settingsOpen: false,
@@ -117,6 +135,7 @@ export const useJarvis = create<JarvisState>((set, get) => ({
     latencyMs: null,
     latencyHistory: [],
     turns: 0,
+    contextWindow: CONTEXT_WINDOW_TURNS,
     toolsUsed: [],
     fps: 60,
     voice: 0,
@@ -143,8 +162,9 @@ export const useJarvis = create<JarvisState>((set, get) => ({
 
   // Delegates to setMode so the DOM class, localStorage and React
   // state can never drift apart - there is one place that writes them.
-  toggleMode: () => {
-    get().setMode(get().mode === "normal" ? "serious" : "normal")
+  toggleMode: (origin) => {
+    const next = get().mode === "normal" ? "serious" : "normal"
+    void playModeTransition(next, () => get().setMode(next), origin)
   },
 
   setStatus: (status) => set({ status }),
@@ -176,7 +196,8 @@ export const useJarvis = create<JarvisState>((set, get) => ({
 
   setLinkDown: () => set((state) => ({ signals: { ...state.signals, link: "down" } })),
 
-  setTurns: (turns) => set((state) => ({ signals: { ...state.signals, turns } })),
+  setContext: (turns, contextWindow) =>
+    set((state) => ({ signals: { ...state.signals, turns, contextWindow } })),
 
   addToolsUsed: (names) =>
     set((state) => ({

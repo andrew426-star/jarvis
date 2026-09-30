@@ -40,6 +40,16 @@ def append_turn(
         logger.warning("Redis append_turn failed for session %s", session_id, exc_info=True)
 
 
+def count_turns(session_id: str) -> int | None:
+    """How many exchanges Redis holds for this session, which is what the
+    next message will be sent with. None if Redis could not be reached."""
+    try:
+        return int(get_redis_client().llen(_key(session_id)))
+    except Exception:
+        logger.warning("Redis count_turns failed for session %s", session_id, exc_info=True)
+        return None
+
+
 def get_recent_turns(session_id: str) -> list[dict[str, str]] | None:
     """Tier 1 (Redis) read — last N turns for this session, as chat messages.
 

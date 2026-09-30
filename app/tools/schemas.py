@@ -18,7 +18,8 @@ from app.tools.think import think
 from app.tools.web_research import web_research
 from app.tools.zoho_mail import zoho_mail
 
-# Groq/OpenAI-shaped tool declarations for chat.completions.create(tools=...).
+# OpenAI-shaped tool declarations (from the Groq era). orchestrator.py wraps
+# each one as a Gemini FunctionDeclaration; the JSON Schema is unchanged.
 TOOL_SCHEMAS = [
     {
         "type": "function",
