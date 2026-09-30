@@ -48,6 +48,9 @@ export interface HandPointer {
   pinchAmount: number
   /** Raw landmarks in video coordinates, for the preview's skeleton. */
   landmarks: NormalizedLandmark[]
+  /** Apparent hand size in the image (wrist to middle knuckle, smoothed).
+   *  Grows as the hand nears the webcam, so it stands in for depth. */
+  size: number
 }
 
 type Listener = (pointers: HandPointer[]) => void
@@ -55,8 +58,8 @@ type Listener = (pointers: HandPointer[]) => void
 /** A 3D space (the workshop) that takes pinches the DOM does not claim.
  *  Coordinates are viewport pixels; `id` is stable per hand. */
 export interface SpatialHandler {
-  down: (id: string, x: number, y: number) => boolean
-  move: (id: string, x: number, y: number) => void
+  down: (id: string, x: number, y: number, size?: number) => boolean
+  move: (id: string, x: number, y: number, size?: number) => void
   up: (id: string, x: number, y: number, tap: boolean) => void
   hover: (x: number | null, y: number | null) => void
 }
@@ -109,6 +112,8 @@ class OneEuro {
 interface HandState {
   fx: OneEuro
   fy: OneEuro
+  fs: OneEuro
+  size: number
   pinching: boolean
   /** Hologram this hand is holding, if any. */
   holding: string | null
@@ -146,7 +151,7 @@ export function subscribeHands(listener: Listener): () => void {
   return () => listeners.delete(listener)
 }
 
-function toViewport(landmark: NormalizedLandmark) {
+export function toViewport(landmark: NormalizedLandmark) {
   const span = 1 - ACTIVE_MARGIN * 2
   const nx = Math.min(1, Math.max(0, (landmark.x - ACTIVE_MARGIN) / span))
   const ny = Math.min(1, Math.max(0, (landmark.y - ACTIVE_MARGIN) / span))
@@ -176,7 +181,7 @@ function pinchStart(hand: HandState, x: number, y: number, now: number) {
   // A control inside a hologram (its close button) is a tap target, not
   // a handle, so it wins over grabbing the hologram around it.
   hand.downTarget = control
-  if (!control && !holoId && spatialHandler?.down(hand.id, x, y)) {
+  if (!control && !holoId && spatialHandler?.down(hand.id, x, y, hand.size)) {
     hand.spatial = true
     return
   }
@@ -243,6 +248,10 @@ function process(result: { landmarks: NormalizedLandmark[][]; handedness: { cate
       hand = {
         fx: new OneEuro(),
         fy: new OneEuro(),
+        // Size jitters more than position and matters less instantly, so
+        // it is smoothed harder.
+        fs: new OneEuro(0.6, 0.5),
+        size: 0,
         pinching: false,
         holding: null,
         spatial: false,
@@ -262,6 +271,7 @@ function process(result: { landmarks: NormalizedLandmark[][]; handedness: { cate
     const thumb = landmarks[THUMB_TIP]
     const indexTip = landmarks[INDEX_TIP]
     const handSize = Math.max(1e-4, distance(landmarks[WRIST], landmarks[MIDDLE_MCP]))
+    hand.size = hand.fs.filter(handSize, now)
     const pinchRatio = distance(thumb, indexTip) / handSize
 
     // Aim from the point between thumb and index tips: it barely moves
@@ -276,7 +286,7 @@ function process(result: { landmarks: NormalizedLandmark[][]; handedness: { cate
 
     if (hand.pinching && !wasPinching) pinchStart(hand, x, y, now)
     else if (!hand.pinching && wasPinching) pinchEnd(hand, x, y, now)
-    else if (hand.pinching && hand.spatial) spatialHandler?.move(id, x, y)
+    else if (hand.pinching && hand.spatial) spatialHandler?.move(id, x, y, hand.size)
     else if (hand.pinching && hand.holding) {
       if (twoHand?.id === hand.holding) {
         const other = [...hands.values()].find((h) => h !== hand && h.holding === hand.holding)
@@ -298,6 +308,7 @@ function process(result: { landmarks: NormalizedLandmark[][]; handedness: { cate
       pinching: hand.pinching,
       pinchAmount: Math.min(1, Math.max(0, (PINCH_OFF + 0.25 - pinchRatio) / (PINCH_OFF + 0.25 - PINCH_ON))),
       landmarks,
+      size: hand.size,
     })
   })
 

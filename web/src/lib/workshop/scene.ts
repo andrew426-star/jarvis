@@ -8,6 +8,7 @@ import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js"
 
 import { accentHex } from "@/lib/core-events"
+import { toViewport, type HandPointer } from "@/lib/hand-tracking"
 import { CATALOGUE, type ItemSpec } from "@/lib/workshop/models"
 
 // The workshop: a lit stage where items can be grabbed, thrown into a spin,
@@ -28,6 +29,8 @@ interface Item {
   model: THREE.Group
   solids: THREE.Mesh[]
   wires: THREE.LineSegments[]
+  /** Dense hologram-only lines (the helmet's contours), hidden when solid. */
+  contours: THREE.LineSegments[]
   wireMaterial: THREE.LineBasicMaterial
   lights: THREE.PointLight[]
   clip: THREE.Plane
@@ -39,10 +42,24 @@ interface Item {
   spin: number
   scale: number
   born: number
+  /** Held over the bin: outlined red, discarded if let go. */
+  armed: boolean
+  /** Clock time the discard began, while it breaks apart. */
+  dying: number | null
 }
 
 type Grip =
-  | { kind: "item"; item: Item; offset: THREE.Vector3; lastX: number; lastY: number; vx: number }
+  | {
+      kind: "item"
+      item: Item
+      offset: THREE.Vector3
+      lastX: number
+      lastY: number
+      vx: number
+      /** Camera distance and hand size at the grab, for depth by hand. */
+      distance: number
+      size: number | null
+    }
   | { kind: "orbit"; lastX: number; lastY: number }
 
 const TARGET = new THREE.Vector3(0, 1.1, 0)
@@ -51,10 +68,40 @@ const SLOTS: [number, number][] = [
 ]
 const BASE_SPIN = 0.25
 
+// Hands in the scene. Apparent hand size in the camera image stands in for
+// depth: a hand moving toward the webcam (toward the screen) grows, and
+// goes further into the workshop.
+const HAND_BONES: [number, number][] = [
+  [0, 1], [1, 2], [2, 3], [3, 4],
+  [0, 5], [5, 6], [6, 7], [7, 8],
+  [5, 9], [9, 10], [10, 11], [11, 12],
+  [9, 13], [13, 14], [14, 15], [15, 16],
+  [13, 17], [0, 17], [17, 18], [18, 19], [19, 20],
+]
+const HAND_NEAR = 4.5
+const HAND_FAR = 9.5
+/** How far a held item travels per doubling of apparent hand size. */
+const DEPTH_GAIN = 5
+/** Scene units per unit of MediaPipe's per-joint z (relative to the wrist). */
+const JOINT_DEPTH = 4
+
+interface HandRig {
+  group: THREE.Group
+  joints: THREE.InstancedMesh
+  bones: THREE.LineSegments
+}
+
 export interface WorkshopCallbacks {
   /** Which item the label should describe, or null. */
   onFocus: (spec: (ItemSpec & { id: string; mode: ItemMode }) | null) => void
+  /** Is this viewport point over the discard bin? */
+  binAt?: (x: number, y: number) => boolean
+  /** The bin's state changed: an item is over it, or one was discarded. */
+  onBin?: (state: "idle" | "armed" | "discarded") => void
 }
+
+const DISCARD_SECONDS = 0.55
+const ARMED_COLOR = 0xff3355
 
 export class WorkshopScene {
   private readonly renderer: THREE.WebGLRenderer
@@ -69,6 +116,9 @@ export class WorkshopScene {
   private readonly accentMaterials: (THREE.Material & { color: THREE.Color })[] = []
   private readonly rim: THREE.DirectionalLight
   private readonly floorRings = new THREE.Group()
+  private floor!: THREE.Mesh
+  private readonly hands: HandRig[] = []
+  private passthrough: THREE.VideoTexture | null = null
   private raf = 0
   private observer: ResizeObserver
 
@@ -77,6 +127,7 @@ export class WorkshopScene {
   private radius = 8.5
   private twoHand: { a: string; b: string; start: number; startValue: number; item: Item | null } | null = null
   private hovered: Item | null = null
+  private accent = accentHex()
   private focused: Item | null = null
   private accentTimer = 0
 
@@ -148,12 +199,20 @@ export class WorkshopScene {
     const clip = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0)
     const solids: THREE.Mesh[] = []
     const wires: THREE.LineSegments[] = []
+    const contours: THREE.LineSegments[] = []
     const lights: THREE.PointLight[] = []
     object.traverse((node) => {
       if ((node as THREE.PointLight).isPointLight) {
         const light = node as THREE.PointLight
         light.userData.intensity = light.intensity
         lights.push(light)
+      }
+      // Model-supplied hologram lines (the helmet's contours) take the
+      // item's wire material like everything else.
+      if (node.userData.holoLines) {
+        ;(node as THREE.LineSegments).material = wireMaterial
+        contours.push(node as THREE.LineSegments)
+        return
       }
       const mesh = node as THREE.Mesh
       if (!mesh.isMesh) return
@@ -163,7 +222,7 @@ export class WorkshopScene {
       // Otherwise the hidden part of a half-scanned item still casts a
       // full shadow.
       material.clipShadows = true
-      const wire = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 22), wireMaterial)
+      const wire = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, mesh.userData.edgeAngle ?? 22), wireMaterial)
       mesh.add(wire)
       wires.push(wire)
     })
@@ -179,6 +238,7 @@ export class WorkshopScene {
       model: object,
       solids,
       wires,
+      contours,
       wireMaterial,
       lights,
       clip,
@@ -189,6 +249,8 @@ export class WorkshopScene {
       spin: BASE_SPIN * 4,
       scale: 1,
       born: this.clock.elapsedTime,
+      armed: false,
+      dying: null,
     }
     this.items.push(item)
     this.focus(item)
@@ -209,7 +271,7 @@ export class WorkshopScene {
   }
 
   /** Pointer pressed (mouse button or pinch). Always claims: empty space orbits. */
-  down(id: string, x: number, y: number): boolean {
+  down(id: string, x: number, y: number, size?: number): boolean {
     const item = this.pick(x, y)
     if (item) {
       const point = this.planeHit(x, y, item.root.position)
@@ -220,6 +282,8 @@ export class WorkshopScene {
         lastX: x,
         lastY: y,
         vx: 0,
+        distance: point ? point.distanceTo(this.camera.position) : this.radius,
+        size: size ?? null,
       })
       this.focus(item)
     } else {
@@ -229,7 +293,7 @@ export class WorkshopScene {
     return true
   }
 
-  move(id: string, x: number, y: number) {
+  move(id: string, x: number, y: number, size?: number) {
     const grip = this.grips.get(id)
     if (!grip) return
     if (this.twoHand && (this.twoHand.a === id || this.twoHand.b === id)) {
@@ -239,11 +303,30 @@ export class WorkshopScene {
       return
     }
     if (grip.kind === "item") {
-      const point = this.planeHit(x, y, grip.item.root.position)
+      // A hand also carries depth: the item keeps its distance from the
+      // camera, pushed or pulled by how much the hand has grown or shrunk
+      // since the grab. The mouse has no depth and slides on a plane.
+      let point: THREE.Vector3 | null
+      if (size && grip.size) {
+        const distance = THREE.MathUtils.clamp(
+          grip.distance + Math.log2(size / grip.size) * DEPTH_GAIN,
+          2.5,
+          22
+        )
+        this.raycaster.setFromCamera(this.ndc(x, y), this.camera)
+        point = this.raycaster.ray.at(distance, new THREE.Vector3())
+      } else {
+        point = this.planeHit(x, y, grip.item.root.position)
+      }
       if (point) {
         const next = point.add(grip.offset)
-        next.y = Math.max(-0.3, Math.min(3, next.y))
+        next.y = Math.max(-0.3, Math.min(4, next.y))
         grip.item.root.position.copy(next)
+      }
+      const armed = !!this.callbacks.binAt?.(x, y)
+      if (armed !== grip.item.armed) {
+        grip.item.armed = armed
+        this.callbacks.onBin?.(armed ? "armed" : "idle")
       }
       grip.vx = grip.vx * 0.6 + (x - grip.lastX) * 0.4
     } else {
@@ -259,6 +342,10 @@ export class WorkshopScene {
     this.grips.delete(id)
     if (this.twoHand && (this.twoHand.a === id || this.twoHand.b === id)) this.twoHand = null
     if (!grip || grip.kind !== "item") return
+    if (grip.item.armed) {
+      this.discard(grip.item)
+      return
+    }
     if (tap) {
       grip.item.mode = grip.item.mode === "wire" ? "solid" : "wire"
       this.focus(grip.item)
@@ -270,6 +357,79 @@ export class WorkshopScene {
 
   hover(x: number | null, y: number | null) {
     this.hovered = x === null || y === null ? null : this.pick(x, y)
+  }
+
+  private discard(item: Item) {
+    item.armed = false
+    item.dying = this.clock.elapsedTime
+    for (const [id, grip] of this.grips) if (grip.kind === "item" && grip.item === item) this.grips.delete(id)
+    if (this.twoHand?.item === item) this.twoHand = null
+    if (this.focused === item) this.focus(null)
+    if (this.hovered === item) this.hovered = null
+    this.callbacks.onBin?.("discarded")
+  }
+
+  /** Draw the tracked hands inside the scene, or none. */
+  setHands(pointers: HandPointer[]) {
+    while (this.hands.length < pointers.length) this.hands.push(this.buildHand())
+    const matrix = new THREE.Matrix4()
+    this.hands.forEach((rig, index) => {
+      const pointer = pointers[index]
+      rig.group.visible = !!pointer
+      if (!pointer) return
+      const reach = THREE.MathUtils.clamp(
+        THREE.MathUtils.mapLinear(pointer.size, 0.08, 0.3, HAND_NEAR, HAND_FAR),
+        HAND_NEAR,
+        HAND_FAR
+      )
+      const joints = pointer.landmarks.map((landmark) => {
+        const screen = toViewport(landmark)
+        this.raycaster.setFromCamera(this.ndc(screen.x, screen.y), this.camera)
+        // MediaPipe's z is negative for joints nearer the webcam, which
+        // puts them further into the scene.
+        return this.raycaster.ray.at(reach - landmark.z * JOINT_DEPTH, new THREE.Vector3())
+      })
+      joints.forEach((joint, i) => {
+        const tip = i === 4 || i === 8
+        const scale = tip ? 1 + pointer.pinchAmount * 0.9 : i === 0 ? 1.4 : 0.8
+        matrix.makeScale(scale, scale, scale).setPosition(joint)
+        rig.joints.setMatrixAt(i, matrix)
+      })
+      rig.joints.instanceMatrix.needsUpdate = true
+      const positions = rig.bones.geometry.getAttribute("position") as THREE.BufferAttribute
+      HAND_BONES.forEach(([a, b], i) => {
+        positions.setXYZ(i * 2, joints[a].x, joints[a].y, joints[a].z)
+        positions.setXYZ(i * 2 + 1, joints[b].x, joints[b].y, joints[b].z)
+      })
+      positions.needsUpdate = true
+      ;(rig.bones.material as THREE.LineBasicMaterial).opacity = pointer.pinching ? 1 : 0.7
+    })
+  }
+
+  /** Show the live camera, mirrored and dimmed, behind the workshop. */
+  setPassthrough(video: HTMLVideoElement | null) {
+    this.passthrough?.dispose()
+    this.passthrough = null
+    const floorMaterial = this.floor.material as THREE.MeshStandardMaterial
+    if (video) {
+      const texture = new THREE.VideoTexture(video)
+      texture.colorSpace = THREE.SRGBColorSpace
+      texture.wrapS = THREE.RepeatWrapping
+      texture.repeat.x = -1 // selfie view, matching the camera preview
+      this.passthrough = texture
+      this.scene.background = texture
+      this.scene.backgroundIntensity = 0.4
+      this.scene.fog = null
+      floorMaterial.transparent = true
+      floorMaterial.opacity = 0.35
+    } else {
+      this.scene.background = new THREE.Color(0x02050a)
+      this.scene.backgroundIntensity = 1
+      this.scene.fog = new THREE.Fog(0x02050a, 14, 34)
+      floorMaterial.transparent = false
+      floorMaterial.opacity = 1
+    }
+    floorMaterial.needsUpdate = true
   }
 
   zoom(factor: number) {
@@ -285,6 +445,7 @@ export class WorkshopScene {
 
   dispose() {
     cancelAnimationFrame(this.raf)
+    this.passthrough?.dispose()
     this.observer.disconnect()
     this.clear()
     this.scene.traverse((node) => {
@@ -324,6 +485,36 @@ export class WorkshopScene {
     return geometry
   }
 
+  private buildHand(): HandRig {
+    const joints = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(0.05, 12, 8),
+      new THREE.MeshBasicMaterial({
+        color: accentHex(),
+        transparent: true,
+        opacity: 0.95,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+      21
+    )
+    this.accentMaterials.push(joints.material as THREE.MeshBasicMaterial)
+    const bonesGeometry = new THREE.BufferGeometry()
+    bonesGeometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(new Float32Array(HAND_BONES.length * 6), 3)
+    )
+    const bones = new THREE.LineSegments(bonesGeometry, this.accentLine(0.7))
+    // Positions are written in world space every frame, so the default
+    // bounds would cull the hand the moment it left its first spot.
+    joints.frustumCulled = false
+    bones.frustumCulled = false
+    const group = new THREE.Group()
+    group.add(joints, bones)
+    group.visible = false
+    this.scene.add(group)
+    return { group, joints, bones }
+  }
+
   private buildFloor() {
     const floor = new THREE.Mesh(
       new THREE.CircleGeometry(9, 96),
@@ -333,6 +524,7 @@ export class WorkshopScene {
     )
     floor.rotation.x = -Math.PI / 2
     floor.receiveShadow = true
+    this.floor = floor
     this.scene.add(floor)
 
     const grid = new THREE.GridHelper(18, 36, accentHex(), accentHex())
@@ -388,6 +580,7 @@ export class WorkshopScene {
     let best: Item | null = null
     let bestDistance = Infinity
     for (const item of this.items) {
+      if (item.dying !== null) continue
       const hit = this.raycaster.ray.intersectBox(item.bounds, new THREE.Vector3())
       if (hit) {
         const distance = hit.distanceTo(this.camera.position)
@@ -455,6 +648,7 @@ export class WorkshopScene {
     if (this.accentTimer <= 0) {
       this.accentTimer = 0.25
       const hex = accentHex()
+      this.accent = hex
       this.accentMaterials.forEach((m) => m.color.setHex(hex))
       this.rim.color.setHex(hex)
     }
@@ -465,7 +659,27 @@ export class WorkshopScene {
       [...this.grips.values()].filter((g) => g.kind === "item").map((g) => (g as { item: Item }).item)
     )
 
-    for (const item of this.items) {
+    for (const item of [...this.items]) {
+      // Discarded: flares red, spins up, collapses and is gone.
+      if (item.dying !== null) {
+        const p = (t - item.dying) / DISCARD_SECONDS
+        if (p >= 1) {
+          this.items.splice(this.items.indexOf(item), 1)
+          this.disposeItem(item)
+          continue
+        }
+        const shrink = item.scale * (1 - p) * (1 - p)
+        item.root.scale.setScalar(Math.max(0.001, shrink))
+        item.model.rotation.y += dt * (6 + 30 * p)
+        item.root.position.y += dt * 1.5
+        item.solidity = Math.max(0, item.solidity - dt * 4)
+        item.clip.constant = item.bounds.min.y - 1 + (item.bounds.max.y - item.bounds.min.y + 2) * item.solidity
+        item.wireMaterial.color.setHex(ARMED_COLOR)
+        item.wireMaterial.opacity = 1 - p * 0.6
+        continue
+      }
+      item.wireMaterial.color.setHex(item.armed ? ARMED_COLOR : this.accent)
+
       const age = t - item.born
       // Spawn: grows in over half a second with an overshoot.
       const grow = Math.min(1, age / 0.5)
@@ -488,6 +702,7 @@ export class WorkshopScene {
       item.clip.constant = item.solidity >= 1 ? max.y + 1 : item.solidity <= 0 ? min.y - 1 : cut
       for (const mesh of item.solids) mesh.visible = true
       const hologram = 1 - item.solidity
+      for (const lines of item.contours) lines.visible = hologram > 0.05
       const lit = item === this.hovered || held.has(item) || item === this.focused
       item.wireMaterial.opacity = (0.1 + hologram * 0.55) * (lit ? 1.25 : 1) * (0.92 + Math.sin(t * 20) * 0.04)
       for (const light of item.lights) light.intensity = (light.userData.intensity as number) * (0.25 + item.solidity * 0.75)

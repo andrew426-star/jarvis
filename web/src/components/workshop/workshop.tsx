@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { BoxIcon, Trash2Icon, XIcon } from "lucide-react"
+import { BoxIcon, RotateCcwIcon, ScanEyeIcon, Trash2Icon, XIcon } from "lucide-react"
 
-import { setSpatialHandler } from "@/lib/hand-tracking"
+import { getVideo, startCamera, stopCamera } from "@/lib/camera"
+import { setSpatialHandler, startHands, stopHands, subscribeHands } from "@/lib/hand-tracking"
+import { sfx } from "@/lib/sfx"
 import { useSpatial } from "@/lib/spatial-store"
 import type { ItemMode, WorkshopScene } from "@/lib/workshop/scene"
 import { CATALOGUE, type ItemSpec } from "@/lib/workshop/models"
@@ -58,7 +60,56 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
   const pressRef = useRef<{ at: number; x: number; y: number } | null>(null)
   const [focus, setFocus] = useState<Focus>(null)
   const [ready, setReady] = useState(false)
-  const handsOn = useSpatial((state) => state.handsStatus === "tracking")
+  const [passthrough, setPassthrough] = useState(false)
+  const [trackingError, setTrackingError] = useState<string | null>(null)
+  const [bin, setBin] = useState<"idle" | "armed" | "discarded">("idle")
+  const binRef = useRef<HTMLDivElement>(null)
+  const handsStatus = useSpatial((state) => state.handsStatus)
+  const handsOn = handsStatus === "tracking"
+
+  // Native tracking: the workshop brings up the camera and hands itself,
+  // and on the way out puts back only what it switched on - a camera that
+  // was already running for the console stays on.
+  useEffect(() => {
+    let cancelled = false
+    let startedCamera = false
+    let startedHands = false
+    const spatial = useSpatial.getState()
+
+    async function bringUp() {
+      try {
+        if (!spatial.cameraOn) {
+          await startCamera()
+          if (cancelled) return
+          startedCamera = true
+          useSpatial.getState().setCameraOn(true)
+        }
+        if (useSpatial.getState().handsStatus !== "tracking") {
+          await startHands()
+          if (cancelled) return
+          startedHands = true
+        }
+      } catch (err) {
+        if (cancelled) return
+        const denied = err instanceof DOMException && err.name === "NotAllowedError"
+        setTrackingError(
+          denied
+            ? "Camera blocked. Allow it in the address bar to use your hands here; the mouse still works."
+            : "Hand tracking could not start. The mouse still works."
+        )
+      }
+    }
+    void bringUp()
+
+    return () => {
+      cancelled = true
+      if (startedHands) stopHands()
+      if (startedCamera) {
+        stopCamera()
+        useSpatial.getState().setCameraOn(false)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     const host = hostRef.current
@@ -67,25 +118,51 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
     let disposed = false
     import("@/lib/workshop/scene").then(({ WorkshopScene }) => {
       if (disposed) return
-      const scene = new WorkshopScene(host, label, { onFocus: setFocus })
+      const scene = new WorkshopScene(host, label, {
+        onFocus: setFocus,
+        // Generous: a hand cannot aim as finely as a mouse.
+        binAt: (x, y) => {
+          const rect = binRef.current?.getBoundingClientRect()
+          if (!rect) return false
+          const pad = 28
+          return x > rect.left - pad && x < rect.right + pad && y > rect.top - pad && y < rect.bottom + pad
+        },
+        onBin: (state) => {
+          setBin(state)
+          if (state === "armed") sfx.click()
+          if (state === "discarded") {
+            sfx.alert()
+            window.setTimeout(() => setBin("idle"), 650)
+          }
+        },
+      })
       sceneRef.current = scene
       // Something to hold on arrival: the reactor as a hologram.
       scene.spawn("reactor")
       setSpatialHandler({
-        down: (id, x, y) => scene.down(id, x, y),
-        move: (id, x, y) => scene.move(id, x, y),
+        down: (id, x, y, size) => scene.down(id, x, y, size),
+        move: (id, x, y, size) => scene.move(id, x, y, size),
         up: (id, x, y, tap) => scene.up(id, x, y, tap),
         hover: (x, y) => scene.hover(x, y),
       })
       setReady(true)
     })
+    // The hands themselves, drawn inside the scene at camera rate.
+    const unsubscribe = subscribeHands((pointers) => sceneRef.current?.setHands(pointers))
     return () => {
       disposed = true
+      unsubscribe()
       setSpatialHandler(null)
       sceneRef.current?.dispose()
       sceneRef.current = null
     }
   }, [])
+
+  function togglePassthrough() {
+    const next = !passthrough
+    sceneRef.current?.setPassthrough(next ? getVideo() : null)
+    setPassthrough(next)
+  }
 
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -144,6 +221,18 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
           </nav>
         </div>
         <div className="relative flex shrink-0 items-center" style={{ gap: "var(--sp-2)" }}>
+          <button
+            type="button"
+            className="btn flex items-center"
+            style={{ gap: 6, padding: "4px 10px" }}
+            onClick={togglePassthrough}
+            data-active={passthrough}
+            aria-pressed={passthrough}
+            disabled={!ready || !handsOn}
+            title="Show the camera behind the workshop"
+          >
+            <ScanEyeIcon size={12} /> PASSTHROUGH
+          </button>
           <button type="button" className="btn" style={{ padding: "4px 10px" }} onClick={() => sceneRef.current?.setAllModes("wire")}>
             HOLOGRAM
           </button>
@@ -156,9 +245,9 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
             style={{ width: 28, height: 28, padding: 0 }}
             onClick={() => sceneRef.current?.clear()}
             aria-label="Clear the workshop"
-            title="Clear"
+            title="Clear everything"
           >
-            <Trash2Icon className="mx-auto size-4" />
+            <RotateCcwIcon className="mx-auto size-4" />
           </button>
           <button
             type="button"
@@ -209,13 +298,29 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
+        {/* Discard bin. Drop an item on it, by hand or mouse. */}
+        <div
+          ref={binRef}
+          className="workshop-bin pointer-events-none absolute"
+          data-state={bin}
+          style={{ right: 28, bottom: 44 }}
+          aria-hidden
+        >
+          <Trash2Icon size={26} />
+          <span className="t-label">{bin === "armed" ? "RELEASE" : bin === "discarded" ? "DISCARDED" : "DISCARD"}</span>
+        </div>
+
         <p
           className="t-time pointer-events-none absolute right-0 bottom-3 left-0 text-center"
           style={{ color: "var(--text-secondary)" }}
         >
-          {handsOn
-            ? "PINCH ITEM: GRAB · FLICK: SPIN · QUICK PINCH: HOLO/SOLID · BOTH HANDS: RESIZE · PINCH SPACE: ORBIT"
-            : "DRAG ITEM: MOVE · FLICK: SPIN · CLICK: HOLO/SOLID · DRAG SPACE: ORBIT · WHEEL: ZOOM · TURN ON HANDS IN THE CAMERA PANEL"}
+          {trackingError
+            ? trackingError
+            : handsStatus === "loading"
+              ? "BRINGING HANDS ONLINE..."
+              : handsOn
+                ? "PINCH ITEM: GRAB · TOWARD/AWAY FROM CAMERA: DEPTH · FLICK: SPIN · QUICK PINCH: HOLO/SOLID · BOTH HANDS: RESIZE · DROP ON BIN: DISCARD"
+                : "DRAG ITEM: MOVE · FLICK: SPIN · CLICK: HOLO/SOLID · DRAG SPACE: ORBIT · WHEEL: ZOOM · DROP ON BIN: DISCARD"}
         </p>
       </div>
     </>

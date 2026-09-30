@@ -464,6 +464,38 @@ body {
   white-space: pre-line;
 }
 
+/* Workshop discard bin: a holographic ring that arms red under a held
+   item and flashes as one is discarded. */
+.workshop-bin {
+  width: 96px;
+  height: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--accent-rgb), 0.5);
+  background: radial-gradient(circle, rgba(var(--accent-rgb), 0.14), rgba(5, 7, 14, 0.6) 70%);
+  box-shadow: 0 0 18px rgba(var(--accent-rgb), 0.25), inset 0 0 18px rgba(var(--accent-rgb), 0.15);
+  color: var(--accent);
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+
+.workshop-bin[data-state="armed"],
+.workshop-bin[data-state="discarded"] {
+  --bin: 255, 51, 85;
+  transform: scale(1.18);
+  color: rgb(var(--bin));
+  border-color: rgba(var(--bin), 0.9);
+  background: radial-gradient(circle, rgba(var(--bin), 0.25), rgba(5, 7, 14, 0.6) 70%);
+  box-shadow: 0 0 30px rgba(var(--bin), 0.6), inset 0 0 24px rgba(var(--bin), 0.3);
+}
+
+.workshop-bin[data-state="discarded"] {
+  transform: scale(0.92);
+}
+
 /* ============================================================
    SCROLLBARS - 4px, accent at 30%
    ============================================================ */

@@ -9,7 +9,8 @@ import { useSpatial } from "@/lib/spatial-store"
 // DOM so moving two cursors at camera rate costs no layout or React work.
 // pointer-events: none keeps it out of the hit tests the gestures rely on.
 export function HandCursors() {
-  const tracking = useSpatial((state) => state.handsStatus === "tracking")
+  // Inside the workshop the hands are drawn in 3D instead.
+  const tracking = useSpatial((state) => state.handsStatus === "tracking" && !state.workshopOpen)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
