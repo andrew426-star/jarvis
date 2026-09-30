@@ -1,3 +1,4 @@
+import itertools
 import logging
 import re
 import threading
@@ -122,6 +123,50 @@ def generate(
                 continue
         try:
             return client.models.generate_content(model=model, contents=contents, config=config), model
+        except errors.APIError as exc:
+            rest = _cooldown_for(exc)
+            if rest is None:
+                raise
+            with _lock:
+                _cooling[model] = time.time() + rest
+            logger.warning("Gemini %s unavailable (%s); resting %.0fs", model, exc.code, rest)
+        except httpx.TimeoutException:
+            with _lock:
+                _cooling[model] = time.time() + OVERLOADED_COOLDOWN
+            logger.warning("Gemini %s timed out; resting %.0fs", model, OVERLOADED_COOLDOWN)
+
+    with _lock:
+        retry_at = min((_cooling.get(m, 0) for m in ladder()), default=time.time() + MINUTE_COOLDOWN)
+    raise AllModelsExhausted(retry_at)
+
+
+def generate_stream(
+    contents,
+    config: types.GenerateContentConfig,
+    prefer: str | None = None,
+    only: str | None = None,
+):
+    """generate_content_stream on the same ladder as generate(). Returns
+    (chunks, model). Quota errors surface on the first chunk, so that one
+    is pulled here, inside the fallback, and chained back on the front."""
+    client = get_gemini_client()
+    models = ladder()
+    if only:
+        models = [only]
+    elif prefer in models:
+        models = [prefer] + [m for m in models if m != prefer]
+
+    for model in models:
+        with _lock:
+            if _cooling.get(model, 0) > time.time():
+                continue
+        try:
+            chunks = client.models.generate_content_stream(model=model, contents=contents, config=config)
+            try:
+                first = next(chunks)
+            except StopIteration:
+                return iter(()), model
+            return itertools.chain([first], chunks), model
         except errors.APIError as exc:
             rest = _cooldown_for(exc)
             if rest is None:

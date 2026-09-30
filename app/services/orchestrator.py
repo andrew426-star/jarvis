@@ -3,13 +3,16 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
+import httpx
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from app.core.config import get_settings
-from app.core.gemini import AllModelsExhausted, GeminiNotConfigured, generate
+from app.core.gemini import AllModelsExhausted, GeminiNotConfigured, generate_stream
 from app.core.local_time import now_for_prompt
 from app.memory.interaction_log import fetch_recent_turns, write_interaction
 from app.memory.semantic_recall import get_relevant_context, record_interaction
@@ -134,11 +137,13 @@ SYSTEM_PROMPT = (
     "Keep replies tight and conversational, not a wall of text — this persona is a voice, not "
     "an excuse for padding.\n\n"
     "TWO CHANNELS, SCREEN AND VOICE: every reply is shown on screen AND read aloud, and the two "
-    "are written separately. First write the on-screen reply: plain text (the screen does not "
-    "render markdown, so no **bold**, # headers, backticks or tables), but otherwise complete: "
-    "exact figures, tickers, symbols, URLs, email addresses, IDs and code all belong here. Then "
-    "END EVERY REPLY with a <spoken>...</spoken> block: what you would actually say out loud "
-    "to Andrew, in the same voice. It is not a transcript of the screen text. Leave out anything "
+    "are written separately. BEGIN EVERY REPLY with a <spoken>...</spoken> block - it comes "
+    "first so your voice can start while the rest is still being written - holding what you "
+    "would actually say out loud to Andrew, in the same voice. Then write the on-screen reply: "
+    "plain text (the screen does not render markdown, so no **bold**, # headers, backticks or "
+    "tables), but otherwise complete: exact figures, tickers, symbols, URLs, email addresses, "
+    "IDs and code all belong there. The spoken block is not a transcript of the screen text. "
+    "Leave out anything "
     "that trips up a conversation when heard (URLs, IDs, code, long number lists, symbols) and "
     "point at the screen instead (\"the full list is on screen, sir\"). Round numbers the way a "
     "person would say them (\"about three hundred thirty-three dollars\"). Keep it to one to "
@@ -272,6 +277,33 @@ def _reseed(base: list[types.Content], executed: list[tuple[str, dict, dict]]) -
     return contents
 
 
+_TAG = re.compile(r"(</?spoken>)", re.IGNORECASE)
+
+
+def _stream_split(text: str) -> tuple[str, str]:
+    """(display, spoken) for a reply still being written. A tag cut off at
+    the end ("<spo") is held back until the next chunk decides it, so no
+    fragment of a tag ever reaches the screen or the voice."""
+    lowered = text.lower()
+    for tag in ("<spoken>", "</spoken>"):
+        for k in range(len(tag) - 1, 0, -1):
+            if lowered.endswith(tag[:k]):
+                text = text[: len(text) - k]
+                lowered = lowered[: len(lowered) - k]
+                break
+    display: list[str] = []
+    spoken: list[str] = []
+    inside = False
+    for piece in _TAG.split(text):
+        if piece.lower() == "<spoken>":
+            inside = True
+        elif piece.lower() == "</spoken>":
+            inside = False
+        else:
+            (spoken if inside else display).append(piece)
+    return "".join(display), "".join(spoken)
+
+
 def _quota_message(exc: AllModelsExhausted) -> str:
     wait = max(1, int((exc.retry_at - time.time()) / 60))
     when = f"in about {wait} minute{'s' if wait != 1 else ''}" if wait < 90 else f"in about {round(wait / 60)} hours"
@@ -299,7 +331,16 @@ TERMINAL_MODE = (
 )
 
 
-def run_invoke(
+def run_invoke(*args, **kwargs) -> dict:
+    """One whole turn, for callers that want the finished reply (/invoke,
+    the terminal CLI): the streamed turn, run to its end."""
+    for event in stream_invoke(*args, **kwargs):
+        if event["type"] == "done":
+            return {k: v for k, v in event.items() if k != "type"}
+    raise RuntimeError("The turn ended without a result.")
+
+
+def stream_invoke(
     message: str,
     session_id: str | None,
     channel: str = "console",
@@ -307,10 +348,18 @@ def run_invoke(
     image_type: str = "image/jpeg",
     look: bool = False,
     console_state: dict | None = None,
-) -> dict:
-    """`image` is a base64 camera frame the console attaches while its
-    camera is on; `look` means Andrew pressed Look, so the frame is
-    described up front instead of waiting for the model to ask for it."""
+) -> Iterator[dict]:
+    """A turn as a stream of events, for /invoke/stream:
+
+      text    {"delta"}           more of the on-screen reply
+      spoken  {"delta"}           more of the voice line (it comes first)
+      reset   {}                  text so far was a preamble to tool calls; drop it
+      tool    {"name", "result"}  a tool finished (console actions run on this)
+      done    {...}               the finished turn, as /invoke returns it
+
+    `image` is a base64 camera frame the console attaches while its camera
+    is on; `look` means Andrew pressed Look, so the frame is described up
+    front instead of waiting for the model to ask for it."""
     session_id = session_id or str(uuid.uuid4())
     settings = get_settings()
     started = time.monotonic()
@@ -400,12 +449,12 @@ def run_invoke(
                 # it may continue. If it has run out, hand the turn to the
                 # ladder as text instead of as that history.
                 try:
-                    response, used_model = generate(contents, config, only=turn_model)
+                    chunks, used_model = generate_stream(contents, config, only=turn_model)
                 except AllModelsExhausted:
                     contents = _reseed(base, executed)
-                    response, used_model = generate(contents, config)
+                    chunks, used_model = generate_stream(contents, config)
             else:
-                response, used_model = generate(contents, config, prefer=turn_model)
+                chunks, used_model = generate_stream(contents, config, prefer=turn_model)
         except AllModelsExhausted as exc:
             final_text = _quota_message(exc)
             break
@@ -413,19 +462,53 @@ def run_invoke(
             final_text = "My reasoning model isn't configured, sir: GEMINI_API_KEY needs to be set on the server."
             break
         turn_model = used_model
+
+        # Read the round as it streams: text goes straight out as screen
+        # and voice deltas; function calls are collected for after.
+        round_parts: list[types.Part] = []
+        calls: list[types.FunctionCall] = []
+        text = ""
+        sent_display = sent_spoken = 0
+        finish = None
+        try:
+            for chunk in chunks:
+                candidate = chunk.candidates[0] if chunk.candidates else None
+                if candidate is None:
+                    continue
+                finish = candidate.finish_reason or finish
+                for part in (candidate.content.parts if candidate.content else None) or []:
+                    round_parts.append(part)
+                    if part.function_call:
+                        calls.append(part.function_call)
+                    elif part.text and not part.thought:
+                        text += part.text
+                        display, spoken = _stream_split(text)
+                        if len(spoken) > sent_spoken:
+                            yield {"type": "spoken", "delta": spoken[sent_spoken:]}
+                            sent_spoken = len(spoken)
+                        if len(display) > sent_display:
+                            yield {"type": "text", "delta": display[sent_display:]}
+                            sent_display = len(display)
+        except (genai_errors.APIError, httpx.HTTPError) as exc:
+            logger.warning("Gemini stream broke on %s: %s", used_model, exc)
+            final_text = text or "The line to my reasoning model dropped mid-thought, sir. Would you ask again?"
+            break
         timings.append({"step": "model", "model": used_model, "ms": int((time.monotonic() - step) * 1000)})
 
-        calls = response.function_calls or []
         if not calls:
-            final_text = response.text or ""
+            final_text = text
             if not final_text.strip():
-                reason = response.candidates[0].finish_reason if response.candidates else None
-                final_text = f"I lost the thread of that one, sir ({reason or 'empty reply'}). Would you ask again?"
+                final_text = f"I lost the thread of that one, sir ({finish or 'empty reply'}). Would you ask again?"
             break
+
+        # Text before a tool call is a preamble ("let me check"), not the
+        # reply; the console drops what it showed of it.
+        if text:
+            yield {"type": "reset"}
 
         # The model's own turn goes back verbatim: it carries the thought
         # signatures Gemini needs to continue a function-calling turn.
-        contents.append(response.candidates[0].content)
+        contents.append(types.Content(role="model", parts=round_parts))
 
         # Submitted up front so every call in this round starts running
         # concurrently; results are applied in original order (not
@@ -441,6 +524,7 @@ def run_invoke(
             tools_used.append(name)
             tool_call_trace.append({"name": name, "args": args, "result": result, "ms": ms})
             timings.append({"step": "tool", "name": name, "ms": ms})
+            yield {"type": "tool", "name": name, "result": result}
             executed.append((name, args, result))
             parts.append(
                 types.Part(function_response=types.FunctionResponse(id=call.id, name=name, response=_capped(result)))
@@ -494,7 +578,8 @@ def run_invoke(
         loaded = sum(1 for turn in recent_turns if turn["role"] == "user")
         context_turns = min(loaded + 1, window)
 
-    return {
+    yield {
+        "type": "done",
         "response": final_text,
         "spoken": spoken_text,
         "tools_used": tools_used,

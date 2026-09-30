@@ -19,6 +19,8 @@ export interface ChatMessageData {
   time: string
   toolsUsed?: string[]
   autoPlay?: boolean
+  /** Still arriving from /invoke/stream: shown as it grows, with a caret. */
+  streaming?: boolean
   reopenMicAfter?: boolean
 }
 
@@ -130,7 +132,7 @@ export function ChatMessage({
         }}
       >
         {isUser ? message.content : shown}
-        {!isUser && !done && <span className="caret" aria-hidden />}
+        {!isUser && (!done || message.streaming) && <span className="caret" aria-hidden />}
       </div>
 
       <div

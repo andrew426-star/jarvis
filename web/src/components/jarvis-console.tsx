@@ -32,7 +32,7 @@ import {
   JarvisNetworkError,
   getSessionContext,
   getStatus,
-  invoke,
+  invokeStream,
   type MarketHistory,
   type MarketSnapshot,
   type NewsResult,
@@ -52,6 +52,7 @@ import { emitCore } from "@/lib/core-events"
 import { startHands, stopHands } from "@/lib/hand-tracking"
 import { stopNarration } from "@/lib/narration"
 import { sfx, unlockAudio } from "@/lib/sfx"
+import { SpeechQueue } from "@/lib/speech-queue"
 import { useSpatial } from "@/lib/spatial-store"
 import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store"
 import { useBoot } from "@/lib/use-boot"
@@ -458,12 +459,52 @@ function Shell({
     emitCore({ kind: "send" })
     pushLog("NONE", viaVoice ? "Voice command received" : "Command received")
 
+    // The reply appears, and is spoken, while it is still being written.
+    // Its message goes in empty and fills as text arrives; the voice line
+    // (which the server sends first) is spoken a sentence at a time.
+    const replyId = crypto.randomUUID()
+    let replyShown = false
+    const updateReply = (change: (message: ChatMessageData) => ChatMessageData) => {
+      if (!replyShown) {
+        replyShown = true
+        setMessages((prev) => [
+          ...prev,
+          change({ id: replyId, role: "assistant", content: "", time: clockTime(), streaming: true }),
+        ])
+        return
+      }
+      setMessages((prev) => prev.map((m) => (m.id === replyId ? change(m) : m)))
+    }
+    const voice = new SpeechQueue(token, {
+      onStart: () => setSpeaking(true),
+      onEnd: (completed) => {
+        setSpeaking(false)
+        // After a spoken exchange the mic reopens for the answer, unless
+        // the speech was cut off by a barge-in (which opens it itself).
+        if (completed && viaVoice) micRef.current?.startRecording()
+      },
+      onAuthError,
+    })
+
     try {
-      const result = await invoke(text, sessionId, token, {
-        image: frame?.base64,
-        look,
-        consoleState: consoleState(),
-      })
+      const result = await invokeStream(
+        text,
+        sessionId,
+        token,
+        { image: frame?.base64, look, consoleState: consoleState() },
+        (event) => {
+          if (event.type === "text") updateReply((m) => ({ ...m, content: m.content + event.delta }))
+          else if (event.type === "reset") updateReply((m) => ({ ...m, content: "" }))
+          else if (event.type === "spoken") voice.push(event.delta)
+          else if (event.type === "tool") {
+            // Acted on the moment each tool finishes, not at the end: a
+            // panel or workshop change lands while he is still talking.
+            handleToolResults([{ name: event.name, result: event.result }])
+            emitCore({ kind: "tool", name: event.name })
+          }
+        }
+      )
+      voice.finish(result.spoken)
       setContext(result.context_turns, result.context_window)
       // One line per turn in the system log: which step cost what, so a
       // slow reply can be pinned on the model, a tool, or memory.
@@ -476,7 +517,6 @@ function Shell({
         pushLog("NONE", `${steps.join(" · ")}${total ? ` = ${secs(total.ms)}` : ""}`)
       }
       emitCore({ kind: "reply" })
-      result.tool_results.forEach((entry) => emitCore({ kind: "tool", name: entry.name }))
       const sight = result.tool_results.find((entry) => entry.name === "camera_look")
       const seen = sight?.result as { ok?: boolean; description?: string } | undefined
       if (frame && seen?.ok && seen.description) {
@@ -490,20 +530,15 @@ function Shell({
         })
         pushLog("OK", "Frame analysed")
       }
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: result.response,
-          spoken: result.spoken,
-          time: clockTime(),
-          toolsUsed: result.tools_used,
-          autoPlay: true,
-          reopenMicAfter: viaVoice,
-        },
-      ])
-      if (result.tool_results.length > 0) handleToolResults(result.tool_results)
+      // The finished reply replaces what streamed in: the server's final
+      // text is the authoritative one (tags stripped, whitespace settled).
+      updateReply((m) => ({
+        ...m,
+        content: result.response,
+        spoken: result.spoken,
+        toolsUsed: result.tools_used,
+        streaming: false,
+      }))
 
       // Render's free tier sleeps after 15 minutes. A multi-second first
       // call is the instance waking up, not Jarvis thinking slowly, and
@@ -517,6 +552,8 @@ function Shell({
         )
       }
     } catch (err) {
+      voice.stop()
+      if (replyShown) updateReply((m) => ({ ...m, streaming: false }))
       if (err instanceof JarvisAuthError) {
         pushLog("ERR", "Session rejected")
         notify("warning", "Session expired", "Sign in again to continue.")

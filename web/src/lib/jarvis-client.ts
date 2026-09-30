@@ -139,6 +139,68 @@ export async function getSessionContext(sessionId: string, token: string): Promi
   return res.json()
 }
 
+export type StreamEvent =
+  | { type: "text"; delta: string }
+  | { type: "spoken"; delta: string }
+  | { type: "reset" }
+  | { type: "tool"; name: string; result: unknown }
+  | ({ type: "done" } & InvokeResult)
+  | { type: "error"; message: string }
+
+/** /invoke/stream: the same turn as invoke(), delivered as it is written.
+ *  Events go to onEvent as they arrive; resolves with the finished turn. */
+export async function invokeStream(
+  message: string,
+  sessionId: string,
+  token: string,
+  options: InvokeOptions,
+  onEvent: (event: StreamEvent) => void
+): Promise<InvokeResult> {
+  const res = await jarvisFetch("/invoke/stream", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message,
+      session_id: sessionId,
+      image: options.image,
+      look: options.look ?? false,
+      console_state: options.consoleState,
+    }),
+  })
+  if (!res.body) throw new JarvisApiError("The reply stream never opened.")
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let pending = ""
+  let result: InvokeResult | null = null
+  const handle = (line: string) => {
+    if (!line.trim()) return
+    const event = JSON.parse(line) as StreamEvent
+    if (event.type === "error") throw new JarvisApiError(event.message)
+    if (event.type === "done") result = event
+    onEvent(event)
+  }
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      pending += decoder.decode(value, { stream: true })
+      // Newline-delimited JSON: complete lines are events, the tail waits.
+      let newline: number
+      while ((newline = pending.indexOf("\n")) >= 0) {
+        handle(pending.slice(0, newline))
+        pending = pending.slice(newline + 1)
+      }
+    }
+    handle(pending)
+  } catch (err) {
+    if (err instanceof JarvisApiError) throw err
+    throw new JarvisNetworkError()
+  }
+  if (!result) throw new JarvisApiError("The reply stream ended early.")
+  return result
+}
+
 export async function speak(text: string, token: string, voiceId?: string): Promise<Blob> {
   const res = await jarvisFetch("/speak", token, {
     method: "POST",

@@ -1,0 +1,156 @@
+"use client"
+
+import { startAudioAnalysis, stopAudioAnalysis } from "@/lib/audio-amplitude"
+import { JarvisAuthError, speak } from "@/lib/jarvis-client"
+import { clearNarration, registerNarration } from "@/lib/narration"
+
+// Speaking a reply while it is still being written. The voice line streams
+// in first (see stream_invoke on the server); each finished sentence is
+// sent to /speak straight away, and the clips play back in order. Jarvis
+// starts talking after one sentence of synthesis instead of after the
+// whole reply and the whole clip.
+//
+// Synthesis runs ahead of playback: every sentence's /speak request starts
+// the moment the sentence is complete, so later clips are usually ready
+// before the one in front of them finishes.
+
+// A sentence ends at . ! or ? (plus any closing quote or bracket) followed
+// by whitespace. The whitespace matters: "3.5" and "e.g." mid-flow do not
+// end one.
+const SENTENCE = /^[\s\S]*?[.!?]+["')\]]*\s+/
+
+interface Handlers {
+  onStart: () => void
+  /** `completed` is false when the queue was stopped (barge-in). */
+  onEnd: (completed: boolean) => void
+  onAuthError: () => void
+}
+
+export class SpeechQueue {
+  private buffer = ""
+  private clips: Promise<Blob | null>[] = []
+  private closed = false
+  private stopped = false
+  private started = false
+  private playing: HTMLAudioElement | null = null
+  private wake: (() => void) | null = null
+  private readonly stopFn = () => this.stop()
+
+  constructor(
+    private readonly token: string,
+    private readonly handlers: Handlers
+  ) {
+    void this.run()
+  }
+
+  /** More of the voice line. Complete sentences go to synthesis now. */
+  push(delta: string) {
+    if (this.stopped || this.closed) return
+    this.buffer += delta
+    let match: RegExpMatchArray | null
+    while ((match = this.buffer.match(SENTENCE))) {
+      this.enqueue(match[0])
+      this.buffer = this.buffer.slice(match[0].length)
+    }
+  }
+
+  /** The voice line is complete: speak whatever is left, then end. */
+  finish(fallback?: string) {
+    if (this.stopped || this.closed) return
+    if (this.buffer.trim()) this.enqueue(this.buffer)
+    // A reply that never produced a voice line still gets read.
+    if (!this.clips.length && fallback?.trim()) this.enqueue(fallback)
+    this.buffer = ""
+    this.closed = true
+    this.poke()
+  }
+
+  stop() {
+    if (this.stopped) return
+    this.stopped = true
+    this.playing?.pause()
+    this.playing = null
+    stopAudioAnalysis()
+    clearNarration(this.stopFn)
+    this.poke()
+    if (this.started) this.handlers.onEnd(false)
+  }
+
+  private enqueue(text: string) {
+    const sentence = text.trim()
+    if (!sentence) return
+    this.clips.push(
+      speak(sentence, this.token).catch((err) => {
+        if (err instanceof JarvisAuthError) this.handlers.onAuthError()
+        // A sentence that fails to synthesise is skipped, not fatal.
+        return null
+      })
+    )
+    this.poke()
+  }
+
+  private poke() {
+    this.wake?.()
+    this.wake = null
+  }
+
+  private async run() {
+    let index = 0
+    while (!this.stopped) {
+      if (index >= this.clips.length) {
+        if (this.closed) break
+        await new Promise<void>((resolve) => (this.wake = resolve))
+        continue
+      }
+      const blob = await this.clips[index]
+      index += 1
+      if (!blob || this.stopped) continue
+      await this.play(blob)
+    }
+    if (!this.stopped) {
+      if (this.started) {
+        clearNarration(this.stopFn)
+        stopAudioAnalysis()
+      }
+      // Also when nothing was spoken, so a voice exchange still reopens
+      // the mic after a silent reply.
+      this.handlers.onEnd(true)
+    }
+  }
+
+  private play(blob: Blob): Promise<void> {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      this.playing = audio
+      const done = () => {
+        URL.revokeObjectURL(url)
+        if (this.playing === audio) this.playing = null
+        resolve()
+      }
+      audio.onended = done
+      audio.onerror = done
+      audio
+        .play()
+        .then(() => {
+          if (!this.started) {
+            this.started = true
+            // Registering makes the core's barge-in (and any other reply's
+            // playback) stop this queue, exactly like a single clip.
+            registerNarration(this.stopFn)
+            this.handlers.onStart()
+          }
+          startAudioAnalysis(audio)
+        })
+        .catch(done)
+      // A stop() mid-clip pauses the element, which does not fire ended.
+      const check = setInterval(() => {
+        if (this.stopped) {
+          clearInterval(check)
+          done()
+        }
+        if (this.playing !== audio) clearInterval(check)
+      }, 100)
+    })
+  }
+}
