@@ -62,10 +62,13 @@ SCAD_GUIDE = (
     "CONSOLE_STATE shows last_scad_error, your previous part failed to compile: fix the code and "
     "send it again. "
     "export_stl: download an item's STL (and .scad) - target: its name, 'last' or 'all'. "
-    "snapshot: save the workshop view as a PNG for rendering in Veras (EvolveLAB's AI renderer, "
-    "which has no API here - he uploads the image to Veras himself); when he wants a Veras render, "
-    "take the snapshot and give him a ready-to-paste Veras prompt describing materials, lighting "
-    "and setting. "
+    "render: a photoreal image of the current workshop view, made by Gemini's image model and "
+    "shown in the workshop; `prompt` is the art direction - materials, finish, colour, lighting, "
+    "setting (e.g. 'matte black PLA on a walnut desk beside a monitor, warm evening lamp light'). "
+    "The part's geometry is held fixed, so describe looks, not shape. Use it whenever he asks to "
+    "see a part for real, rendered or 'what it would look like'. "
+    "snapshot: save the view as a PNG to download - for Veras (EvolveLAB's renderer, which has "
+    "no API; he uploads it himself, and you can give him a Veras prompt) or anything else. "
 )
 
 CONSOLE_SCHEMA = {
@@ -156,12 +159,13 @@ WORKSHOP_SCHEMA = {
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["spawn", "build", "scad", "export_stl", "snapshot", "discard", "set_mode", "clear"],
+                                "enum": ["spawn", "build", "scad", "export_stl", "render", "snapshot", "discard", "set_mode", "clear"],
                             },
                             "target": {"type": "string"},
                             "name": {"type": "string", "description": "scad: the part's name."},
                             "code": {"type": "string", "description": "scad: the OpenSCAD program."},
                             "notes": {"type": "array", "items": {"type": "string"}, "description": "scad: 2-4 key dimensions."},
+                            "prompt": {"type": "string", "description": "render: art direction."},
                             "mode": {"type": "string", "enum": ["holo", "solid"]},
                             "model": {
                                 "type": "object",
@@ -290,6 +294,9 @@ def workshop(args: dict) -> dict:
             )
         elif action == "snapshot":
             actions.append({"action": "snapshot"})
+        elif action == "render":
+            prompt = str(raw.get("prompt") or "").strip()[:600]
+            actions.append({"action": "render", "prompt": prompt} if prompt else {"action": "render"})
         elif action == "export_stl":
             actions.append({"action": "export_stl", "target": target or "last"})
         elif action == "discard":

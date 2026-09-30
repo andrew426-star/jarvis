@@ -1,7 +1,8 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 
 from app.core.auth import require_access_token
@@ -73,3 +74,25 @@ def invoke_stream(request: InvokeRequest) -> StreamingResponse:
         # No proxy buffering, or the events arrive all at once at the end.
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class RenderRequest(BaseModel):
+    image: str = Field(min_length=1, max_length=12_000_000)
+    image_type: str = "image/png"
+    prompt: str | None = Field(default=None, max_length=600)
+
+
+# A photoreal render of a workshop view (app/integrations/gemini_render.py).
+@router.post("/render", dependencies=[Depends(require_access_token)])
+def render(request: RenderRequest) -> dict:
+    from app.core.gemini import AllModelsExhausted, GeminiNotConfigured
+    from app.integrations.gemini_render import render_image
+
+    try:
+        return {"ok": True, **render_image(request.image, request.image_type, request.prompt)}
+    except GeminiNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AllModelsExhausted as exc:
+        raise HTTPException(status_code=429, detail="Every image model is at its free-tier limit for now.") from exc
+    except Exception as exc:  # noqa: BLE001 — say why the render failed rather than a bare 500
+        raise HTTPException(status_code=502, detail=f"Render failed: {exc}") from exc

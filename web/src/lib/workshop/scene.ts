@@ -208,6 +208,7 @@ export class WorkshopScene {
   private readonly rim: THREE.DirectionalLight
   private readonly floorRings = new THREE.Group()
   private floor!: THREE.Mesh
+  private floorGrid!: THREE.GridHelper
   private readonly hands: HandRig[] = []
   private passthrough: THREE.VideoTexture | null = null
   private raf = 0
@@ -408,24 +409,54 @@ export class WorkshopScene {
     return files
   }
 
-  /** The current view as a PNG, for an AI renderer such as Veras: the
-   *  frame is re-rendered at 2x without the hands so the image is clean. */
-  snapshot(): Promise<Blob | null> {
-    const hands = this.hands.map((rig) => rig.group.visible)
-    this.hands.forEach((rig) => (rig.group.visible = false))
+  /** The current view as a PNG data URL, re-rendered at 2x without the
+   *  hands. `clean` is for an AI renderer's input: every item shown fully
+   *  solid, on a plain studio background, with no floor, grid or rings -
+   *  so the model restyles the part, not the HUD around it.
+   *
+   *  Read synchronously straight after rendering: the canvas does not
+   *  preserve its drawing buffer, so an async read (toBlob) can come back
+   *  blank. */
+  snapshot(clean = false): string {
+    const restore: (() => void)[] = []
+    const hide = (object: THREE.Object3D) => {
+      const was = object.visible
+      object.visible = false
+      restore.push(() => (object.visible = was))
+    }
+    this.hands.forEach((rig) => hide(rig.group))
+    if (clean) {
+      ;[this.floor, this.floorGrid, this.floorRings].forEach(hide)
+      const background = this.scene.background
+      const fog = this.scene.fog
+      this.scene.background = new THREE.Color(0xb8bec6)
+      this.scene.fog = null
+      restore.push(() => {
+        this.scene.background = background
+        this.scene.fog = fog
+      })
+      for (const item of this.live()) {
+        const constant = item.clip.constant
+        const opacity = item.wireMaterial.opacity
+        item.clip.constant = 1e6
+        item.wireMaterial.opacity = 0
+        item.contours.forEach(hide)
+        hide(item.scanRing)
+        restore.push(() => {
+          item.clip.constant = constant
+          item.wireMaterial.opacity = opacity
+        })
+      }
+    }
     const ratio = this.renderer.getPixelRatio()
     this.renderer.setPixelRatio(2)
     this.resize()
     this.composer.render()
-    const canvas = this.renderer.domElement
-    return new Promise((resolve) => {
-      canvas.toBlob((blob) => {
-        this.hands.forEach((rig, i) => (rig.group.visible = hands[i]))
-        this.renderer.setPixelRatio(ratio)
-        this.resize()
-        resolve(blob)
-      }, "image/png")
-    })
+    const url = this.renderer.domElement.toDataURL("image/png")
+    restore.reverse().forEach((undo) => undo())
+    this.renderer.setPixelRatio(ratio)
+    this.resize()
+    return url
   }
 
   /** Discard by name (most recent match), "last", or "all". Returns how many went. */
@@ -735,6 +766,7 @@ export class WorkshopScene {
     this.accentMaterials.push(gridMaterial)
     grid.position.y = 0.002
     this.scene.add(grid)
+    this.floorGrid = grid
 
     for (const [radius, opacity] of [[2, 0.5], [4.2, 0.3], [7, 0.2]]) {
       const ring = new THREE.LineLoop(this.circle(radius, 128), this.accentLine(opacity))

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
         "gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,"
         "gemini-3.1-flash-lite,gemini-3.5-flash-lite"
     )
+    # Image models for workshop renders (app/integrations/gemini_render.py),
+    # best first, on the same quota-aware fallback.
+    gemini_image_models: str = "gemini-3.1-flash-image,gemini-3.1-flash-lite-image,gemini-3-pro-image"
 
     supabase_url: str
     supabase_service_role_key: str

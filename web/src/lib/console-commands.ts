@@ -21,6 +21,7 @@ export type WorkshopAction = {
   name?: string
   code?: string
   notes?: string[]
+  prompt?: string
 }
 
 /** What the Workshop registers while its scene is up. */
@@ -34,6 +35,7 @@ export interface WorkshopController {
   scad: (name: string, code: string, notes: string[]) => void
   exportStl: (target?: string) => void
   snapshot: () => void
+  render: (prompt?: string) => void
 }
 
 // The last OpenSCAD compile error, reported back to Jarvis with the next
@@ -94,6 +96,9 @@ function runWorkshopAction(step: WorkshopAction) {
       break
     case "snapshot":
       workshop.snapshot()
+      break
+    case "render":
+      workshop.render(step.prompt)
       break
   }
 }

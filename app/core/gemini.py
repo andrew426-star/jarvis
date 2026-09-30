@@ -105,13 +105,17 @@ def generate(
     config: types.GenerateContentConfig,
     prefer: str | None = None,
     only: str | None = None,
+    models: list[str] | None = None,
 ):
     """generate_content on the best available model. Returns (response,
     model). `prefer` tries that model first. `only` allows that model and
     no other, for a turn whose history is bound to it; if it is out of
     quota this raises AllModelsExhausted instead of falling through."""
     client = get_gemini_client()
-    models = ladder()
+    # `models` swaps in a different ladder (the image models) with the same
+    # quota handling.
+    candidates = models or ladder()
+    models = candidates
     if only:
         models = [only]
     elif prefer in models:
@@ -136,7 +140,7 @@ def generate(
             logger.warning("Gemini %s timed out; resting %.0fs", model, OVERLOADED_COOLDOWN)
 
     with _lock:
-        retry_at = min((_cooling.get(m, 0) for m in ladder()), default=time.time() + MINUTE_COOLDOWN)
+        retry_at = min((_cooling.get(m, 0) for m in candidates), default=time.time() + MINUTE_COOLDOWN)
     raise AllModelsExhausted(retry_at)
 
 

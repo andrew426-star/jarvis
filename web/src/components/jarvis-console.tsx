@@ -733,7 +733,7 @@ function Shell({
       </DataWindow>
 
       <HologramLayer />
-      <Workshop />
+      <Workshop token={token} />
       <CameraPreview
         lookDisabled={pending}
         onLook={() => handleSend("What do you see?", false, true)}

@@ -2,19 +2,38 @@
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { BoxIcon, CameraIcon, DownloadIcon, RotateCcwIcon, ScanEyeIcon, Trash2Icon, WrenchIcon, XIcon } from "lucide-react"
+import { BoxIcon, CameraIcon, DownloadIcon, ImageIcon, Loader2Icon, RotateCcwIcon, ScanEyeIcon, SparklesIcon, Trash2Icon, WrenchIcon, XIcon } from "lucide-react"
 
 import { getVideo, startCamera, stopCamera } from "@/lib/camera"
 import { registerWorkshop, reportScadResult } from "@/lib/console-commands"
 import { setSpatialHandler, startHands, stopHands, subscribeHands } from "@/lib/hand-tracking"
 import { sfx } from "@/lib/sfx"
 import { useSpatial } from "@/lib/spatial-store"
+import { renderView } from "@/lib/jarvis-client"
 import type { ItemMode, WorkshopScene } from "@/lib/workshop/scene"
 import { CATALOGUE, buildGenerated, type ItemSpec } from "@/lib/workshop/models"
 import { SCAD_TEMPLATES, ScadError, compileScad, scadItem } from "@/lib/workshop/openscad"
 import { useJarvis } from "@/lib/store"
 
 type Focus = (ItemSpec & { id: string; mode: ItemMode }) | null
+
+/** A small JPEG of an image, for the hologram (holograms persist in
+ *  localStorage, which a full-size render would fill). */
+function thumbnail(url: string): Promise<string> {
+  return new Promise((resolve) => {
+    const image = new Image()
+    image.onload = () => {
+      const scale = 360 / Math.max(image.width, image.height)
+      const canvas = document.createElement("canvas")
+      canvas.width = Math.round(image.width * scale)
+      canvas.height = Math.round(image.height * scale)
+      canvas.getContext("2d")?.drawImage(image, 0, 0, canvas.width, canvas.height)
+      resolve(canvas.toDataURL("image/jpeg", 0.75))
+    }
+    image.onerror = () => resolve(url)
+    image.src = url
+  })
+}
 
 /** Hand STL files to the browser as downloads. */
 function download(files: { name: string; blob: Blob }[]) {
@@ -37,7 +56,7 @@ const TAP_PX = 6
 // The 3D workshop, full-screen over the console. Hands reach it through
 // setSpatialHandler (any pinch the DOM does not claim), the mouse through
 // the pointer handlers below; both land on the same WorkshopScene calls.
-export function Workshop() {
+export function Workshop({ token }: { token: string }) {
   const open = useSpatial((state) => state.workshopOpen)
   const setOpen = useSpatial((state) => state.setWorkshopOpen)
 
@@ -62,14 +81,14 @@ export function Workshop() {
           exit={{ opacity: 0, scale: 1.04 }}
           transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
         >
-          <WorkshopStage onClose={() => setOpen(false)} />
+          <WorkshopStage token={token} onClose={() => setOpen(false)} />
         </motion.div>
       )}
     </AnimatePresence>
   )
 }
 
-function WorkshopStage({ onClose }: { onClose: () => void }) {
+function WorkshopStage({ token, onClose }: { token: string; onClose: () => void }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const labelRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<WorkshopScene | null>(null)
@@ -81,6 +100,15 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
   const [bin, setBin] = useState<"idle" | "armed" | "discarded">("idle")
   const [templatesOpen, setTemplatesOpen] = useState(false)
   const [compiling, setCompiling] = useState<string | null>(null)
+  const [rendering, setRendering] = useState(false)
+  const [render, setRender] = useState<{ url: string; prompt: string; model: string } | null>(null)
+  // Jarvis's render and snapshot controls are registered once, with the
+  // scene, but must reach the current functions (and their state), so they
+  // go through this ref, refreshed every render.
+  const latest = useRef<{ takeSnapshot: () => Promise<void>; renderNow: (prompt?: string) => Promise<void> } | null>(null)
+  useEffect(() => {
+    latest.current = { takeSnapshot, renderNow }
+  })
   // Compile OpenSCAD and put the part on the stage, solid (it is a real
   // part); errors go to the log, a notification, and back to Jarvis.
   const buildScad = useRef(async (name: string, code: string, notes: string[] = []) => {
@@ -200,7 +228,10 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
           void buildScad.current(name, code, notes)
         },
         exportStl: (target) => download(scene.exportStl(target)),
-        snapshot: () => void takeSnapshot(),
+        // Through a ref: this registration runs once, and must reach the
+        // current render and snapshot functions, not the first ones.
+        snapshot: () => void latest.current?.takeSnapshot(),
+        render: (prompt) => void latest.current?.renderNow(prompt),
       })
       // Something to hold on arrival: the reactor as a hologram.
       if (!queued) scene.spawn("reactor")
@@ -224,11 +255,41 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
     }
   }, [])
 
+  const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")
+
   async function takeSnapshot() {
-    const blob = await sceneRef.current?.snapshot()
-    if (!blob) return
+    const url = sceneRef.current?.snapshot()
+    if (!url) return
     // Named for what it is for: an image to upload to Veras's web app.
-    download([{ name: `workshop-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}-veras.png`, blob }])
+    download([{ name: `workshop-${stamp()}-veras.png`, blob: await (await fetch(url)).blob() }])
+  }
+
+  // A photoreal render of the view, by Gemini's image models: a clean
+  // snapshot goes up, the render comes back into the panel and is pinned
+  // as a hologram too.
+  async function renderNow(prompt?: string) {
+    const scene = sceneRef.current
+    if (!scene || rendering) return
+    const { pushLog, notify } = useJarvis.getState()
+    setRendering(true)
+    try {
+      const shot = scene.snapshot(true)
+      const result = await renderView(shot.slice(shot.indexOf(",") + 1), prompt, token)
+      const url = `data:${result.mime};base64,${result.image}`
+      setRender({ url, prompt: prompt ?? "Default product render", model: result.model })
+      pushLog("OK", `Render by ${result.model.replace("gemini-", "")}`)
+      useSpatial.getState().addHologram({
+        kind: "vision",
+        title: `RENDER · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+        body: prompt ?? "Photoreal render of the workshop view.",
+        image: await thumbnail(url),
+      })
+    } catch (err) {
+      notify("warning", "Render failed", err instanceof Error ? err.message : String(err))
+      pushLog("ERR", "Render failed")
+    } finally {
+      setRendering(false)
+    }
   }
 
   function togglePassthrough() {
@@ -343,11 +404,22 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
             type="button"
             className="btn flex items-center"
             style={{ gap: 6, padding: "4px 10px" }}
+            onClick={() => void renderNow()}
+            disabled={!ready || rendering}
+            title="Photoreal render of this view (Gemini image model)"
+          >
+            {rendering ? <Loader2Icon size={12} className="animate-spin" /> : <SparklesIcon size={12} />} RENDER
+          </button>
+          <button
+            type="button"
+            className="btn"
+            style={{ width: 28, height: 28, padding: 0 }}
             onClick={() => void takeSnapshot()}
             disabled={!ready}
-            title="Save this view as a PNG to render in Veras"
+            aria-label="Save this view as a PNG"
+            title="Save this view as a PNG (for Veras or anywhere else)"
           >
-            <CameraIcon size={12} /> RENDER
+            <CameraIcon className="mx-auto size-4" />
           </button>
           <button
             type="button"
@@ -426,6 +498,42 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
+        {/* The latest render, top right, until dismissed. */}
+        {render && (
+          <div className="holo-card absolute" style={{ top: 12, right: 12, width: 360, zIndex: 2 }}>
+            <header className="holo-card-header">
+              <span className="t-label truncate-1 flex items-center" style={{ gap: 6 }}>
+                <ImageIcon size={12} /> RENDER · {render.model.replace("gemini-", "").toUpperCase()}
+              </span>
+              <span className="flex" style={{ gap: 4 }}>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ width: 20, height: 20, padding: 0 }}
+                  onClick={async () =>
+                    download([{ name: `render-${stamp()}.png`, blob: await (await fetch(render.url)).blob() }])
+                  }
+                  aria-label="Download render"
+                >
+                  <DownloadIcon size={11} className="mx-auto" />
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ width: 20, height: 20, padding: 0 }}
+                  onClick={() => setRender(null)}
+                  aria-label="Close render"
+                >
+                  <XIcon size={11} className="mx-auto" />
+                </button>
+              </span>
+            </header>
+            {/* eslint-disable-next-line @next/next/no-img-element -- a data URL from the render endpoint */}
+            <img src={render.url} alt={render.prompt} style={{ display: "block", width: "100%" }} />
+            <p className="holo-card-body" style={{ maxHeight: 60 }}>{render.prompt}</p>
+          </div>
+        )}
+
         {/* Discard bin. Drop an item on it, by hand or mouse. */}
         <div
           ref={binRef}
@@ -442,7 +550,9 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
           className="t-time pointer-events-none absolute right-0 bottom-3 left-0 text-center"
           style={{ color: "var(--text-secondary)" }}
         >
-          {compiling
+          {rendering
+            ? "RENDERING WITH GEMINI..."
+            : compiling
             ? `COMPILING ${compiling.toUpperCase()} IN OPENSCAD...`
             : trackingError
             ? trackingError

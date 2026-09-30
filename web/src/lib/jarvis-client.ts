@@ -210,6 +210,23 @@ export async function invokeStream(
   return result
 }
 
+export interface RenderResult {
+  image: string
+  mime: string
+  model: string
+  note: string
+}
+
+/** A photoreal render of a workshop view, by Gemini's image models. */
+export async function renderView(image: string, prompt: string | undefined, token: string): Promise<RenderResult> {
+  const res = await jarvisFetch("/render", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image, image_type: "image/png", prompt }),
+  })
+  return res.json()
+}
+
 export async function speak(text: string, token: string, voiceId?: string): Promise<Blob> {
   const res = await jarvisFetch("/speak", token, {
     method: "POST",
