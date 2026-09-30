@@ -38,6 +38,10 @@ const ACTIVE_MARGIN = 0.15
 const TAP_MAX_MS = 450
 const TAP_MAX_TRAVEL = 36
 
+// Closing the fingers shifts the tracked point a little; for this long
+// after a pinch starts, hand motion does not move what was grabbed.
+const PINCH_SETTLE_MS = 120
+
 export interface HandPointer {
   id: string
   /** Viewport pixels, smoothed. */
@@ -126,6 +130,12 @@ interface HandState {
   downX: number
   downY: number
   downAt: number
+  /** The held cursor: where a grabbed thing is being steered. It moves by
+   *  the hand's motion scaled to its size at the grab, so the same
+   *  physical movement travels the same distance near the camera or far. */
+  heldX: number
+  heldY: number
+  downSize: number
   downTarget: HTMLElement | null
   seenAt: number
 }
@@ -177,6 +187,9 @@ function pinchStart(hand: HandState, x: number, y: number, now: number) {
   hand.downX = x
   hand.downY = y
   hand.downAt = now
+  hand.heldX = x
+  hand.heldY = y
+  hand.downSize = hand.size
   const { control, holoId } = hitTest(x, y)
   // A control inside a hologram (its close button) is a tap target, not
   // a handle, so it wins over grabbing the hologram around it.
@@ -261,6 +274,9 @@ function process(result: { landmarks: NormalizedLandmark[][]; handedness: { cate
         downX: 0,
         downY: 0,
         downAt: 0,
+        heldX: 0,
+        heldY: 0,
+        downSize: 0,
         downTarget: null,
         seenAt: now,
       }
@@ -284,9 +300,17 @@ function process(result: { landmarks: NormalizedLandmark[][]; handedness: { cate
     const wasPinching = hand.pinching
     hand.pinching = wasPinching ? pinchRatio < PINCH_OFF : pinchRatio < PINCH_ON
 
+    // Steer the held cursor: size-normalised, and still while the pinch
+    // settles.
+    if (hand.pinching && wasPinching && now - hand.downAt > PINCH_SETTLE_MS) {
+      const scale = hand.downSize > 0 && hand.size > 0 ? hand.downSize / hand.size : 1
+      hand.heldX += (x - hand.lastX) * scale
+      hand.heldY += (y - hand.lastY) * scale
+    }
+
     if (hand.pinching && !wasPinching) pinchStart(hand, x, y, now)
     else if (!hand.pinching && wasPinching) pinchEnd(hand, x, y, now)
-    else if (hand.pinching && hand.spatial) spatialHandler?.move(id, x, y, hand.size)
+    else if (hand.pinching && hand.spatial) spatialHandler?.move(id, hand.heldX, hand.heldY, hand.size)
     else if (hand.pinching && hand.holding) {
       if (twoHand?.id === hand.holding) {
         const other = [...hands.values()].find((h) => h !== hand && h.holding === hand.holding)
@@ -294,8 +318,9 @@ function process(result: { landmarks: NormalizedLandmark[][]; handedness: { cate
           const spread = Math.hypot(x - other.lastX, y - other.lastY)
           spatial.scaleHologram(hand.holding, twoHand.startScale * (spread / twoHand.startDistance))
         }
-      } else {
-        spatial.moveHologram(hand.holding, x - hand.lastX, y - hand.lastY)
+      } else if (now - hand.downAt > PINCH_SETTLE_MS) {
+        const scale = hand.downSize > 0 && hand.size > 0 ? hand.downSize / hand.size : 1
+        spatial.moveHologram(hand.holding, (x - hand.lastX) * scale, (y - hand.lastY) * scale)
       }
     }
 

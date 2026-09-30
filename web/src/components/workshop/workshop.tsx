@@ -238,8 +238,8 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
       // Something to hold on arrival: the reactor as a hologram.
       if (!queued) scene.spawn("reactor")
       setSpatialHandler({
-        down: (id, x, y, size) => scene.down(id, x, y, size),
-        move: (id, x, y, size) => scene.move(id, x, y, size),
+        down: (id, x, y) => scene.down(id, x, y),
+        move: (id, x, y) => scene.move(id, x, y),
         up: (id, x, y, tap) => scene.up(id, x, y, tap),
         hover: (x, y) => scene.hover(x, y),
       })
