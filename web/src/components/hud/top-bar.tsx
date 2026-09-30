@@ -4,7 +4,7 @@ import { useSyncExternalStore } from "react"
 
 import { sfx } from "@/lib/sfx"
 import { useClock } from "@/lib/use-clock"
-import { CONTEXT_WINDOW_TURNS, useJarvis, type TabKey } from "@/lib/store"
+import { useJarvis, type TabKey } from "@/lib/store"
 import { centralDate, centralTime, centralZoneLabel } from "@/lib/time"
 
 const TABS: { key: TabKey; label: string }[] = [
@@ -170,7 +170,7 @@ export function TopBar() {
                     : "var(--success)"
             }
           />
-          <Metric label="CTX" value={`${signals.turns}/${CONTEXT_WINDOW_TURNS}`} />
+          <Metric label="CTX" value={`${signals.turns}/${signals.contextWindow}`} />
         </div>
       </div>
     </header>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 
 import { getPortfolio, type PortfolioResult } from "@/lib/jarvis-client"
-import { CONTEXT_WINDOW_TURNS, useJarvis } from "@/lib/store"
+import { useJarvis } from "@/lib/store"
 import { useAnimatedNumber } from "@/lib/use-animated-number"
 
 // Four cards, each flex-1, each distributing its own content with
@@ -102,14 +102,14 @@ function SystemCard() {
 function SessionCard() {
   const signals = useJarvis((state) => state.signals)
   const turns = useAnimatedNumber(signals.turns)
-  const filled = Math.min(1, signals.turns / CONTEXT_WINDOW_TURNS)
+  const filled = Math.min(1, signals.turns / signals.contextWindow)
 
   return (
     <CardShell title="Session">
       <div className="flex min-w-0 items-baseline justify-between" style={{ gap: "var(--sp-2)" }}>
         <span className="t-value truncate-1" style={{ color: "var(--accent)" }}>
           {Math.round(turns)}
-          <span style={{ color: "var(--text-secondary)" }}>/{CONTEXT_WINDOW_TURNS}</span>
+          <span style={{ color: "var(--text-secondary)" }}>/{signals.contextWindow}</span>
         </span>
         <span className="t-label truncate-1" style={{ color: "var(--text-secondary)" }}>
           TURNS

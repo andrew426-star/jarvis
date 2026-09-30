@@ -10,7 +10,7 @@ from app.core.groq_client import get_groq_client
 from app.core.local_time import now_for_prompt
 from app.memory.interaction_log import fetch_recent_turns, write_interaction
 from app.memory.semantic_recall import get_relevant_context, record_interaction
-from app.memory.session_buffer import append_turn, get_recent_turns
+from app.memory.session_buffer import append_turn, count_turns, get_recent_turns
 from app.tools.camera import CAMERA_LOOK_SCHEMA, CAMERA_ON_NOTE, make_camera_look
 from app.tools.schemas import DISPATCH, TOOL_SCHEMAS
 
@@ -370,10 +370,22 @@ def run_invoke(
 
     tool_results = [{"name": t["name"], "result": t["result"]} for t in tool_call_trace]
 
+    # The console's CTX gauge. Read back from Redis rather than counted in
+    # the browser, which starts from zero on every reload even though the
+    # session (and its memory) carries on. If Redis is unreachable, the
+    # history loaded this turn plus this exchange is the best estimate.
+    window = settings.redis_session_window_turns
+    context_turns = count_turns(session_id)
+    if context_turns is None:
+        loaded = sum(1 for turn in recent_turns if turn["role"] == "user")
+        context_turns = min(loaded + 1, window)
+
     return {
         "response": final_text,
         "spoken": spoken_text,
         "tools_used": tools_used,
         "tool_results": tool_results,
         "session_id": session_id,
+        "context_turns": context_turns,
+        "context_window": window,
     }

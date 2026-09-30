@@ -29,6 +29,7 @@ import {
   JarvisApiError,
   JarvisAuthError,
   JarvisNetworkError,
+  getSessionContext,
   getStatus,
   invoke,
   type MarketHistory,
@@ -159,7 +160,7 @@ function Shell({
     listening,
     gridVisible,
     setStatus: setAgentStatus,
-    setTurns,
+    setContext,
     addToolsUsed,
     setFps,
     setVoice,
@@ -291,10 +292,23 @@ function Shell({
     }
   }, [])
 
-  // Assistant turns held in the backend's rolling context window.
+  // How much Jarvis remembers of this session, read from the backend on
+  // load. The chat on screen starts empty after a reload, but the session
+  // and its memory carry on, so counting messages here would read 0 while
+  // he still remembers the last several exchanges.
   useEffect(() => {
-    setTurns(messages.filter((message) => message.role === "assistant").length)
-  }, [messages, setTurns])
+    let cancelled = false
+    getSessionContext(sessionId, token)
+      .then((context) => {
+        if (!cancelled && context.turns !== null) setContext(context.turns, context.window)
+      })
+      .catch(() => {
+        // Leaves the gauge where it is; the next reply corrects it.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [sessionId, token, setContext])
 
   function handleToolResults(results: ToolResult[]) {
     let firstPanel: TabKey | null = null
@@ -377,6 +391,7 @@ function Shell({
 
     try {
       const result = await invoke(text, sessionId, token, { image: frame?.base64, look })
+      setContext(result.context_turns, result.context_window)
       const sight = result.tool_results.find((entry) => entry.name === "camera_look")
       const seen = sight?.result as { ok?: boolean; description?: string } | undefined
       if (frame && seen?.ok && seen.description) {

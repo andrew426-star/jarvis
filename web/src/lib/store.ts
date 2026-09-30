@@ -46,8 +46,11 @@ export interface Signals {
   latencyMs: number | null
   /** Recent latencies, oldest first, for the sparkline. */
   latencyHistory: number[]
-  /** Assistant turns held in the backend's rolling context window. */
+  /** Exchanges held in the backend's rolling context window, as the
+   *  backend reports them (not counted from the chat on screen). */
   turns: number
+  /** Size of that window, also from the backend. */
+  contextWindow: number
   /** Distinct tools the agent has invoked this session. */
   toolsUsed: string[]
   /** Rendering health, sampled from real frame times. */
@@ -56,9 +59,9 @@ export interface Signals {
   voice: number
 }
 
-// Mirrors REDIS_SESSION_WINDOW_TURNS in app/core/config.py. If that is
-// raised, follow it here - the gauge would otherwise sit pinned at full
-// and quietly stop meaning anything.
+// REDIS_SESSION_WINDOW_TURNS's default in app/core/config.py. Only a
+// placeholder until the backend's first answer, which carries the real
+// window size, so raising it there no longer needs a change here.
 export const CONTEXT_WINDOW_TURNS = 10
 
 const LATENCY_HISTORY = 24
@@ -88,7 +91,7 @@ interface JarvisState {
   setActiveTab: (tab: TabKey | null) => void
   setLatency: (ms: number) => void
   setLinkDown: () => void
-  setTurns: (turns: number) => void
+  setContext: (turns: number, contextWindow: number) => void
   addToolsUsed: (names: string[]) => void
   setFps: (fps: number) => void
   setVoice: (level: number) => void
@@ -169,6 +172,7 @@ export const useJarvis = create<JarvisState>((set, get) => ({
     latencyMs: null,
     latencyHistory: [],
     turns: 0,
+    contextWindow: CONTEXT_WINDOW_TURNS,
     toolsUsed: [],
     fps: 60,
     voice: 0,
@@ -229,7 +233,8 @@ export const useJarvis = create<JarvisState>((set, get) => ({
 
   setLinkDown: () => set((state) => ({ signals: { ...state.signals, link: "down" } })),
 
-  setTurns: (turns) => set((state) => ({ signals: { ...state.signals, turns } })),
+  setContext: (turns, contextWindow) =>
+    set((state) => ({ signals: { ...state.signals, turns, contextWindow } })),
 
   addToolsUsed: (names) =>
     set((state) => ({

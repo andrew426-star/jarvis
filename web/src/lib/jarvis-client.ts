@@ -92,6 +92,8 @@ export interface InvokeResult {
   tools_used: string[]
   tool_results: ToolResult[]
   session_id: string
+  context_turns: number
+  context_window: number
 }
 
 export interface InvokeOptions {
@@ -117,6 +119,18 @@ export async function invoke(
       look: options.look ?? false,
     }),
   })
+  return res.json()
+}
+
+export interface SessionContext {
+  /** Null when the backend could not read its memory store. */
+  turns: number | null
+  window: number
+}
+
+export async function getSessionContext(sessionId: string, token: string): Promise<SessionContext> {
+  const params = new URLSearchParams({ session_id: sessionId })
+  const res = await jarvisFetch(`/session/context?${params}`, token, { method: "GET" })
   return res.json()
 }
 

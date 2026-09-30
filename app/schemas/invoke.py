@@ -33,3 +33,13 @@ class InvokeResponse(BaseModel):
     tools_used: list[str]
     tool_results: list[ToolResult]
     session_id: str
+    # Exchanges held in the session's short-term memory, out of the window.
+    context_turns: int
+    context_window: int
+
+
+class SessionContext(BaseModel):
+    # None when Redis could not be read, so the console can leave its
+    # gauge alone rather than show a false zero.
+    turns: int | None
+    window: int

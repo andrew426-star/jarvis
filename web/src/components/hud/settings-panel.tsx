@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "framer-motion"
 import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react"
 
 import { apiOrigin, type ConnectionStatus } from "@/lib/jarvis-client"
-import { CONTEXT_WINDOW_TURNS, useJarvis } from "@/lib/store"
+import { useJarvis } from "@/lib/store"
 
 // Everything in this panel is either wired to something real or is not
 // here at all.
@@ -140,7 +140,7 @@ function Session({ sessionId, onSignOut }: { sessionId: string; onSignOut: () =>
   const signals = useJarvis((state) => state.signals)
   return (
     <>
-      <Row label="TURNS" value={`${signals.turns} / ${CONTEXT_WINDOW_TURNS}`} color="var(--accent)" />
+      <Row label="TURNS" value={`${signals.turns} / ${signals.contextWindow}`} color="var(--accent)" />
       <Row label="TOOLS" value={`${signals.toolsUsed.length}`} />
       <Row label="ID" value={sessionId.slice(0, 8) || "--"} />
       <button type="button" onClick={onSignOut} className="btn" style={{ padding: "6px 12px" }}>
