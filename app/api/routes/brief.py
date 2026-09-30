@@ -4,7 +4,7 @@ from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.core.auth import require_access_token
+from app.core.auth import require_routine_access
 from app.core.config import get_settings
 from app.core.google_oauth import get_google_access_token
 from app.core.local_time import LOCAL_TZ, local_today
@@ -49,8 +49,8 @@ class Routine:
     days: tuple[int, ...] | None = None
 
 
-# Jarvis's scheduled routines, each triggered by a GitHub Actions cron
-# (.github/workflows/jarvis-routines.yml, plus morning-brief.yml), run
+# Jarvis's scheduled routines, each triggered by Supabase pg_cron
+# (supabase/migrations/0006_jarvis_routine_scheduler.sql), run
 # through the ordinary agent loop in a session of its own per day, and
 # emailed from the connected Gmail account to Andrew.
 ROUTINES: dict[str, Routine] = {
@@ -107,10 +107,10 @@ def central_utc_offset_hours(now: datetime | None = None) -> int:
 
 
 def utc_cron(routine: Routine, offset: int) -> str:
-    """The GitHub (UTC) cron that fires this routine at its Central time,
-    for one of the two offsets. GitHub cron has no time zones, so
-    .github/workflows/jarvis-routines.yml lists both and the route keeps
-    whichever matches the offset in effect."""
+    """The UTC cron that fires this routine at its Central time, for one
+    of the two offsets. pg_cron has no time zones, so the scheduler
+    migration lists both and the route keeps whichever matches the offset
+    in effect."""
     total = routine.hour + offset
     hour = total % 24
     if routine.days is None:
@@ -120,9 +120,9 @@ def utc_cron(routine: Routine, offset: int) -> str:
     return f"{routine.minute} {hour} * * {days}"
 
 
-# GitHub runs scheduled workflows best-effort and can start them hours
-# late (an 8:30pm check-in once went out at 2:13am). A scheduled run that
-# arrives later than this after its slot is dropped, not sent.
+# A scheduled run that arrives later than this after its slot is dropped,
+# not sent. (GitHub Actions, the previous scheduler, once started an 8:30pm
+# check-in at 2:11am; pg_cron is punctual, but this stays as a backstop.)
 MAX_LATE = timedelta(minutes=90)
 
 
@@ -210,7 +210,7 @@ def _run(routine: Routine, force: bool, due: datetime | None = None) -> dict:
 
 
 # Sync on purpose, like /invoke.
-@router.post("/routines/{name}/run", dependencies=[Depends(require_access_token)])
+@router.post("/routines/{name}/run", dependencies=[Depends(require_routine_access)])
 def run_routine(name: str, force: bool = False, schedule: str | None = None) -> dict:
     routine = ROUTINES.get(name)
     if routine is None:
@@ -237,6 +237,6 @@ def run_routine(name: str, force: bool = False, schedule: str | None = None) -> 
 
 # The original morning-brief path, kept so morning-brief.yml and anything
 # else already calling it keeps working.
-@router.post("/brief/run", dependencies=[Depends(require_access_token)])
+@router.post("/brief/run", dependencies=[Depends(require_routine_access)])
 def run_brief(force: bool = False) -> dict:
     return _run(ROUTINES["morning-brief"], force)
