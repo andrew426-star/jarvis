@@ -2,7 +2,8 @@
 
 // Perspective grid floor. One of the three budgeted infinite
 // animations, and it is a pure transform so it stays on the compositor.
-// Opacity is driven by mode: 5% normal, 10% serious, per the spec.
+// Opacity is driven by mode: 4% normal, 18% serious. Wider apart than
+// the spec's 5/10 so the two modes cannot be mistaken for each other.
 export function HolographicGrid({ serious, visible }: { serious: boolean; visible: boolean }) {
   if (!visible) return null
 
@@ -14,7 +15,7 @@ export function HolographicGrid({ serious, visible }: { serious: boolean; visibl
     >
       <div
         className="holo-grid"
-        style={{ opacity: serious ? 0.1 : 0.05, transition: "opacity 500ms ease" }}
+        style={{ opacity: serious ? 0.18 : 0.04, transition: "opacity 500ms ease" }}
       />
     </div>
   )
