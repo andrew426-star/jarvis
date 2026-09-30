@@ -6,6 +6,7 @@ import { OutputPass } from "three/addons/postprocessing/OutputPass.js"
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js"
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js"
+import { STLExporter } from "three/addons/exporters/STLExporter.js"
 
 import { accentHex } from "@/lib/core-events"
 import { toViewport, type HandPointer } from "@/lib/hand-tracking"
@@ -101,6 +102,96 @@ export interface WorkshopCallbacks {
 }
 
 const DISCARD_SECONDS = 0.55
+
+/** Edges where two faces meet at more than `angle` degrees - and only
+ *  those. Boolean-cut parts are full of T-junctions (a vertex sitting in the
+ *  middle of a neighbour's edge), which leaves edges unpaired: EdgesGeometry
+ *  then draws every one of them, fanning lines across flat faces, and a
+ *  naive pairing loses real corners instead. So unpaired edges are split at
+ *  any vertex lying along them, and pairing is done on the pieces. */
+function featureEdges(geometry: THREE.BufferGeometry, angle: number): THREE.BufferGeometry {
+  const source = geometry.index ? geometry.toNonIndexed() : geometry
+  const position = source.getAttribute("position")
+  const round = (v: number) => Math.round(v * 1000) / 1000
+
+  // Unique vertices, and each triangle's corners as indices into them.
+  const vertices: THREE.Vector3[] = []
+  const lookup = new Map<string, number>()
+  const vertexId = (i: number) => {
+    const x = round(position.getX(i))
+    const y = round(position.getY(i))
+    const z = round(position.getZ(i))
+    const k = `${x},${y},${z}`
+    let id = lookup.get(k)
+    if (id === undefined) {
+      id = vertices.length
+      vertices.push(new THREE.Vector3(x, y, z))
+      lookup.set(k, id)
+    }
+    return id
+  }
+
+  type Edge = { a: number; b: number; normals: THREE.Vector3[] }
+  const edges = new Map<string, Edge>()
+  const addEdge = (a: number, b: number, normal: THREE.Vector3) => {
+    const id = a < b ? `${a}|${b}` : `${b}|${a}`
+    const edge = edges.get(id) ?? { a, b, normals: [] }
+    edge.normals.push(normal)
+    edges.set(id, edge)
+  }
+  const triangle = new THREE.Triangle()
+  for (let i = 0; i < position.count; i += 3) {
+    const ids = [vertexId(i), vertexId(i + 1), vertexId(i + 2)]
+    if (ids[0] === ids[1] || ids[1] === ids[2] || ids[0] === ids[2]) continue
+    triangle.set(vertices[ids[0]], vertices[ids[1]], vertices[ids[2]])
+    // Sliver triangles from the boolean cuts have unreliable normals and
+    // would draw false creases; the drawing ignores them (the solid keeps
+    // them - see templates.ts).
+    if (triangle.getArea() < 1e-3) continue
+    const normal = triangle.getNormal(new THREE.Vector3())
+    for (let k = 0; k < 3; k += 1) addEdge(ids[k], ids[(k + 1) % 3], normal)
+  }
+
+  // Split each unpaired edge at the vertices lying along it.
+  const direction = new THREE.Vector3()
+  const offset = new THREE.Vector3()
+  for (const [id, edge] of [...edges]) {
+    if (edge.normals.length !== 1) continue
+    const start = vertices[edge.a]
+    direction.subVectors(vertices[edge.b], start)
+    const length = direction.length()
+    if (length < 1e-6) continue
+    direction.divideScalar(length)
+    const stops: [number, number][] = []
+    vertices.forEach((v, index) => {
+      if (index === edge.a || index === edge.b) return
+      offset.subVectors(v, start)
+      const t = offset.dot(direction)
+      if (t <= 1e-4 || t >= length - 1e-4) return
+      if (offset.addScaledVector(direction, -t).lengthSq() < 1e-6) stops.push([t, index])
+    })
+    if (!stops.length) continue
+    edges.delete(id)
+    stops.sort((x, y) => x[0] - y[0])
+    let from = edge.a
+    for (const [, index] of stops) {
+      addEdge(from, index, edge.normals[0])
+      from = index
+    }
+    addEdge(from, edge.b, edge.normals[0])
+  }
+
+  const threshold = Math.cos(THREE.MathUtils.degToRad(angle))
+  const points: number[] = []
+  for (const { a, b, normals } of edges.values()) {
+    if (normals.length !== 2 || normals[0].dot(normals[1]) > threshold) continue
+    points.push(vertices[a].x, vertices[a].y, vertices[a].z, vertices[b].x, vertices[b].y, vertices[b].z)
+  }
+  const lines = new THREE.BufferGeometry()
+  lines.setAttribute("position", new THREE.Float32BufferAttribute(points, 3))
+  return lines
+}
+
 const ARMED_COLOR = 0xff3355
 
 export class WorkshopScene {
@@ -225,7 +316,10 @@ export class WorkshopScene {
       // Otherwise the hidden part of a half-scanned item still casts a
       // full shadow.
       material.clipShadows = true
-      const wire = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, mesh.userData.edgeAngle ?? 22), wireMaterial)
+      const edges = mesh.userData.printPart
+        ? featureEdges(mesh.geometry, 30)
+        : new THREE.EdgesGeometry(mesh.geometry, mesh.userData.edgeAngle ?? 22)
+      const wire = new THREE.LineSegments(edges, wireMaterial)
       mesh.add(wire)
       wires.push(wire)
     })
@@ -262,6 +356,76 @@ export class WorkshopScene {
   /** What is on the stage, oldest first, for Jarvis's view of the console. */
   listItems(): { name: string; mode: ItemMode }[] {
     return this.live().map((item) => ({ name: item.spec.name, mode: item.mode }))
+  }
+
+  /** STL files for items (by name, "last", or "all"; default the focused
+   *  one), in millimetres. A printable template exports each part as its
+   *  own file at its true size; a display model exports whole, at the
+   *  workshop's scale of one unit to 100mm. */
+  exportStl(target?: string): { name: string; blob: Blob }[] {
+    const items = target ? this.select(target) : this.focused ? [this.focused] : this.live().slice(-1)
+    const exporter = new STLExporter()
+    const files: { name: string; blob: Blob }[] = []
+    const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")
+    const save = (name: string, object: THREE.Object3D) => {
+      // The workshop is Y-up; slicers are Z-up. Turning the part a quarter
+      // about X puts its floor on the print bed instead of its side.
+      const upright = new THREE.Group()
+      upright.rotation.x = Math.PI / 2
+      upright.add(object)
+      upright.updateMatrixWorld(true)
+      const data = exporter.parse(upright, { binary: true }) as DataView
+      const bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice()
+      files.push({ name: `${name}.stl`, blob: new Blob([bytes], { type: "model/stl" }) })
+    }
+    for (const item of items) {
+      const parts: THREE.Mesh[] = []
+      item.model.traverse((node) => {
+        if ((node as THREE.Mesh).isMesh && node.userData.printPart) parts.push(node as THREE.Mesh)
+      })
+      if (parts.length) {
+        for (const part of parts) {
+          if (part.userData.stl) {
+            // An OpenSCAD part: hand over the compiler's own STL untouched
+            // (already Z-up, millimetres, watertight) and its source.
+            const stl = part.userData.stl as Uint8Array
+            files.push({ name: `${part.userData.printPart}.stl`, blob: new Blob([stl.slice()], { type: "model/stl" }) })
+            files.push({ name: `${part.userData.printPart}.scad`, blob: new Blob([part.userData.scad as string], { type: "text/plain" }) })
+          } else {
+            // Part geometry is in millimetres with its floor at y = 0.
+            save(part.userData.printPart, new THREE.Mesh(part.geometry))
+          }
+        }
+      } else {
+        const copy = item.model.clone(true)
+        copy.position.set(0, 0, 0)
+        copy.rotation.set(0, 0, 0)
+        copy.scale.setScalar(100)
+        copy.updateMatrixWorld(true)
+        save(slug(item.spec.name) || "model", copy)
+      }
+    }
+    return files
+  }
+
+  /** The current view as a PNG, for an AI renderer such as Veras: the
+   *  frame is re-rendered at 2x without the hands so the image is clean. */
+  snapshot(): Promise<Blob | null> {
+    const hands = this.hands.map((rig) => rig.group.visible)
+    this.hands.forEach((rig) => (rig.group.visible = false))
+    const ratio = this.renderer.getPixelRatio()
+    this.renderer.setPixelRatio(2)
+    this.resize()
+    this.composer.render()
+    const canvas = this.renderer.domElement
+    return new Promise((resolve) => {
+      canvas.toBlob((blob) => {
+        this.hands.forEach((rig, i) => (rig.group.visible = hands[i]))
+        this.renderer.setPixelRatio(ratio)
+        this.resize()
+        resolve(blob)
+      }, "image/png")
+    })
   }
 
   /** Discard by name (most recent match), "last", or "all". Returns how many went. */

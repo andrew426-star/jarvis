@@ -2,17 +2,32 @@
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { BoxIcon, RotateCcwIcon, ScanEyeIcon, Trash2Icon, XIcon } from "lucide-react"
+import { BoxIcon, CameraIcon, DownloadIcon, RotateCcwIcon, ScanEyeIcon, Trash2Icon, WrenchIcon, XIcon } from "lucide-react"
 
 import { getVideo, startCamera, stopCamera } from "@/lib/camera"
-import { registerWorkshop } from "@/lib/console-commands"
+import { registerWorkshop, reportScadResult } from "@/lib/console-commands"
 import { setSpatialHandler, startHands, stopHands, subscribeHands } from "@/lib/hand-tracking"
 import { sfx } from "@/lib/sfx"
 import { useSpatial } from "@/lib/spatial-store"
 import type { ItemMode, WorkshopScene } from "@/lib/workshop/scene"
 import { CATALOGUE, buildGenerated, type ItemSpec } from "@/lib/workshop/models"
+import { SCAD_TEMPLATES, ScadError, compileScad, scadItem } from "@/lib/workshop/openscad"
+import { useJarvis } from "@/lib/store"
 
 type Focus = (ItemSpec & { id: string; mode: ItemMode }) | null
+
+/** Hand STL files to the browser as downloads. */
+function download(files: { name: string; blob: Blob }[]) {
+  for (const file of files) {
+    const url = URL.createObjectURL(file.blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = file.name
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+  }
+  return files.length
+}
 
 // A mouse press counts as a tap (toggle the item) under these limits, the
 // same idea as the hand tracker's air tap.
@@ -64,6 +79,31 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
   const [passthrough, setPassthrough] = useState(false)
   const [trackingError, setTrackingError] = useState<string | null>(null)
   const [bin, setBin] = useState<"idle" | "armed" | "discarded">("idle")
+  const [templatesOpen, setTemplatesOpen] = useState(false)
+  const [compiling, setCompiling] = useState<string | null>(null)
+  // Compile OpenSCAD and put the part on the stage, solid (it is a real
+  // part); errors go to the log, a notification, and back to Jarvis.
+  const buildScad = useRef(async (name: string, code: string, notes: string[] = []) => {
+    const { pushLog, notify } = useJarvis.getState()
+    setCompiling(name)
+    try {
+      const started = performance.now()
+      const stl = await compileScad(code)
+      const scene = sceneRef.current
+      if (!scene) return
+      scene.spawnBuilt(scadItem(name, code, stl, notes))
+      scene.setModeWhere("last", "solid")
+      reportScadResult(name, null)
+      pushLog("OK", `OpenSCAD: ${name} in ${((performance.now() - started) / 1000).toFixed(1)}s`)
+    } catch (err) {
+      const message = err instanceof ScadError ? err.message : String(err)
+      reportScadResult(name, message)
+      pushLog("ERR", `OpenSCAD: ${name} failed`)
+      notify("warning", `${name} did not compile`, message.split("\n")[0].slice(0, 160))
+    } finally {
+      setCompiling(null)
+    }
+  })
   const binRef = useRef<HTMLDivElement>(null)
   const handsStatus = useSpatial((state) => state.handsStatus)
   const handsOn = handsStatus === "tracking"
@@ -155,6 +195,12 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
         setMode: (target, mode) => scene.setModeWhere(target, mode),
         clear: () => scene.clear(),
         items: () => scene.listItems(),
+        scad: (name, code, notes) => {
+          queued = true
+          void buildScad.current(name, code, notes)
+        },
+        exportStl: (target) => download(scene.exportStl(target)),
+        snapshot: () => void takeSnapshot(),
       })
       // Something to hold on arrival: the reactor as a hologram.
       if (!queued) scene.spawn("reactor")
@@ -177,6 +223,13 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
       sceneRef.current = null
     }
   }, [])
+
+  async function takeSnapshot() {
+    const blob = await sceneRef.current?.snapshot()
+    if (!blob) return
+    // Named for what it is for: an image to upload to Veras's web app.
+    download([{ name: `workshop-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}-veras.png`, blob }])
+  }
 
   function togglePassthrough() {
     const next = !passthrough
@@ -241,6 +294,61 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
           </nav>
         </div>
         <div className="relative flex shrink-0 items-center" style={{ gap: "var(--sp-2)" }}>
+          <div className="relative">
+            <button
+              type="button"
+              className="btn flex items-center"
+              style={{ gap: 6, padding: "4px 10px" }}
+              onClick={() => setTemplatesOpen((open) => !open)}
+              data-active={templatesOpen}
+              disabled={!ready}
+              title="Printable part templates"
+            >
+              <WrenchIcon size={12} /> TEMPLATES
+            </button>
+            {templatesOpen && (
+              <div
+                className="card absolute right-0 flex flex-col"
+                style={{ top: 34, zIndex: 3, padding: 4, gap: 4, background: "rgba(5, 7, 14, 0.96)", minWidth: 160 }}
+              >
+                {SCAD_TEMPLATES.map((template) => (
+                  <button
+                    key={template.key}
+                    type="button"
+                    className="btn"
+                    style={{ padding: "4px 10px", textAlign: "left" }}
+                    disabled={!!compiling}
+                    onClick={() => {
+                      setTemplatesOpen(false)
+                      void buildScad.current(template.label, template.code)
+                    }}
+                  >
+                    {template.label.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            className="btn flex items-center"
+            style={{ gap: 6, padding: "4px 10px" }}
+            onClick={() => sceneRef.current && download(sceneRef.current.exportStl())}
+            disabled={!ready || !focus}
+            title="Download the selected item as STL, in millimetres"
+          >
+            <DownloadIcon size={12} /> STL
+          </button>
+          <button
+            type="button"
+            className="btn flex items-center"
+            style={{ gap: 6, padding: "4px 10px" }}
+            onClick={() => void takeSnapshot()}
+            disabled={!ready}
+            title="Save this view as a PNG to render in Veras"
+          >
+            <CameraIcon size={12} /> RENDER
+          </button>
           <button
             type="button"
             className="btn flex items-center"
@@ -334,7 +442,9 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
           className="t-time pointer-events-none absolute right-0 bottom-3 left-0 text-center"
           style={{ color: "var(--text-secondary)" }}
         >
-          {trackingError
+          {compiling
+            ? `COMPILING ${compiling.toUpperCase()} IN OPENSCAD...`
+            : trackingError
             ? trackingError
             : handsStatus === "loading"
               ? "BRINGING HANDS ONLINE..."

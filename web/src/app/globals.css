@@ -464,6 +464,24 @@ body {
   white-space: pre-line;
 }
 
+/* Attached-file chips: in the command bar while pending, in the bubble once sent. */
+.attachment-chip {
+  padding: 3px 8px;
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  border-radius: var(--radius);
+  background: rgba(5, 7, 14, 0.85);
+  color: var(--text-primary);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-chip[data-drop] {
+  border-style: dashed;
+  color: var(--accent);
+}
+
 /* Workshop discard bin: a holographic ring that arms red under a held
    item and flashes as one is discarded. */
 .workshop-bin {

@@ -21,6 +21,8 @@ export interface ChatMessageData {
   autoPlay?: boolean
   /** Still arriving from /invoke/stream: shown as it grows, with a caret. */
   streaming?: boolean
+  /** Files sent with a user message: names, and a thumbnail for images. */
+  attachments?: { name: string; preview?: string }[]
   reopenMicAfter?: boolean
 }
 
@@ -131,6 +133,26 @@ export function ChatMessage({
           boxShadow: isUser ? "none" : "0 0 12px rgba(var(--accent-rgb), 0.1)",
         }}
       >
+        {message.attachments?.length ? (
+          <div className="flex flex-wrap" style={{ gap: 6, marginBottom: message.content ? 6 : 0 }}>
+            {message.attachments.map((file) =>
+              file.preview ? (
+                // eslint-disable-next-line @next/next/no-img-element -- a local data URL thumbnail
+                <img
+                  key={file.name}
+                  src={file.preview}
+                  alt={file.name}
+                  title={file.name}
+                  style={{ height: 64, borderRadius: "var(--radius)", border: "1px solid rgba(var(--accent-rgb), 0.3)" }}
+                />
+              ) : (
+                <span key={file.name} className="t-label attachment-chip">
+                  {file.name}
+                </span>
+              )
+            )}
+          </div>
+        ) : null}
         {isUser ? message.content : shown}
         {!isUser && (!done || message.streaming) && <span className="caret" aria-hidden />}
       </div>

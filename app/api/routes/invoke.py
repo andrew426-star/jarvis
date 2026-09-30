@@ -27,6 +27,7 @@ def invoke(request: InvokeRequest) -> InvokeResponse:
         image_type=request.image_type,
         look=request.look,
         console_state=request.console_state,
+        attachments=[a.model_dump() for a in request.attachments],
     )
     return InvokeResponse(**result)
 
@@ -59,6 +60,7 @@ def invoke_stream(request: InvokeRequest) -> StreamingResponse:
                 image_type=request.image_type,
                 look=request.look,
                 console_state=request.console_state,
+                attachments=[a.model_dump() for a in request.attachments],
             ):
                 yield json.dumps(event, default=str) + "\n"
         except Exception as exc:  # noqa: BLE001 — headers are sent; report in-band instead

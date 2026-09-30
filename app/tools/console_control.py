@@ -34,6 +34,40 @@ SHAPES = ["box", "rounded_box", "sphere", "cylinder", "cone", "torus", "capsule"
 MATERIALS = ["red", "gold", "steel", "dark", "copper", "glow", "glass"]
 MAX_PARTS = 80
 
+# OpenSCAD: printable parts are OpenSCAD programs Jarvis writes, compiled
+# in the browser with the Manifold backend (web/src/lib/workshop/
+# openscad.ts). SCAD_GUIDE mirrors jarvis.scad (web/src/lib/workshop/
+# jarvis-scad.ts) - keep the two in step.
+MAX_SCAD_CHARS = 40_000
+
+SCAD_GUIDE = (
+    "scad: a PRINTABLE part, as an OpenSCAD program you write - millimetres, Z up, floor on z=0. "
+    "It compiles in his browser to a watertight STL (and he can download the .scad). Use it, not "
+    "build, for anything he means to 3D print. Give `name`, `code`, and 2-4 `notes` (key "
+    "dimensions). Start the code with `include <jarvis.scad>` to use its library: "
+    "board(name) presets arduino_uno, arduino_mega, esp32_devkit, raspberry_pi_4, pca9685, l298n, "
+    "lm2596 -> [[pcb_x, pcb_y], [[hole_x, hole_y]...], hole_d, tallest_part]; servo(name) sg90, "
+    "mg90s, mg996r, ds3218 -> [[body_x, body_y, body_z], hole_spacing, hole_pair, hole_d, "
+    "tab_length]; NEMA17 = [face, hole_spacing, hole_d, boss_d]. "
+    "enclosure(inner=[x,y,z], wall=2.4, floor_t=2.4, boards=[[name or custom spec, [x,y] offset "
+    "of the board centre from the floor centre, standoff]], cutouts=[[side front|back|left|right, "
+    "shape rect|circle, size [w,h] or diameter, [along the wall from its centre, height of the "
+    "centre above the floor]]], vents=true) makes body plus friction-fit lid side by side; "
+    "enclosure_body(...) and enclosure_lid(inner, wall, vents) separately. "
+    "servo_mount(name, t=4); arm_link(length, width=20, t=5, hole_d=3.2, end_a=\"horn\"|\"hole\", "
+    "end_b, lightening=true); base_plate(d=140, t=6, center_hole=8, nema17=false, bolts=4, "
+    "bolt_circle, bolt_d=3.4); l_bracket(width=30, leg_a=40, leg_b=40, t=4, hole_d=3.4, holes=2). "
+    "Plain OpenSCAD works too (difference, hull, minkowski, linear_extrude...). Size housings to "
+    "the hardware plus ~5 mm clearance and put cut-outs where cables and ports exit. If "
+    "CONSOLE_STATE shows last_scad_error, your previous part failed to compile: fix the code and "
+    "send it again. "
+    "export_stl: download an item's STL (and .scad) - target: its name, 'last' or 'all'. "
+    "snapshot: save the workshop view as a PNG for rendering in Veras (EvolveLAB's AI renderer, "
+    "which has no API here - he uploads the image to Veras himself); when he wants a Veras render, "
+    "take the snapshot and give him a ready-to-paste Veras prompt describing materials, lighting "
+    "and setting. "
+)
+
 CONSOLE_SCHEMA = {
     "type": "function",
     "function": {
@@ -105,8 +139,12 @@ WORKSHOP_SCHEMA = {
             "lights and energy, and give it a name, a designation line and 2-4 spec notes. "
             "discard: remove items (target: an item name from CONSOLE_STATE, 'last', or 'all'). "
             "set_mode: switch items between 'holo' (wireframe) and 'solid' (target: item name, "
-            "'last' or 'all'; mode: holo | solid). clear: empty the workshop. You have full "
-            "authority to use this whenever he asks - act, then say what you did."
+            "'last' or 'all'; mode: holo | solid). clear: empty the workshop. "
+            + SCAD_GUIDE
+            + "When he asks for a physical part, design it from his actual hardware: if he has "
+            "not said what goes in it, ask for the list (he can attach a file or photo) before "
+            "guessing. Say the key dimensions you chose and why. You have full authority to use "
+            "this whenever he asks - act, then say what you did."
         ),
         "parameters": {
             "type": "object",
@@ -116,8 +154,14 @@ WORKSHOP_SCHEMA = {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "action": {"type": "string", "enum": ["spawn", "build", "discard", "set_mode", "clear"]},
+                            "action": {
+                                "type": "string",
+                                "enum": ["spawn", "build", "scad", "export_stl", "snapshot", "discard", "set_mode", "clear"],
+                            },
                             "target": {"type": "string"},
+                            "name": {"type": "string", "description": "scad: the part's name."},
+                            "code": {"type": "string", "description": "scad: the OpenSCAD program."},
+                            "notes": {"type": "array", "items": {"type": "string"}, "description": "scad: 2-4 key dimensions."},
                             "mode": {"type": "string", "enum": ["holo", "solid"]},
                             "model": {
                                 "type": "object",
@@ -227,6 +271,27 @@ def workshop(args: dict) -> dict:
                 problems.append(error)
                 continue
             actions.append({"action": "build", "model": model})
+        elif action == "scad":
+            code = str(raw.get("code") or "").strip()
+            if not code:
+                problems.append("scad needs code")
+                continue
+            if len(code) > MAX_SCAD_CHARS:
+                problems.append("scad code too long")
+                continue
+            notes = raw.get("notes") if isinstance(raw.get("notes"), list) else []
+            actions.append(
+                {
+                    "action": "scad",
+                    "name": str(raw.get("name") or "Part")[:60],
+                    "code": code,
+                    "notes": [str(n)[:60] for n in notes[:4]],
+                }
+            )
+        elif action == "snapshot":
+            actions.append({"action": "snapshot"})
+        elif action == "export_stl":
+            actions.append({"action": "export_stl", "target": target or "last"})
         elif action == "discard":
             actions.append({"action": "discard", "target": target or "last"})
         elif action == "set_mode":
@@ -275,4 +340,10 @@ def state_note(state: dict | None) -> str | None:
         f"camera {'on' if state.get('camera_on') else 'off'}; "
         f"hand tracking {'on' if state.get('hands_on') else 'off'}; "
         f"audio {'muted' if state.get('muted') else 'on'}."
+        + (
+            f" LAST OPENSCAD COMPILE FAILED for \"{(state.get('last_scad_error') or {}).get('name')}\": "
+            f"{(state.get('last_scad_error') or {}).get('error', '')[:800]}"
+            if isinstance(state.get("last_scad_error"), dict)
+            else ""
+        )
     )

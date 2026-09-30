@@ -39,6 +39,7 @@ import {
   type PortfolioResult,
   type ToolResult,
 } from "@/lib/jarvis-client"
+import type { Attachment } from "@/lib/attachments"
 import { audioAmplitude } from "@/lib/audio-amplitude"
 import { captureFrame, startCamera, stopCamera } from "@/lib/camera"
 import {
@@ -444,14 +445,20 @@ function Shell({
     }
   }
 
-  async function handleSend(text: string, viaVoice: boolean, look = false) {
+  async function handleSend(text: string, viaVoice: boolean, look = false, attachments: Attachment[] = []) {
     // While the camera is on every message carries a frame, and Jarvis
     // decides whether the question needs it; the frame only goes on to
     // the vision model if he does, or if Look was pressed.
     const frame = useSpatial.getState().cameraOn ? captureFrame() : null
     setMessages((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), role: "user", content: text, time: clockTime() },
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: text,
+        time: clockTime(),
+        attachments: attachments.map(({ name, preview }) => ({ name, preview })),
+      },
     ])
     setPending(true)
     setError(null)
@@ -491,7 +498,7 @@ function Shell({
         text,
         sessionId,
         token,
-        { image: frame?.base64, look, consoleState: consoleState() },
+        { image: frame?.base64, look, consoleState: consoleState(), attachments },
         (event) => {
           if (event.type === "text") updateReply((m) => ({ ...m, content: m.content + event.delta }))
           else if (event.type === "reset") updateReply((m) => ({ ...m, content: "" }))
@@ -701,7 +708,7 @@ function Shell({
         <BottomBar
           token={token}
           disabled={pending}
-          onSend={handleSend}
+          onSend={(message, viaVoice, attachments) => handleSend(message, viaVoice, false, attachments)}
           onAuthError={onAuthError}
           micRef={micRef}
           onToggleCamera={toggleCamera}

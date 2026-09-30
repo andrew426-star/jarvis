@@ -1,3 +1,5 @@
+import base64
+import binascii
 import json
 import logging
 import re
@@ -278,6 +280,39 @@ def _reseed(base: list[types.Content], executed: list[tuple[str, dict, dict]]) -
     return contents
 
 
+# What the model can take natively as bytes; anything else must arrive as
+# text (the console reads text-like files itself).
+_NATIVE_MIME = ("image/png", "image/jpeg", "image/webp", "image/gif", "image/heic", "image/heif", "application/pdf")
+_TEXT_ATTACHMENT_CHARS = 120_000
+
+
+def _attachment_parts(attachments: list[dict]) -> list[types.Part]:
+    parts: list[types.Part] = []
+    for attachment in attachments:
+        name = attachment.get("name") or "file"
+        mime = (attachment.get("mime") or "").lower()
+        if attachment.get("text") is not None:
+            body = attachment["text"]
+            clipped = len(body) > _TEXT_ATTACHMENT_CHARS
+            parts.append(
+                types.Part.from_text(
+                    text=f"[Attached file: {name}]\n{body[:_TEXT_ATTACHMENT_CHARS]}"
+                    + ("\n[...truncated]" if clipped else "")
+                )
+            )
+        elif attachment.get("data") and mime in _NATIVE_MIME:
+            try:
+                data = base64.b64decode(attachment["data"], validate=True)
+            except (ValueError, binascii.Error):
+                parts.append(types.Part.from_text(text=f"[Attached file {name} could not be decoded.]"))
+                continue
+            parts.append(types.Part.from_text(text=f"[Attached file: {name}]"))
+            parts.append(types.Part.from_bytes(data=data, mime_type=mime))
+        else:
+            parts.append(types.Part.from_text(text=f"[Attached file {name} ({mime or 'unknown type'}) is not a format I can read.]"))
+    return parts
+
+
 _TAG = re.compile(r"(</?spoken>)", re.IGNORECASE)
 
 
@@ -349,6 +384,7 @@ def stream_invoke(
     image_type: str = "image/jpeg",
     look: bool = False,
     console_state: dict | None = None,
+    attachments: list[dict] | None = None,
 ) -> Iterator[dict]:
     """A turn as a stream of events, for /invoke/stream:
 
@@ -420,6 +456,10 @@ def stream_invoke(
     final_text = ""
 
     user_parts = [types.Part.from_text(text=message)]
+    user_parts.extend(_attachment_parts(attachments or []))
+    # History keeps a note of what was attached, not the files themselves.
+    if attachments:
+        message = f"{message}\n[Attached: {', '.join(a['name'] for a in attachments)}]"
     # Look pressed: describe the frame before the first call, so the answer
     # is grounded in it even if the model would not have thought to ask.
     if look and camera_look is not None:

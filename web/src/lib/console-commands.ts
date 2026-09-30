@@ -13,7 +13,15 @@ import type { ItemMode } from "@/lib/workshop/scene"
 // acts.
 
 export type ConsoleAction = { action: string; target?: string }
-export type WorkshopAction = { action: string; target?: string; mode?: "holo" | "solid"; model?: GeneratedModel }
+export type WorkshopAction = {
+  action: string
+  target?: string
+  mode?: "holo" | "solid"
+  model?: GeneratedModel
+  name?: string
+  code?: string
+  notes?: string[]
+}
 
 /** What the Workshop registers while its scene is up. */
 export interface WorkshopController {
@@ -23,6 +31,17 @@ export interface WorkshopController {
   setMode: (target: string, mode: ItemMode) => void
   clear: () => void
   items: () => { name: string; mode: ItemMode }[]
+  scad: (name: string, code: string, notes: string[]) => void
+  exportStl: (target?: string) => void
+  snapshot: () => void
+}
+
+// The last OpenSCAD compile error, reported back to Jarvis with the next
+// message (consoleState) so "fix it" has something to go on.
+let lastScadError: { name: string; error: string } | null = null
+
+export function reportScadResult(name: string, error: string | null) {
+  lastScadError = error ? { name, error: error.slice(0, 1500) } : null
 }
 
 /** What only the console shell can do (camera, hands, standby). */
@@ -66,6 +85,15 @@ function runWorkshopAction(step: WorkshopAction) {
       break
     case "clear":
       workshop.clear()
+      break
+    case "scad":
+      if (step.code) workshop.scad(step.name ?? "Part", step.code, step.notes ?? [])
+      break
+    case "export_stl":
+      workshop.exportStl(step.target)
+      break
+    case "snapshot":
+      workshop.snapshot()
       break
   }
 }
@@ -152,5 +180,6 @@ export function consoleState() {
     camera_on: spatial.cameraOn,
     hands_on: spatial.handsStatus === "tracking",
     muted: sfx.isMuted(),
+    last_scad_error: lastScadError,
   }
 }

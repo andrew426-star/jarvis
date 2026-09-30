@@ -105,6 +105,13 @@ export interface InvokeOptions {
   look?: boolean
   /** What the console has open, so Jarvis can operate it. */
   consoleState?: Record<string, unknown>
+  /** Files attached to the message (lib/attachments.ts). */
+  attachments?: { name: string; mime: string; data?: string; text?: string }[]
+}
+
+// Only what the server reads: previews and sizes stay in the browser.
+function wireAttachments(options: InvokeOptions) {
+  return (options.attachments ?? []).map(({ name, mime, data, text }) => ({ name, mime, data, text }))
 }
 
 export async function invoke(
@@ -122,6 +129,7 @@ export async function invoke(
       image: options.image,
       look: options.look ?? false,
       console_state: options.consoleState,
+      attachments: wireAttachments(options),
     }),
   })
   return res.json()
@@ -165,6 +173,7 @@ export async function invokeStream(
       image: options.image,
       look: options.look ?? false,
       console_state: options.consoleState,
+      attachments: wireAttachments(options),
     }),
   })
   if (!res.body) throw new JarvisApiError("The reply stream never opened.")
