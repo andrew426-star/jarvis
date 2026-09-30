@@ -17,6 +17,7 @@ from app.core.local_time import now_for_prompt
 from app.memory.interaction_log import fetch_recent_turns, write_interaction
 from app.memory.semantic_recall import get_relevant_context, record_interaction
 from app.memory.session_buffer import append_turn, count_turns, get_recent_turns
+from app.services.situation import situation_note
 from app.tools.camera import CAMERA_LOOK_SCHEMA, CAMERA_ON_NOTE, make_camera_look
 from app.tools.console_control import (
     CONSOLE_CONTROL_NOTE,
@@ -401,9 +402,16 @@ def stream_invoke(
     recent_turns = get_recent_turns(session_id)
     if not recent_turns:  # None (Redis failure) or [] (empty/expired) — fall back to Supabase
         recent_turns = fetch_recent_turns(session_id)
+    # The moment he is speaking in (hour, day, gap, calendar), built while
+    # recall is still in flight.
+    situation_future = _TOOL_EXECUTOR.submit(situation_note, session_id, recent_turns)
     recall_block = recall_future.result()
     if recall_block:
         system.append(recall_block)
+    try:
+        system.append(situation_future.result(timeout=3))
+    except Exception:  # noqa: BLE001 — tone guidance is never worth failing a turn over
+        logger.warning("situation note failed", exc_info=True)
     timings.append({"step": "memory", "ms": int((time.monotonic() - step) * 1000)})
 
     tools_used: list[str] = []
