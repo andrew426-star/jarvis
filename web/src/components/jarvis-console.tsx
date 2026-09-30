@@ -309,6 +309,7 @@ function Shell({
           id: crypto.randomUUID(),
           role: "assistant",
           content: result.response,
+          spoken: result.spoken,
           time: clockTime(),
           toolsUsed: result.tools_used,
           autoPlay: true,

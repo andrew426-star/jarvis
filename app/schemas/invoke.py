@@ -13,6 +13,8 @@ class ToolResult(BaseModel):
 
 class InvokeResponse(BaseModel):
     response: str
+    # What /speak should be given — written for listening, not the screen.
+    spoken: str
     tools_used: list[str]
     tool_results: list[ToolResult]
     session_id: str

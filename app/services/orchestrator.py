@@ -1,4 +1,5 @@
 import json
+import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -76,14 +77,44 @@ SYSTEM_PROMPT = (
     "do something outside what these can actually do, say so plainly rather than pretending. "
     "Keep replies tight and conversational, not a wall of text — this persona is a voice, not "
     "an excuse for padding.\n\n"
-    "FORMATTING FOR SPEECH: every reply may be read aloud by text-to-speech, so write in plain "
-    "spoken prose only — never markdown. No **bold**, no # headers, no bullet points or numbered "
-    "lists, no backticks, no tables. Say things the way you'd actually say them out loud: \"and\" "
-    "instead of \"&\", a number spoken naturally instead of a bare symbol string, no parenthetical "
-    "asides stacked with special characters. If a reply genuinely needs structure, use short "
-    "sentences and spoken transitions (\"first,\" \"also,\" \"finally\") instead of formatting "
-    "marks — a list should sound like someone listing things, not like a document."
+    "TWO CHANNELS — SCREEN AND VOICE: every reply is shown on screen AND read aloud, and the two "
+    "are written separately. First write the on-screen reply: plain text (the screen does not "
+    "render markdown, so no **bold**, # headers, backticks or tables), but otherwise complete — "
+    "exact figures, tickers, symbols, URLs, email addresses, IDs and code all belong here. Then "
+    "END EVERY REPLY with a <spoken>...</spoken> block: what you would actually say out loud "
+    "to Andrew, in the same voice. It is not a transcript of the screen text. Leave out anything "
+    "that trips up a conversation when heard — URLs, IDs, code, long number lists, symbols — and "
+    "point at the screen instead (\"the full list is on screen, sir\"). Round numbers the way a "
+    "person would say them (\"about three hundred thirty-three dollars\"). Keep it to one to three "
+    "short sentences unless Andrew asked for something to be read out in full. When the reply "
+    "is already a short conversational line, the spoken block may simply repeat it. Never "
+    "mention the <spoken> block itself."
 )
+
+# Matches the voice block the system prompt asks for. The closing tag is
+# optional because max_completion_tokens can cut a reply off mid-block,
+# and a truncated spoken line is still better than reading the screen.
+_SPOKEN_BLOCK = re.compile(r"<spoken>([\s\S]*?)(?:</spoken>|$)", re.IGNORECASE)
+
+
+def split_reply(text: str) -> tuple[str, str]:
+    """Split a raw model reply into (display, spoken).
+
+    Falls back to speaking the display text when the model skips the
+    block. That matches the old single-channel behaviour, and /speak's
+    markdown stripping still sits behind it.
+    """
+    match = None
+    for match in _SPOKEN_BLOCK.finditer(text):
+        pass  # keep the last one; an earlier block would be the model quoting itself
+    if match is None:
+        display = text.strip()
+        return display, display
+
+    spoken = match.group(1).strip()
+    display = (text[: match.start()] + text[match.end() :]).strip()
+    # A model that puts everything in the block still has to show something.
+    return display or spoken, spoken or display
 
 
 def _execute_tool_call(tool_call) -> tuple[str, dict, dict]:
@@ -201,6 +232,10 @@ def run_invoke(message: str, session_id: str | None) -> dict:
             "Shall I try again with a narrower request?"
         )
 
+    # Only the display text is stored and fed back as history: the voice
+    # line is presentation, and recall should match what Andrew saw.
+    final_text, spoken_text = split_reply(final_text)
+
     latency_ms = int((time.monotonic() - started) * 1000)
     interaction_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat()
@@ -222,6 +257,7 @@ def run_invoke(message: str, session_id: str | None) -> dict:
 
     return {
         "response": final_text,
+        "spoken": spoken_text,
         "tools_used": tools_used,
         "tool_results": tool_results,
         "session_id": session_id,
