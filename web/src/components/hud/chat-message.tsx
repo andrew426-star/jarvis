@@ -13,6 +13,8 @@ export interface ChatMessageData {
   id: string
   role: "user" | "assistant"
   content: string
+  /** What gets read aloud. Absent means speak `content`. */
+  spoken?: string
   time: string
   toolsUsed?: string[]
   autoPlay?: boolean
@@ -58,7 +60,7 @@ export function ChatMessage({
 
     setAudioState("loading")
     try {
-      const blob = await speak(message.content, token)
+      const blob = await speak(message.spoken ?? message.content, token)
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
       audioRef.current = audio
@@ -117,6 +119,9 @@ export function ChatMessage({
           borderRadius: "var(--radius)",
           fontSize: "13px",
           lineHeight: 1.5,
+          // The screen channel can carry line breaks now that the voice
+          // line is written separately.
+          whiteSpace: "pre-line",
           background: isUser ? "rgba(0, 64, 128, 0.25)" : "rgba(var(--accent-rgb), 0.06)",
           border: `1px solid rgba(var(--accent-rgb), ${isUser ? 0.12 : 0.25})`,
           color: isUser ? "var(--text-primary)" : "var(--accent)",

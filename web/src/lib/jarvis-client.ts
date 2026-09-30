@@ -87,6 +87,8 @@ export interface ToolResult {
 
 export interface InvokeResult {
   response: string
+  /** Voice line for /speak, written to be heard rather than read. */
+  spoken: string
   tools_used: string[]
   tool_results: ToolResult[]
   session_id: string
