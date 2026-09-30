@@ -263,8 +263,9 @@ function blip(freq: number, peak: number, decay: number, type: OscillatorType = 
 // A forge-cathedral under the normal bed rather than instead of it: the
 // recorded bed drops to SERIOUS_BED_LEVEL and darkens, and over it runs an
 // organ drone on A, a formant "choir" pad walking a slow modal progression,
-// piston beats, binary chatter (binharic cant: two tones, 0 and 1), servo
-// whirs and a distant bell - all in a long synthetic cathedral reverb.
+// soft piston beats, low servo groans and a distant bell - all in a long
+// synthetic cathedral reverb. Nothing in the running layer sits in the
+// bright register; the binary cant is kept for the mode switch alone.
 // Everything is synthesised, so it costs no download and reacts to mode
 // the instant it changes.
 // ---------------------------------------------------------------------------
@@ -502,65 +503,31 @@ function walkChoir() {
   later(18000 + Math.random() * 8000, walkChoir)
 }
 
-// Piston: a low thump, and a metallic clank as it returns. Every fourth
-// stroke vents steam.
-let stroke = 0
+// Piston: a soft, low thump - felt more than heard. (It once had a metal
+// clank and a steam vent; both cut through the room and were removed.)
 function piston() {
   const context = ensure()
   if (!context || !mechanicusOn || !mechGain) return
   if (!muted) {
     const now = context.currentTime
     const thump = context.createOscillator()
-    thump.frequency.setValueAtTime(62, now)
-    thump.frequency.exponentialRampToValueAtTime(34, now + 0.35)
+    thump.frequency.setValueAtTime(58, now)
+    thump.frequency.exponentialRampToValueAtTime(36, now + 0.5)
     const tg = context.createGain()
+    // A 40ms swell rather than a click-fast attack.
     tg.gain.setValueAtTime(0, now)
-    tg.gain.linearRampToValueAtTime(0.14, now + 0.01)
-    tg.gain.exponentialRampToValueAtTime(0.0001, now + 0.45)
+    tg.gain.linearRampToValueAtTime(0.1, now + 0.04)
+    tg.gain.exponentialRampToValueAtTime(0.0001, now + 0.6)
     thump.connect(tg)
-    mechSend(context, tg, 1, 0.3)
+    mechSend(context, tg, 0.9, 0.35)
     thump.start(now)
-    thump.stop(now + 0.5)
-
-    const clank = oneShotNoise(context, 0.6)
-    const ring = context.createBiquadFilter()
-    ring.type = "bandpass"
-    ring.frequency.value = 1900 + Math.random() * 400
-    ring.Q.value = 14
-    const cg = context.createGain()
-    cg.gain.setValueAtTime(0, now + 0.42)
-    cg.gain.linearRampToValueAtTime(0.09, now + 0.425)
-    cg.gain.exponentialRampToValueAtTime(0.0001, now + 0.55)
-    clank.connect(ring)
-    ring.connect(cg)
-    mechSend(context, cg, 0.6, 0.5)
-
-    stroke += 1
-    if (stroke % 4 === 0) {
-      const steam = oneShotNoise(context, 1.4)
-      const hiss = context.createBiquadFilter()
-      hiss.type = "highpass"
-      hiss.frequency.value = 2800
-      const sg = context.createGain()
-      sg.gain.setValueAtTime(0, now + 0.5)
-      sg.gain.linearRampToValueAtTime(0.022, now + 0.6)
-      sg.gain.exponentialRampToValueAtTime(0.0001, now + 1.4)
-      steam.connect(hiss)
-      hiss.connect(sg)
-      mechSend(context, sg, 0.7, 0.4)
-    }
+    thump.stop(now + 0.65)
   }
-  later(2600 + Math.random() * 500, piston)
+  later(2800 + Math.random() * 600, piston)
 }
 
-function chatter() {
-  if (!mechanicusOn) return
-  if (mechGain) cant(6 + Math.floor(Math.random() * 10), 0.045, 0.02, mechGain)
-  later(4000 + Math.random() * 6000, chatter)
-}
-
-// A servo: a buzzing saw whose filter sweeps up and back like a joint
-// turning under load.
+// A servo: a slow, muffled groan somewhere in the machinery. Kept under
+// a low-pass so it never reaches the bright register.
 function servo() {
   const context = ensure()
   if (!context || !mechanicusOn || !mechGain) return
@@ -568,26 +535,26 @@ function servo() {
     const now = context.currentTime
     const osc = context.createOscillator()
     osc.type = "sawtooth"
-    osc.frequency.setValueAtTime(78, now)
-    osc.frequency.linearRampToValueAtTime(140, now + 0.7)
-    osc.frequency.linearRampToValueAtTime(96, now + 1.3)
-    const band = context.createBiquadFilter()
-    band.type = "bandpass"
-    band.Q.value = 4
-    band.frequency.setValueAtTime(320, now)
-    band.frequency.linearRampToValueAtTime(1500, now + 0.7)
-    band.frequency.linearRampToValueAtTime(520, now + 1.3)
+    osc.frequency.setValueAtTime(70, now)
+    osc.frequency.linearRampToValueAtTime(104, now + 1.2)
+    osc.frequency.linearRampToValueAtTime(82, now + 2.4)
+    const low = context.createBiquadFilter()
+    low.type = "lowpass"
+    low.Q.value = 0.7
+    low.frequency.setValueAtTime(220, now)
+    low.frequency.linearRampToValueAtTime(380, now + 1.2)
+    low.frequency.linearRampToValueAtTime(240, now + 2.4)
     const g = context.createGain()
     g.gain.setValueAtTime(0, now)
-    g.gain.linearRampToValueAtTime(0.03, now + 0.15)
-    g.gain.linearRampToValueAtTime(0, now + 1.35)
-    osc.connect(band)
-    band.connect(g)
-    mechSend(context, g, 0.7, 0.4)
+    g.gain.linearRampToValueAtTime(0.022, now + 0.6)
+    g.gain.linearRampToValueAtTime(0, now + 2.5)
+    osc.connect(low)
+    low.connect(g)
+    mechSend(context, g, 0.6, 0.5)
     osc.start(now)
-    osc.stop(now + 1.4)
+    osc.stop(now + 2.6)
   }
-  later(8000 + Math.random() * 8000, servo)
+  later(10000 + Math.random() * 9000, servo)
 }
 
 function bell() {
@@ -611,7 +578,6 @@ function startMechanicus() {
 
   startDroneAndChoir(context)
   later(1800, piston)
-  later(3000, chatter)
   later(6000, servo)
   later(12000, walkChoir)
   later(20000, bell)
@@ -817,7 +783,8 @@ export const sfx = {
       thinkTimer = setInterval(() => {
         // Slight random detune so a fixed interval doesn't read as a
         // metronome - it should sound like work, not a countdown.
-        if (ambienceMode === "serious") binharicBit(Math.random() < 0.5, 0.02)
+        // Serious mode gets a soft low pulse, not a bright tick.
+        if (ambienceMode === "serious") blip(420 + Math.random() * 80, 0.014, 0.18, "sine")
         else blip(1400 + Math.random() * 500, 0.022, 0.045)
       }, 340)
       return
@@ -842,6 +809,17 @@ export const sfx = {
   // The sound of the switch itself, once per toggle.
   modeShift(mode: Ambience): void {
     playModeShift(mode)
+  },
+
+  // Standby: the whole sound engine goes quiet (and stops decoding the
+  // bed) without touching the mute preference.
+  sleep(): void {
+    bedEl?.pause()
+    void ctx?.suspend()
+  },
+  wake(): void {
+    void ctx?.resume()
+    if (!muted) void bedEl?.play().catch(() => {})
   },
 
   isMuted(): boolean {
