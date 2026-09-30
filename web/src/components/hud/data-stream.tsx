@@ -52,8 +52,9 @@ export function DataStream({ visible, serious }: { visible: boolean; serious: bo
             style={{
               [column.side]: column.offset,
               animationDuration: `${column.duration}s`,
-              // Serious mode runs hotter and brighter, per the spec.
-              opacity: serious ? 0.15 : 0.09,
+              // Serious mode runs hotter and brighter, well past the spec's
+              // 15% so the switch reads at a glance.
+              opacity: serious ? 0.26 : 0.07,
             }}
           >
             {text}

@@ -233,7 +233,7 @@ function Appearance() {
         className="wrap-words"
         style={{ fontSize: "11px", color: "var(--text-secondary)", lineHeight: 1.4 }}
       >
-        Serious mode shifts the entire palette to amber. Both settings persist per browser.
+        Serious mode turns the whole console red-hot: palette, grid, scanlines and edges. Both settings persist per browser.
       </p>
     </>
   )

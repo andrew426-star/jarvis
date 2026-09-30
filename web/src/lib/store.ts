@@ -3,6 +3,7 @@
 import { create } from "zustand"
 
 import type { ConnectionInfo } from "@/lib/jarvis-client"
+import { centralTime } from "@/lib/time"
 
 export type Mode = "normal" | "serious"
 export type AgentStatus = "idle" | "listening" | "speaking" | "thinking"
@@ -99,7 +100,7 @@ const MAX_LOGS = 15
 const MAX_NOTIFICATIONS = 4
 
 export function clockTime(date = new Date()): string {
-  return date.toLocaleTimeString("en-GB", { hour12: false })
+  return centralTime(date)
 }
 
 export const useJarvis = create<JarvisState>((set, get) => ({
@@ -212,7 +213,7 @@ export const useJarvis = create<JarvisState>((set, get) => ({
       notifications: [
         {
           id: crypto.randomUUID(),
-          time: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+          time: centralTime(new Date(), false),
           title,
           description,
           kind,

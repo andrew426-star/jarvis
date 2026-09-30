@@ -1,11 +1,12 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { motion } from "framer-motion"
 
 import { ArcReactor } from "@/components/hud/arc-reactor"
 import { AudioVisualizer } from "@/components/hud/audio-visualizer"
 import { BottomBar } from "@/components/hud/bottom-bar"
+import { DataWindow } from "@/components/hud/data-window"
 import { ChatInterface } from "@/components/hud/chat-interface"
 import type { ChatMessageData } from "@/components/hud/chat-message"
 import { DataStream } from "@/components/hud/data-stream"
@@ -53,57 +54,68 @@ const TOOL_PANEL_MAP: Record<string, TabKey> = {
   portfolio: "assets",
 }
 
-type Status = "resolving" | "unauthenticated" | "authenticated"
+type AuthState =
+  | { status: "authenticated"; token: string; sessionId: string }
+  | { status: "unauthenticated"; loginError: string | null }
+
+// How this page load is signed in, worked out once from the URL and
+// localStorage and cached for the life of the page. Read through
+// useSyncExternalStore (like use-clock.ts) rather than set from an effect:
+// the static export's server render can't see either source, so the
+// server snapshot is null ("resolving") and the client snapshot replaces
+// it after hydration without a mismatch.
+let resolvedAuth: AuthState | null = null
+
+function resolveAuth(): AuthState {
+  if (resolvedAuth) return resolvedAuth
+
+  // A completed Google sign-in lands back here as ?session=... since
+  // the callback has to hand the browser its credential somehow and
+  // this app talks Bearer, not cookies.
+  const params = new URLSearchParams(window.location.search)
+  const granted = params.get("session")
+  const failure = params.get("login_error")
+
+  if (granted || failure) {
+    // Strip it immediately: a session token in the address bar ends up
+    // in history, bookmarks, and any screenshot of the app.
+    window.history.replaceState({}, "", window.location.pathname)
+  }
+
+  if (granted) {
+    setStoredToken(granted)
+    resolvedAuth = { status: "authenticated", token: granted, sessionId: getOrCreateSessionId() }
+  } else if (failure) {
+    resolvedAuth = { status: "unauthenticated", loginError: failure }
+  } else {
+    const stored = getStoredToken()
+    resolvedAuth = stored
+      ? { status: "authenticated", token: stored, sessionId: getOrCreateSessionId() }
+      : { status: "unauthenticated", loginError: null }
+  }
+  return resolvedAuth
+}
+
+// Sign-in state only changes by leaving the page (the Google redirect) or
+// by handleAuthError below, so there is nothing to subscribe to.
+const subscribeAuth = () => () => {}
 
 export function JarvisConsole() {
-  const [status, setStatus] = useState<Status>("resolving")
-  const [token, setToken] = useState<string | null>(null)
-  const [sessionId, setSessionId] = useState("")
-  const [loginError, setLoginError] = useState<string | null>(null)
-
-  useEffect(() => {
-    // A completed Google sign-in lands back here as ?session=... since
-    // the callback has to hand the browser its credential somehow and
-    // this app talks Bearer, not cookies.
-    const params = new URLSearchParams(window.location.search)
-    const granted = params.get("session")
-    const failure = params.get("login_error")
-
-    if (granted || failure) {
-      // Strip it immediately: a session token in the address bar ends up
-      // in history, bookmarks, and any screenshot of the app.
-      window.history.replaceState({}, "", window.location.pathname)
-    }
-
-    if (granted) {
-      setStoredToken(granted)
-      setToken(granted)
-      setSessionId(getOrCreateSessionId())
-      setStatus("authenticated")
-      return
-    }
-    if (failure) {
-      setLoginError(failure)
-      setStatus("unauthenticated")
-      return
-    }
-
-    const stored = getStoredToken()
-    if (stored) {
-      setToken(stored)
-      setSessionId(getOrCreateSessionId())
-      setStatus("authenticated")
-    } else {
-      setStatus("unauthenticated")
-    }
-  }, [])
+  const auth = useSyncExternalStore(subscribeAuth, resolveAuth, () => null)
+  // Set by a rejected token or an explicit sign-out; signing back in goes
+  // through the Google redirect, which reloads the page and resets this.
+  const [signedOut, setSignedOut] = useState(false)
 
   function handleAuthError() {
     clearStoredToken()
     clearSession()
-    setToken(null)
-    setStatus("unauthenticated")
+    setSignedOut(true)
   }
+
+  const status = auth === null ? "resolving" : signedOut ? "unauthenticated" : auth.status
+  const token = auth?.status === "authenticated" && !signedOut ? auth.token : null
+  const sessionId = auth?.status === "authenticated" ? auth.sessionId : ""
+  const loginError = auth?.status === "unauthenticated" ? auth.loginError : null
 
   if (status === "resolving") return <div style={{ height: "100vh" }} />
   if (status === "unauthenticated" || !token) return <LoginGate loginError={loginError} />
@@ -429,9 +441,9 @@ function Shell({
           </div>
         </div>
 
-        {/* Comms terminal, or a data panel when a tab is selected. Same
-            region either way, capped at 40% of the column so the reactor
-            is never pushed off screen. */}
+        {/* Comms terminal, capped at 40% of the column so the reactor is
+            never pushed off screen. The data tabs open in their own
+            full-console window (DataWindow, below) instead of this slot. */}
         <div
           className="flex min-h-0 flex-col"
           style={{
@@ -440,38 +452,15 @@ function Shell({
             transition: "opacity 400ms ease",
           }}
         >
-          {activeTab === null ? (
-            <ChatInterface
-              messages={messages}
-              pending={pending}
-              error={error}
-              token={token}
-              onAuthError={onAuthError}
-              onSpeakingChange={setSpeaking}
-              onReopenMic={() => micRef.current?.startRecording()}
-            />
-          ) : (
-            <div className="card min-h-0 flex-1 overflow-y-auto" style={{ padding: "var(--sp-3)" }}>
-              <div className={activeTab === "markets" ? "" : "hidden"}>
-                <MarketsPanel
-                  token={token}
-                  onAuthError={onAuthError}
-                  liveSnapshot={liveMarketSnapshot}
-                  liveHistory={liveMarketHistory}
-                />
-              </div>
-              <div className={activeTab === "intel" ? "" : "hidden"}>
-                <NewsPanel token={token} onAuthError={onAuthError} liveNews={liveNews} />
-              </div>
-              <div className={activeTab === "assets" ? "" : "hidden"}>
-                <PortfolioPanel
-                  token={token}
-                  onAuthError={onAuthError}
-                  livePortfolio={livePortfolio}
-                />
-              </div>
-            </div>
-          )}
+          <ChatInterface
+            messages={messages}
+            pending={pending}
+            error={error}
+            token={token}
+            onAuthError={onAuthError}
+            onSpeakingChange={setSpeaking}
+            onReopenMic={() => micRef.current?.startRecording()}
+          />
         </div>
 
         <div className="shrink-0">
@@ -504,6 +493,23 @@ function Shell({
           micRef={micRef}
         />
       </motion.div>
+
+      <DataWindow>
+        <div className={activeTab === "markets" ? "" : "hidden"}>
+          <MarketsPanel
+            token={token}
+            onAuthError={onAuthError}
+            liveSnapshot={liveMarketSnapshot}
+            liveHistory={liveMarketHistory}
+          />
+        </div>
+        <div className={activeTab === "intel" ? "" : "hidden"}>
+          <NewsPanel token={token} onAuthError={onAuthError} liveNews={liveNews} />
+        </div>
+        <div className={activeTab === "assets" ? "" : "hidden"}>
+          <PortfolioPanel token={token} onAuthError={onAuthError} livePortfolio={livePortfolio} />
+        </div>
+      </DataWindow>
 
       <SettingsPanel sessionId={sessionId} onSignOut={onSignOut} />
       <GlobalEffects />

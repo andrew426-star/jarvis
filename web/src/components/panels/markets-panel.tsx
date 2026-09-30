@@ -1,27 +1,33 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts"
-import { RefreshCwIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { motion } from "framer-motion"
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { TrendingDownIcon, TrendingUpIcon } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
 import {
   JarvisAuthError,
   getMarketHistory,
   getMarketSnapshot,
   type MarketHistory,
+  type MarketQuote,
   type MarketSnapshot,
 } from "@/lib/jarvis-client"
+import {
+  AnimatedValue,
+  EASE_OUT,
+  FLASH_BG,
+  PanelSection,
+  RefreshButton,
+  ScanRows,
+  itemVariants,
+  listVariants,
+  signedPct,
+  syncStamp,
+  toneColor,
+  usd,
+  useChangeFlash,
+} from "./hud-kit"
 
 interface MarketsPanelProps {
   token: string
@@ -30,41 +36,71 @@ interface MarketsPanelProps {
   liveHistory?: MarketHistory
 }
 
-export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: MarketsPanelProps) {
-  const [snapshot, setSnapshot] = useState<MarketSnapshot | null>(null)
-  const [loadingSnapshot, setLoadingSnapshot] = useState(true)
-  const [symbolInput, setSymbolInput] = useState("")
-  const [history, setHistory] = useState<MarketHistory | null>(null)
-  const [loadingHistory, setLoadingHistory] = useState(false)
+const PERIODS = [
+  { days: 7, label: "7D" },
+  { days: 30, label: "30D" },
+  { days: 90, label: "90D" },
+] as const
 
-  // Guards against the initial background fetch resolving *after* a fresher
-  // live tool result already arrived from a chat turn — without this, a
-  // slow watchlist fetch could clobber a just-arrived, more relevant quote.
-  const hasLiveSnapshotRef = useRef(false)
-  const hasLiveHistoryRef = useRef(false)
+// Change bars are scaled against this move; anything bigger pins the bar.
+const FULL_SCALE_PCT = 5
+
+type Sourced<T> = { data: T; source: "fetch" | "live"; at: Date | null }
+
+export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: MarketsPanelProps) {
+  // A live tool result from a chat turn seeds the panel when it opens and
+  // replaces what's shown whenever a new one arrives. The background fetch
+  // on mount only fills in if nothing live got there first, so a slow
+  // watchlist request can't clobber a fresher, more relevant quote.
+  const [view, setView] = useState<Sourced<MarketSnapshot> | null>(() =>
+    liveSnapshot ? { data: liveSnapshot, source: "live", at: null } : null,
+  )
+  const [history, setHistory] = useState<MarketHistory | null>(liveHistory ?? null)
+  const [symbolInput, setSymbolInput] = useState(liveHistory?.symbol ?? "")
+  const [loadingSnapshot, setLoadingSnapshot] = useState(true)
+  const [loadingHistory, setLoadingHistory] = useState(false)
+  const [days, setDays] = useState<number>(30)
+
+  // "Adjusting state when a prop changes", done during render as React
+  // recommends rather than in an effect.
+  const [prevLiveSnapshot, setPrevLiveSnapshot] = useState(liveSnapshot)
+  if (liveSnapshot !== prevLiveSnapshot) {
+    setPrevLiveSnapshot(liveSnapshot)
+    if (liveSnapshot) setView({ data: liveSnapshot, source: "live", at: null })
+  }
+  const [prevLiveHistory, setPrevLiveHistory] = useState(liveHistory)
+  if (liveHistory !== prevLiveHistory) {
+    setPrevLiveHistory(liveHistory)
+    if (liveHistory) {
+      setHistory(liveHistory)
+      setSymbolInput(liveHistory.symbol)
+    }
+  }
+
+  const snapshot = view?.data ?? null
 
   async function refreshSnapshot() {
     setLoadingSnapshot(true)
     try {
-      setSnapshot(await getMarketSnapshot(token))
+      setView({ data: await getMarketSnapshot(token), source: "fetch", at: new Date() })
     } catch (err) {
       if (err instanceof JarvisAuthError) {
         onAuthError()
         return
       }
-      setSnapshot({ ok: false, quotes: [], error: "Could not load market data." })
+      setView({ data: { ok: false, quotes: [], error: "Could not load market data." }, source: "fetch", at: null })
     } finally {
       setLoadingSnapshot(false)
     }
   }
 
-  async function loadHistory(symbol: string) {
+  async function loadHistory(symbol: string, period = days) {
     const clean = symbol.trim().toUpperCase()
     if (!clean) return
-    hasLiveHistoryRef.current = false
+    setSymbolInput(clean)
     setLoadingHistory(true)
     try {
-      setHistory(await getMarketHistory(clean, token))
+      setHistory(await getMarketHistory(clean, token, period))
     } catch (err) {
       if (err instanceof JarvisAuthError) {
         onAuthError()
@@ -79,145 +115,324 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
   useEffect(() => {
     getMarketSnapshot(token)
       .then((result) => {
-        if (!hasLiveSnapshotRef.current) setSnapshot(result)
+        const fetched: Sourced<MarketSnapshot> = { data: result, source: "fetch", at: new Date() }
+        setView((prev) => prev ?? fetched)
+        // Open on a chart rather than an empty box: the first watchlist
+        // name, unless a chat turn already put a chart here.
+        const first = result.ok ? result.quotes[0]?.symbol : undefined
+        if (first) {
+          getMarketHistory(first, token, 30)
+            .then((h) => {
+              setHistory((prev) => prev ?? h)
+              setSymbolInput((prev) => prev || first)
+            })
+            .catch(() => {})
+        }
       })
       .catch((err) => {
         if (err instanceof JarvisAuthError) {
           onAuthError()
           return
         }
-        if (!hasLiveSnapshotRef.current) {
-          setSnapshot({ ok: false, quotes: [], error: "Could not load market data." })
+        const failed: Sourced<MarketSnapshot> = {
+          data: { ok: false, quotes: [], error: "Could not load market data." },
+          source: "fetch",
+          at: null,
         }
+        setView((prev) => prev ?? failed)
       })
       .finally(() => setLoadingSnapshot(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(() => {
-    if (liveSnapshot) {
-      hasLiveSnapshotRef.current = true
-      setSnapshot(liveSnapshot)
-    }
-  }, [liveSnapshot])
-
-  useEffect(() => {
-    if (liveHistory) {
-      hasLiveHistoryRef.current = true
-      setHistory(liveHistory)
-      setSymbolInput(liveHistory.symbol)
-    }
-  }, [liveHistory])
+  const quotes = snapshot?.quotes ?? []
 
   return (
-    <div className="flex flex-col gap-4">
-      <Card className="glow-border">
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Watchlist</CardTitle>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={refreshSnapshot}
-            aria-label="Refresh watchlist"
+    <div
+      className="grid grid-cols-1 items-start @4xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]"
+      style={{ gap: "var(--sp-3)" }}
+    >
+      <PanelSection
+        title="Watchlist"
+        meta={view?.source === "live" ? "FROM CHAT" : syncStamp(view?.at ?? null)}
+        action={<RefreshButton loading={loadingSnapshot} onClick={refreshSnapshot} label="Refresh watchlist" />}
+      >
+        {snapshot?.ok === false && (
+          <p className="t-body" style={{ color: "var(--error)" }}>
+            {snapshot.error}
+          </p>
+        )}
+        {!snapshot && loadingSnapshot ? <ScanRows rows={2} height={64} /> : null}
+        {quotes.length > 0 && <Breadth quotes={quotes} />}
+        {quotes.length > 0 && (
+          <motion.div
+            className="grid grid-cols-2 @xl:grid-cols-3 @4xl:grid-cols-2 @6xl:grid-cols-3"
+            style={{ gap: "var(--sp-2)" }}
+            variants={listVariants}
+            initial="hidden"
+            animate="show"
           >
-            <RefreshCwIcon className={loadingSnapshot ? "animate-spin" : ""} />
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {snapshot?.ok === false && <p className="text-sm text-destructive">{snapshot.error}</p>}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {snapshot?.quotes.map((q) => {
-              const up = (q.change ?? 0) >= 0
-              return (
-                <button
-                  key={q.symbol}
-                  type="button"
-                  onClick={() => loadHistory(q.symbol)}
-                  className="card flex min-w-0 flex-col items-start gap-0.5 p-2.5 text-left"
-                >
-                  {/* truncate-1 carries min-width:0, without which this
-                      flex child refuses to shrink and a long ticker
-                      overruns the price beneath it. */}
-                  <span
-                    className="truncate-1 w-full text-xs text-muted-foreground"
-                    title={q.symbol}
-                  >
-                    {q.symbol}
-                  </span>
-                  <span className="truncate-1 w-full text-lg">${q.price.toFixed(2)}</span>
-                  <span
-                    className={`flex items-center gap-1 text-xs ${up ? "text-primary" : "text-destructive"}`}
-                  >
-                    {up ? <TrendingUpIcon className="size-3" /> : <TrendingDownIcon className="size-3" />}
-                    {q.change_percent?.toFixed(2)}%
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-        </CardContent>
-      </Card>
+            {quotes.map((q) => (
+              <QuoteTile
+                key={q.symbol}
+                quote={q}
+                active={history?.symbol === q.symbol}
+                onSelect={() => loadHistory(q.symbol)}
+              />
+            ))}
+          </motion.div>
+        )}
+      </PanelSection>
 
-      <Card className="glow-border">
-        <CardHeader>
-          <CardTitle>Price History</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <div className="flex gap-2">
-            <Input
-              value={symbolInput}
-              onChange={(event) => setSymbolInput(event.target.value)}
-              placeholder="Symbol, e.g. AAPL"
-              className="h-8 w-40"
-            />
-            <button
-              type="button"
-              className="btn"
-              style={{ padding: "0 var(--sp-3)" }}
-              onClick={() => loadHistory(symbolInput)}
-              disabled={loadingHistory || !symbolInput.trim()}
-            >
-              Chart
-            </button>
+      <PanelSection
+        title="Price History"
+        delay={0.08}
+        action={
+          <div className="flex shrink-0" style={{ gap: "var(--sp-1)" }}>
+            {PERIODS.map((p) => (
+              <button
+                key={p.days}
+                type="button"
+                className="btn"
+                data-active={days === p.days}
+                style={{ height: 24, padding: "0 var(--sp-2)" }}
+                onClick={() => {
+                  setDays(p.days)
+                  if (history?.symbol) loadHistory(history.symbol, p.days)
+                }}
+              >
+                {p.label}
+              </button>
+            ))}
           </div>
-          {history?.ok === false && <p className="text-sm text-destructive">{history.error}</p>}
-          {history?.ok && history.candles && (
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={history.candles}>
-                <defs>
-                  <linearGradient id="closeGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(152 76% 46%)" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="hsl(152 76% 46%)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(150 12% 14%)" />
-                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "hsl(140 10% 55%)" }} minTickGap={30} />
-                <YAxis domain={["auto", "auto"]} tick={{ fontSize: 10, fill: "hsl(140 10% 55%)" }} width={50} />
-                <Tooltip
-                  contentStyle={{
-                    background: "hsl(150 15% 7%)",
-                    border: "1px solid hsl(150 12% 14%)",
-                    fontSize: 12,
-                  }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="close"
-                  stroke="hsl(152 76% 46%)"
-                  fill="url(#closeGradient)"
-                  strokeWidth={2}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-          {!history && (
-            <p className="text-sm text-muted-foreground">
-              Pick a symbol above to see its recent price chart.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+        }
+      >
+        <form
+          className="flex"
+          style={{ gap: "var(--sp-2)" }}
+          onSubmit={(event) => {
+            event.preventDefault()
+            loadHistory(symbolInput)
+          }}
+        >
+          <input
+            value={symbolInput}
+            onChange={(event) => setSymbolInput(event.target.value)}
+            placeholder="SYMBOL, e.g. AAPL"
+            className="t-label min-w-0 flex-1"
+            style={{
+              height: 28,
+              padding: "0 var(--sp-2)",
+              background: "rgba(10, 14, 26, 0.6)",
+              border: "1px solid rgba(var(--accent-rgb), 0.2)",
+              color: "var(--text-primary)",
+              textTransform: "uppercase",
+            }}
+          />
+          <button
+            type="submit"
+            className="btn"
+            style={{ height: 28, padding: "0 var(--sp-3)" }}
+            disabled={loadingHistory || !symbolInput.trim()}
+          >
+            CHART
+          </button>
+        </form>
+
+        {history?.ok === false && (
+          <p className="t-body" style={{ color: "var(--error)" }}>
+            {history.error}
+          </p>
+        )}
+        {loadingHistory && !history?.candles ? <ScanRows rows={1} height={200} /> : null}
+        {history?.ok && history.candles && history.candles.length > 0 && (
+          <HistoryChart history={history} loading={loadingHistory} />
+        )}
+        {!history && !loadingHistory && (
+          <p className="t-body" style={{ color: "var(--text-secondary)" }}>
+            Select a watchlist tile or enter a symbol.
+          </p>
+        )}
+      </PanelSection>
+    </div>
+  )
+}
+
+// How the watchlist as a whole is moving: advancers vs decliners and the
+// average move, as a split bar.
+function Breadth({ quotes }: { quotes: MarketQuote[] }) {
+  const moves = quotes.map((q) => q.change_percent).filter((m): m is number => m != null)
+  if (moves.length === 0) return null
+  const up = moves.filter((m) => m > 0).length
+  const down = moves.filter((m) => m < 0).length
+  const avg = moves.reduce((a, b) => a + b, 0) / moves.length
+  const upShare = up + down === 0 ? 0.5 : up / (up + down)
+
+  return (
+    <div className="flex flex-col" style={{ gap: "var(--sp-1)" }}>
+      <div className="t-label flex justify-between" style={{ color: "var(--text-secondary)" }}>
+        <span>
+          <span style={{ color: "var(--success)" }}>▲ {up}</span>{" "}
+          <span style={{ color: "var(--error)" }}>▼ {down}</span>
+        </span>
+        <span>
+          AVG <span style={{ color: toneColor(avg) }}>{signedPct(avg)}</span>
+        </span>
+      </div>
+      <div className="flex overflow-hidden" style={{ height: 3, background: "rgba(255,51,51,0.5)" }}>
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${upShare * 100}%` }}
+          transition={{ duration: 0.8, ease: EASE_OUT }}
+          style={{ background: "var(--success)", boxShadow: "0 0 8px rgba(0,255,136,0.5)" }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function QuoteTile({
+  quote,
+  active,
+  onSelect,
+}: {
+  quote: MarketQuote
+  active: boolean
+  onSelect: () => void
+}) {
+  const flash = useChangeFlash(quote.price)
+  const pct = quote.change_percent ?? 0
+  const up = pct >= 0
+  const barWidth = Math.min(100, (Math.abs(pct) / FULL_SCALE_PCT) * 100)
+
+  return (
+    <motion.button
+      type="button"
+      variants={itemVariants}
+      whileHover={{ y: -2 }}
+      whileTap={{ scale: 0.98 }}
+      onClick={onSelect}
+      className="card relative flex min-w-0 flex-col items-start overflow-hidden text-left"
+      style={{
+        padding: "var(--sp-2) var(--sp-3)",
+        gap: 2,
+        borderColor: active ? "rgba(var(--accent-rgb), 0.9)" : undefined,
+        boxShadow: active ? "0 0 12px rgba(var(--accent-rgb), 0.25)" : undefined,
+        background: flash ? FLASH_BG[flash] : undefined,
+      }}
+    >
+      <span className="t-label truncate-1 w-full" style={{ color: "var(--text-secondary)" }} title={quote.symbol}>
+        {quote.symbol}
+      </span>
+      <AnimatedValue
+        value={quote.price}
+        format={(n) => usd(n)}
+        className="t-value truncate-1 w-full"
+        style={{ fontSize: 16, color: "var(--text-primary)" }}
+      />
+      <span className="t-label flex items-center" style={{ gap: 4, color: toneColor(quote.change_percent) }}>
+        {up ? <TrendingUpIcon className="size-3" /> : <TrendingDownIcon className="size-3" />}
+        {quote.change_percent != null ? signedPct(pct) : "—"}
+      </span>
+      <div className="absolute bottom-0 left-0 h-[2px] w-full" style={{ background: "rgba(var(--accent-rgb), 0.08)" }}>
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${barWidth}%` }}
+          transition={{ duration: 0.7, ease: EASE_OUT }}
+          style={{ height: "100%", background: up ? "var(--success)" : "var(--error)" }}
+        />
+      </div>
+    </motion.button>
+  )
+}
+
+function HistoryChart({ history, loading }: { history: MarketHistory; loading: boolean }) {
+  const candles = useMemo(() => history.candles ?? [], [history.candles])
+  const stats = useMemo(() => {
+    const first = candles[0]?.close ?? 0
+    const last = candles[candles.length - 1]?.close ?? 0
+    return {
+      last,
+      change: first ? ((last - first) / first) * 100 : 0,
+      high: Math.max(...candles.map((c) => c.high)),
+      low: Math.min(...candles.map((c) => c.low)),
+    }
+  }, [candles])
+  const color = stats.change >= 0 ? "var(--success)" : "var(--error)"
+  const gradientId = `hist-${history.symbol.replace(/[^A-Za-z0-9]/g, "")}`
+
+  return (
+    <div className="flex flex-col" style={{ gap: "var(--sp-2)", opacity: loading ? 0.5 : 1 }}>
+      <div className="flex flex-wrap items-baseline justify-between" style={{ gap: "var(--sp-2)" }}>
+        <div className="flex items-baseline" style={{ gap: "var(--sp-2)" }}>
+          <span className="t-header text-glow" style={{ color: "var(--accent)" }}>
+            {history.symbol}
+          </span>
+          <AnimatedValue value={stats.last} format={(n) => usd(n)} className="t-value" style={{ fontSize: 18 }} />
+          <span className="t-label" style={{ color }}>
+            {signedPct(stats.change)}
+          </span>
+        </div>
+        <span className="t-label" style={{ color: "var(--text-secondary)" }}>
+          H {usd(stats.high)} · L {usd(stats.low)}
+        </span>
+      </div>
+      <motion.div
+        key={`${history.symbol}-${candles.length}`}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.4 }}
+      >
+        <div className="h-[220px] @4xl:h-[380px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={candles} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={color} stopOpacity={0.35} />
+                <stop offset="100%" stopColor={color} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="2 4" stroke="rgba(var(--accent-rgb), 0.08)" vertical={false} />
+            <XAxis
+              dataKey="date"
+              tick={{ fontSize: 10, fill: "var(--text-secondary)", fontFamily: "var(--font-jetbrains)" }}
+              tickLine={false}
+              axisLine={{ stroke: "rgba(var(--accent-rgb), 0.15)" }}
+              minTickGap={32}
+            />
+            <YAxis
+              domain={["auto", "auto"]}
+              tick={{ fontSize: 10, fill: "var(--text-secondary)", fontFamily: "var(--font-jetbrains)" }}
+              tickLine={false}
+              axisLine={false}
+              width={48}
+            />
+            <Tooltip
+              cursor={{ stroke: "rgba(var(--accent-rgb), 0.4)", strokeDasharray: "2 2" }}
+              contentStyle={{
+                background: "rgba(5, 5, 10, 0.95)",
+                border: "1px solid rgba(var(--accent-rgb), 0.4)",
+                borderRadius: 2,
+                fontFamily: "var(--font-jetbrains)",
+                fontSize: 11,
+              }}
+              labelStyle={{ color: "var(--text-secondary)" }}
+              formatter={(value) => [usd(Number(value)), "Close"]}
+            />
+            <Area
+              type="monotone"
+              dataKey="close"
+              stroke={color}
+              fill={`url(#${gradientId})`}
+              strokeWidth={1.75}
+              animationDuration={900}
+              animationEasing="ease-out"
+              activeDot={{ r: 3, stroke: color, fill: "var(--bg-base)" }}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+        </div>
+      </motion.div>
     </div>
   )
 }

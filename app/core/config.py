@@ -123,7 +123,10 @@ class Settings(BaseSettings):
     # configured" error if either is unset.
     fish_audio_api_key: str | None = None
     fish_audio_voice_id: str | None = None
-    fish_audio_model: str = "s2.1-pro"
+    # s2.1-pro-free bills at $0.00 per million UTF-8 bytes where
+    # s2.1-pro bills $15.00, and it is the only model an empty API
+    # credit wallet will serve. Verified returning real audio.
+    fish_audio_model: str = "s2.1-pro-free"
 
     # JARVIS_ACCESS_TOKEN — the ORIGINAL shared-secret gate. Google
     # sign-in (above) is now the console's way in; this stays as the
@@ -142,6 +145,11 @@ class Settings(BaseSettings):
     # localStorage after that) — unlike GOOGLE_OAUTH_STATE_SECRET, which is
     # machine-generated (openssl rand -hex 32) and never typed by a human.
     jarvis_access_token: str | None = None
+
+    # Where the scheduled morning brief (POST /brief/run) is emailed.
+    # Optional: unset means the connected Google account's own address,
+    # i.e. the brief is sent from Andrew's Gmail to itself.
+    jarvis_brief_email: str | None = None
 
     # CORS only — the frontend's origin (scheme+host, no
     # trailing slash). Optional so the backend still boots before the

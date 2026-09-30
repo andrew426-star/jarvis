@@ -1,0 +1,59 @@
+name: Jarvis routines
+
+# Jarvis's scheduled emails: the morning brief, an evening check-in and a
+# Sunday weekly review. Each calls POST /routines/<name>/run
+# (app/api/routes/brief.py), which runs the normal agent loop and emails
+# the result, at most once a day per routine.
+#
+# Times are US Central, the routines' source of truth in brief.py. GitHub
+# cron is UTC-only, so each routine is listed at two UTC times, one for
+# daylight time (CDT, UTC-5) and one for standard time (CST, UTC-6), and the
+# route runs only the one matching Central's current offset. Keep these in
+# step with utc_cron() in brief.py; scripts/check_routine_schedules.py checks.
+on:
+  schedule:
+    - cron: "0 12 * * *" # morning-brief, daily 7:00am CDT
+    - cron: "0 13 * * *" # morning-brief, daily 7:00am CST
+    - cron: "30 1 * * *" # evening-checkin, daily 8:30pm CDT
+    - cron: "30 2 * * *" # evening-checkin, daily 8:30pm CST
+    - cron: "0 22 * * 0" # weekly-review, Sundays 5:00pm CDT
+    - cron: "0 23 * * 0" # weekly-review, Sundays 5:00pm CST
+  workflow_dispatch:
+    inputs:
+      routine:
+        description: Routine to run now
+        required: true
+        type: choice
+        options:
+          - morning-brief
+          - evening-checkin
+          - weekly-review
+
+jobs:
+  run-routine:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pick routine
+        id: pick
+        run: |
+          if [ -n "${{ inputs.routine }}" ]; then
+            routine="${{ inputs.routine }}"
+          else
+            case "${{ github.event.schedule }}" in
+              "0 12 * * *" | "0 13 * * *") routine=morning-brief ;;
+              "30 1 * * *" | "30 2 * * *") routine=evening-checkin ;;
+              "0 22 * * 0" | "0 23 * * 0") routine=weekly-review ;;
+              *) echo "No routine for schedule '${{ github.event.schedule }}'"; exit 1 ;;
+            esac
+          fi
+          echo "routine=$routine" >> "$GITHUB_OUTPUT"
+      - name: Run ${{ steps.pick.outputs.routine }}
+        run: |
+          # A scheduled run passes the cron that fired so the route can skip
+          # the copy meant for the other half of the year; a manual run
+          # passes none. The free Render instance may be asleep: long
+          # timeout, one retry (the route won't send twice in a day).
+          curl --fail-with-body --retry 2 --retry-delay 30 --max-time 240 -G -X POST \
+            --data-urlencode "schedule=${{ github.event.schedule }}" \
+            -H "Authorization: Bearer ${{ secrets.JARVIS_ACCESS_TOKEN }}" \
+            https://jarvis-u49p.onrender.com/routines/${{ steps.pick.outputs.routine }}/run

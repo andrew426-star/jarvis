@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.routes.brief import router as brief_router
 from app.api.routes.google_auth import router as google_auth_router
 from app.api.routes.google_login import router as google_login_router
 from app.api.routes.invoke import router as invoke_router
@@ -37,6 +38,7 @@ app.add_middleware(
 )
 
 app.include_router(invoke_router)
+app.include_router(brief_router)
 app.include_router(google_auth_router)
 app.include_router(google_login_router)
 app.include_router(spotify_auth_router)
@@ -69,6 +71,9 @@ def health() -> dict:
 # the wrong type costs correct caching and compression for the largest
 # static assets the page loads.
 mimetypes.add_type("font/woff2", ".woff2")
+# Same reasoning as woff2: the ambience bed is served from the static
+# export, and a wrong Content-Type makes it silently unplayable.
+mimetypes.add_type("audio/mpeg", ".mp3")
 mimetypes.add_type("font/woff", ".woff")
 
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "web" / "out"

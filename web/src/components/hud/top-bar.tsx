@@ -1,10 +1,11 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useSyncExternalStore } from "react"
 
 import { sfx } from "@/lib/sfx"
 import { useClock } from "@/lib/use-clock"
 import { CONTEXT_WINDOW_TURNS, useJarvis, type TabKey } from "@/lib/store"
+import { centralDate, centralTime, centralZoneLabel } from "@/lib/time"
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "markets", label: "Markets" },
@@ -37,11 +38,10 @@ function Metric({ label, value, color }: { label: string; value: string; color?:
 }
 
 export function TopBar() {
-  // sfx owns the mute state (it persists it); this mirrors it for the
-  // button label. Read after mount because localStorage does not exist
-  // during the static export's server render.
-  const [muted, setMuted] = useState(false)
-  useEffect(() => setMuted(sfx.isMuted()), [])
+  // sfx owns the mute state (it persists it); the label subscribes to it.
+  // The server snapshot is "not muted" because the static export's
+  // server render has no localStorage to read.
+  const muted = useSyncExternalStore(sfx.subscribeMuted, sfx.isMuted, () => false)
 
   const { activeTab, setActiveTab, mode, toggleMode, signals } = useJarvis()
   // 0 until the first client tick - see use-clock.ts for why the clock
@@ -89,7 +89,7 @@ export function TopBar() {
             <button
               key={tab.key}
               type="button"
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => setActiveTab(activeTab === tab.key ? null : tab.key)}
               data-active={activeTab === tab.key}
               className="btn"
               style={{ padding: "4px 12px" }}
@@ -111,11 +111,11 @@ export function TopBar() {
             lineHeight: 1.1,
           }}
         >
-          {now ? now.toLocaleTimeString("en-GB", { hour12: false }) : "--:--:--"}
+          {now ? centralTime(now) : "--:--:--"}
         </span>
         <span className="t-time">
           {now
-            ? now.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+            ? `${centralDate(now)} · ${centralZoneLabel(now)}`
             : ""}
         </span>
       </div>
@@ -124,7 +124,7 @@ export function TopBar() {
       <div className="relative flex min-w-0 shrink-0 items-center" style={{ gap: "var(--sp-4)" }}>
         <button
           type="button"
-          onClick={() => setMuted(sfx.toggleMuted())}
+          onClick={() => sfx.toggleMuted()}
           aria-pressed={muted}
           className="btn shrink-0"
           style={{ padding: "4px 12px" }}

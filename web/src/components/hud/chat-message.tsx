@@ -119,8 +119,8 @@ export function ChatMessage({
           borderRadius: "var(--radius)",
           fontSize: "13px",
           lineHeight: 1.5,
-          // Display text can now carry line breaks (lists, figures) that
-          // the voice line no longer has to avoid.
+          // The screen channel can carry line breaks now that the voice
+          // line is written separately.
           whiteSpace: "pre-line",
           background: isUser ? "rgba(0, 64, 128, 0.25)" : "rgba(var(--accent-rgb), 0.06)",
           border: `1px solid rgba(var(--accent-rgb), ${isUser ? 0.12 : 0.25})`,

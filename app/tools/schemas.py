@@ -4,6 +4,11 @@ from app.tools.database_agent import database_agent
 from app.tools.github import github
 from app.tools.google_titan import google_titan
 from app.tools.kivaro_pipeline import kivaro_pipeline
+from app.tools.habits import habits
+from app.tools.italian import italian
+from app.tools.kiv_tasks import kiv_tasks
+from app.tools.speech_coach import speech_coach
+from app.tools.launch_tracker import launch_tracker
 from app.tools.market_analysis import market_analysis
 from app.tools.market_history import market_history
 from app.tools.news_feed import news_feed
@@ -309,6 +314,149 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "launch_tracker",
+            "description": (
+                "Kivaro AI's launch tracker, shared with K.I.V.'s Launch page and Slack agents. "
+                "operation=status returns days to the January 2027 launch, the current phase "
+                "(Discovery, Pilots, Commitments, Launch) with its goal and days left, logged "
+                "conversations, pilots, commitments, publicity actions and content against each "
+                "phase's target, conversations by target segment, and recent activity. "
+                "operation=log records one thing that actually happened. Only log what Andrew "
+                "says really happened, never a plan or an idea."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {"type": "string", "enum": ["status", "log"]},
+                    "kind": {
+                        "type": "string",
+                        "enum": ["conversation", "pilot", "commitment", "publicity", "content"],
+                        "description": "Required for log.",
+                    },
+                    "company": {"type": "string", "description": "Firm or outlet involved."},
+                    "contact": {"type": "string", "description": "Person involved, with title if known."},
+                    "segment": {
+                        "type": "string",
+                        "enum": [
+                            "hedge_fund",
+                            "research_analytics",
+                            "investor_relations",
+                            "quant",
+                            "venture_capital",
+                            "private_equity",
+                        ],
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "What was said or learned, next step, price discussed.",
+                    },
+                    "occurred_on": {"type": "string", "description": "YYYY-MM-DD. Omit for today."},
+                },
+                "required": ["operation"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "kiv_tasks",
+            "description": (
+                "K.I.V.'s Company Dashboard task board: the launch-phase projects and the Founder "
+                "Development projects (Italian, public speaking, style). operation=list shows open "
+                "tasks, soonest due first, with overdue flags (filter by due_within_days, project "
+                "name, or statuses). operation=update changes a task's status or due_date, found by "
+                "task_id or title. operation=create adds a task to a project."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {"type": "string", "enum": ["list", "update", "create"]},
+                    "due_within_days": {"type": "integer", "description": "list: only tasks due within N days (includes overdue)."},
+                    "project": {"type": "string", "description": "Project name or part of it, e.g. 'Discovery' or 'Italian'."},
+                    "statuses": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["todo", "in_progress", "blocked", "done"]},
+                        "description": "list: defaults to open tasks (todo, in_progress, blocked).",
+                    },
+                    "task_id": {"type": "string"},
+                    "title": {"type": "string", "description": "update: task title or part of it. create: the new task's title."},
+                    "status": {"type": "string", "enum": ["todo", "in_progress", "blocked", "done"]},
+                    "due_date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "description": {"type": "string"},
+                },
+                "required": ["operation"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "habits",
+            "description": (
+                "Andrew's daily founder-development habits: italian (20 min), articulation drills "
+                "(10 min), speaking (recorded 2-minute talk), grooming. operation=log records one "
+                "done today (or on done_on), adding minutes if logged twice; operation=status gives "
+                "what's done and still to do today, streaks, and the last 7 days."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {"type": "string", "enum": ["status", "log"]},
+                    "habit": {"type": "string", "enum": ["italian", "articulation", "speaking", "grooming"]},
+                    "minutes": {"type": "integer"},
+                    "notes": {"type": "string"},
+                    "done_on": {"type": "string", "description": "YYYY-MM-DD, omit for today."},
+                },
+                "required": ["operation"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "italian",
+            "description": (
+                "Andrew's Italian tutor: an A1 flashcard deck with spaced repetition. "
+                "operation=lesson introduces new cards (count, default 5); operation=review returns "
+                "cards due today (quiz them one at a time, never showing the answer first); "
+                "operation=grade records whether he got one right (italian, correct); "
+                "operation=progress shows cards learned, due and not started."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {"type": "string", "enum": ["lesson", "review", "grade", "progress"]},
+                    "count": {"type": "integer"},
+                    "italian": {"type": "string", "description": "grade: the card's exact Italian text."},
+                    "correct": {"type": "boolean", "description": "grade: whether Andrew got it right."},
+                },
+                "required": ["operation"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "speech_coach",
+            "description": (
+                "Measure a practice talk from its transcript: words per minute (when the length is "
+                "known), filler words, hedges, sentence length, vocabulary range, repeated sentence "
+                "openers, and the two things to fix next. Use it when Andrew does a speaking or "
+                "pitch practice rep; pass duration_seconds if he said how long it was."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "transcript": {"type": "string", "description": "What Andrew said, verbatim."},
+                    "duration_seconds": {"type": "number"},
+                },
+                "required": ["transcript"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "github",
             "description": (
                 "Open a real GitHub issue in Jarvis's own repo proposing a workflow, feature, "
@@ -459,6 +607,11 @@ DISPATCH = {
     "portfolio": portfolio,
     "company_financials": company_financials,
     "kivaro_pipeline": kivaro_pipeline,
+    "launch_tracker": launch_tracker,
+    "kiv_tasks": kiv_tasks,
+    "habits": habits,
+    "italian": italian,
+    "speech_coach": speech_coach,
     "github": github,
     "news_feed": news_feed,
     "spotify": spotify,

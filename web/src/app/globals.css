@@ -66,9 +66,24 @@
   --ring: var(--accent);
 }
 
+/* Serious is meant to read as a different state from across the room,
+   not a recolour: the whole palette runs hot, the chrome loses its
+   rounding, and the glass effects below get heavier. The accent moved
+   off amber so it no longer matches --warning, and warning/error shift
+   too so neither is lost against a red-orange accent. */
 :root.serious {
-  --accent: #ffaa00;
-  --accent-rgb: 255, 170, 0;
+  --accent: #ff3d00;
+  --accent-rgb: 255, 61, 0;
+
+  --bg-base: #070202;
+  --bg-grad-a: #1c0604;
+  --bg-grad-b: #110403;
+  --text-primary: #ffece4;
+  --text-secondary: #a07f74;
+  --warning: #ffd400;
+  --error: #ff0a54;
+
+  --radius: 0px;
 }
 
 @theme inline {
@@ -349,12 +364,28 @@ body {
   );
 }
 
+:root.serious .scanlines {
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px,
+    transparent 2px,
+    rgba(var(--accent-rgb), 0.07) 2px,
+    rgba(var(--accent-rgb), 0.07) 3px
+  );
+}
+
 .vignette {
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 999;
   background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.6) 100%);
+}
+
+/* Static on purpose: the three infinite animations are already spent. */
+:root.serious .vignette {
+  background:
+    radial-gradient(ellipse at center, transparent 35%, rgba(var(--accent-rgb), 0.14) 80%, rgba(0, 0, 0, 0.85) 100%);
 }
 
 /* ============================================================

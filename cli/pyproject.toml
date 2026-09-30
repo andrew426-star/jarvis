@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis-cli"
+version = "0.1.0"
+description = "Ask Jarvis from any terminal, including VS Code's."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+jarvis = "jarvis_cli:main"
+
+[tool.setuptools]
+py-modules = ["jarvis_cli"]
