@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from functools import lru_cache
 from zoneinfo import ZoneInfo
 
+import httpx
 from google import genai
 from google.genai import errors, types
 
@@ -33,6 +34,9 @@ OVERLOADED_COOLDOWN = 30.0
 # long enough not to waste calls on it and short enough to notice if it
 # comes back.
 UNAVAILABLE_COOLDOWN = 24 * 3600.0
+# A call that has not answered in this long is abandoned for the next
+# model rather than left to hang the turn.
+CALL_TIMEOUT_MS = 40_000
 
 
 class GeminiNotConfigured(RuntimeError):
@@ -54,7 +58,7 @@ def get_gemini_client() -> genai.Client:
     key = get_settings().gemini_api_key
     if not key:
         raise GeminiNotConfigured("GEMINI_API_KEY is not set.")
-    return genai.Client(api_key=key)
+    return genai.Client(api_key=key, http_options=types.HttpOptions(timeout=CALL_TIMEOUT_MS))
 
 
 def ladder() -> list[str]:
@@ -125,6 +129,10 @@ def generate(
             with _lock:
                 _cooling[model] = time.time() + rest
             logger.warning("Gemini %s unavailable (%s); resting %.0fs", model, exc.code, rest)
+        except httpx.TimeoutException:
+            with _lock:
+                _cooling[model] = time.time() + OVERLOADED_COOLDOWN
+            logger.warning("Gemini %s timed out; resting %.0fs", model, OVERLOADED_COOLDOWN)
 
     with _lock:
         retry_at = min((_cooling.get(m, 0) for m in ladder()), default=time.time() + MINUTE_COOLDOWN)

@@ -94,6 +94,8 @@ export interface InvokeResult {
   session_id: string
   context_turns: number
   context_window: number
+  /** Where the time went: memory, each model call, each tool, total. */
+  timings?: { step: string; model?: string; name?: string; ms: number }[]
 }
 
 export interface InvokeOptions {

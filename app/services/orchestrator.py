@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import time
 import uuid
@@ -37,6 +38,13 @@ TOOL_RESULT_CHAR_CAP = 4000
 # Finnhub/Alpaca/Stripe/NewsAPI/Tavily/GitHub/Google/Spotify), so threads
 # are the right primitive; no async rewrite of the route/handlers needed.
 _TOOL_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="jarvis-tool")
+
+# Saving a finished turn (Supabase log, Pinecone memory) happens after the
+# reply is returned, on its own small pool, so the reply never waits on it
+# and a slow write never starves the tool pool.
+_PERSIST_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="jarvis-persist")
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "You are J.A.R.V.I.S. (Just A Rather Very Intelligent System) — Andrew Thomas's personal AI "
@@ -182,7 +190,8 @@ _CAMERA_DECLARATION = _declaration(CAMERA_LOOK_SCHEMA)
 _CONSOLE_DECLARATIONS = [_declaration(CONSOLE_SCHEMA), _declaration(WORKSHOP_SCHEMA)]
 
 
-def _execute_tool_call(call: types.FunctionCall, handlers: dict = DISPATCH) -> tuple[str, dict, dict]:
+def _execute_tool_call(call: types.FunctionCall, handlers: dict = DISPATCH) -> tuple[str, dict, dict, int]:
+    started = time.monotonic()
     name = call.name or ""
     args = dict(call.args or {})
     handler = handlers.get(name)
@@ -193,7 +202,33 @@ def _execute_tool_call(call: types.FunctionCall, handlers: dict = DISPATCH) -> t
             result = handler(args)
         except Exception as exc:  # noqa: BLE001 — never crash the loop on a tool error
             result = {"ok": False, "error": str(exc)}
-    return name, args, result
+    return name, args, result, int((time.monotonic() - started) * 1000)
+
+
+def _persist(**turn) -> None:
+    """The durable record of a turn, written off the request path."""
+    try:
+        write_interaction(
+            interaction_id=turn["interaction_id"],
+            session_id=turn["session_id"],
+            user_message=turn["message"],
+            assistant_response=turn["final_text"],
+            tools_used=turn["tools_used"],
+            tool_call_trace=turn["tool_call_trace"],
+            model=turn["model"],
+            latency_ms=turn["latency_ms"],
+        )
+    except Exception:  # noqa: BLE001 — the reply has gone; losing the log must not raise into nothing
+        logger.warning("write_interaction failed for %s", turn["interaction_id"], exc_info=True)
+    record_interaction(
+        turn["interaction_id"],
+        turn["session_id"],
+        turn["message"],
+        turn["final_text"],
+        turn["tools_used"],
+        turn["created_at"],
+        model=turn["model"],
+    )
 
 
 def _capped(result: dict) -> dict:
@@ -307,13 +342,20 @@ def run_invoke(
         handlers = {**handlers, "camera_look": camera_look}
         system.append(CAMERA_ON_NOTE)
 
-    recall_block = get_relevant_context(message)
-    if recall_block:
-        system.append(recall_block)
+    # Where the time goes, per step, returned to the console's log.
+    timings: list[dict] = []
 
+    # Long-term recall (Pinecone) and recent history (Redis, else Supabase)
+    # are independent network round trips; run them side by side.
+    step = time.monotonic()
+    recall_future = _TOOL_EXECUTOR.submit(get_relevant_context, message)
     recent_turns = get_recent_turns(session_id)
     if not recent_turns:  # None (Redis failure) or [] (empty/expired) — fall back to Supabase
         recent_turns = fetch_recent_turns(session_id)
+    recall_block = recall_future.result()
+    if recall_block:
+        system.append(recall_block)
+    timings.append({"step": "memory", "ms": int((time.monotonic() - step) * 1000)})
 
     tools_used: list[str] = []
     tool_call_trace: list[dict] = []
@@ -351,6 +393,7 @@ def run_invoke(
     turn_model: str | None = None
     used_model = ""
     for _ in range(MAX_ITERATIONS):
+        step = time.monotonic()
         try:
             if turn_model and executed:
                 # Tool history in `contents` is bound to turn_model, so only
@@ -370,6 +413,7 @@ def run_invoke(
             final_text = "My reasoning model isn't configured, sir: GEMINI_API_KEY needs to be set on the server."
             break
         turn_model = used_model
+        timings.append({"step": "model", "model": used_model, "ms": int((time.monotonic() - step) * 1000)})
 
         calls = response.function_calls or []
         if not calls:
@@ -390,12 +434,13 @@ def run_invoke(
         parts: list[types.Part] = []
         for call, future in zip(calls, futures):
             try:
-                name, args, result = future.result()
+                name, args, result, ms = future.result()
             except Exception as exc:  # noqa: BLE001 — defense-in-depth; _execute_tool_call already catches handler errors
-                name, args, result = call.name or "", {}, {"ok": False, "error": str(exc)}
+                name, args, result, ms = call.name or "", {}, {"ok": False, "error": str(exc)}, 0
 
             tools_used.append(name)
-            tool_call_trace.append({"name": name, "args": args, "result": result})
+            tool_call_trace.append({"name": name, "args": args, "result": result, "ms": ms})
+            timings.append({"step": "tool", "name": name, "ms": ms})
             executed.append((name, args, result))
             parts.append(
                 types.Part(function_response=types.FunctionResponse(id=call.id, name=name, response=_capped(result)))
@@ -415,19 +460,26 @@ def run_invoke(
     interaction_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat()
 
-    write_interaction(
+    # Redis first and in-line: the next message reads its history from
+    # there, so it must land before this reply does. The rest can follow.
+    append_turn(session_id, interaction_id, message, final_text, created_at)
+    _PERSIST_EXECUTOR.submit(
+        _persist,
         interaction_id=interaction_id,
         session_id=session_id,
-        user_message=message,
-        assistant_response=final_text,
+        message=message,
+        final_text=final_text,
         tools_used=tools_used,
         tool_call_trace=tool_call_trace,
         model=used_model or "none",
         latency_ms=latency_ms,
+        created_at=created_at,
     )
-    append_turn(session_id, interaction_id, message, final_text, created_at)
-    record_interaction(
-        interaction_id, session_id, message, final_text, tools_used, created_at, model=used_model
+    timings.append({"step": "total", "ms": latency_ms})
+    logger.info(
+        "invoke %sms: %s",
+        latency_ms,
+        ", ".join(f"{t.get('model') or t.get('name') or t['step']} {t['ms']}ms" for t in timings[:-1]),
     )
 
     tool_results = [{"name": t["name"], "result": t["result"]} for t in tool_call_trace]
@@ -450,4 +502,5 @@ def run_invoke(
         "session_id": session_id,
         "context_turns": context_turns,
         "context_window": window,
+        "timings": timings,
     }

@@ -465,6 +465,16 @@ function Shell({
         consoleState: consoleState(),
       })
       setContext(result.context_turns, result.context_window)
+      // One line per turn in the system log: which step cost what, so a
+      // slow reply can be pinned on the model, a tool, or memory.
+      if (result.timings?.length) {
+        const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`
+        const steps = result.timings
+          .filter((t) => t.step !== "total")
+          .map((t) => `${(t.model ?? t.name ?? t.step).replace("gemini-", "")} ${secs(t.ms)}`)
+        const total = result.timings.find((t) => t.step === "total")
+        pushLog("NONE", `${steps.join(" · ")}${total ? ` = ${secs(total.ms)}` : ""}`)
+      }
       emitCore({ kind: "reply" })
       result.tool_results.forEach((entry) => emitCore({ kind: "tool", name: entry.name }))
       const sight = result.tool_results.find((entry) => entry.name === "camera_look")

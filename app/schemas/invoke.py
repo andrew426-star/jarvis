@@ -39,6 +39,9 @@ class InvokeResponse(BaseModel):
     # Exchanges held in the session's short-term memory, out of the window.
     context_turns: int
     context_window: int
+    # Per-step durations (memory, each model call, each tool, total), shown
+    # in the console's system log.
+    timings: list[dict] = []
 
 
 class SessionContext(BaseModel):
