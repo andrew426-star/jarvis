@@ -134,7 +134,10 @@ export function TopBar() {
 
         <button
           type="button"
-          onClick={toggleMode}
+          onClick={(event) => {
+            const box = event.currentTarget.getBoundingClientRect()
+            toggleMode({ x: box.left + box.width / 2, y: box.top + box.height / 2 })
+          }}
           aria-pressed={serious}
           className="btn shrink-0"
           style={{ padding: "4px 12px" }}

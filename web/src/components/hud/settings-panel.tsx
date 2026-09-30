@@ -192,7 +192,13 @@ function Appearance() {
         <span className="t-label truncate-1" style={{ color: "var(--text-secondary)" }}>
           MODE
         </span>
-        <button type="button" onClick={toggleMode} className="btn" style={{ padding: "4px 12px" }}>
+        <button
+          type="button"
+          onClick={(event) => {
+            const box = event.currentTarget.getBoundingClientRect()
+            toggleMode({ x: box.left + box.width / 2, y: box.top + box.height / 2 })
+          }}
+          className="btn" style={{ padding: "4px 12px" }}>
           {mode === "serious" ? "Serious" : "Normal"}
         </button>
       </div>
