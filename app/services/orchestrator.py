@@ -11,6 +11,7 @@ from app.core.local_time import now_for_prompt
 from app.memory.interaction_log import fetch_recent_turns, write_interaction
 from app.memory.semantic_recall import get_relevant_context, record_interaction
 from app.memory.session_buffer import append_turn, get_recent_turns
+from app.tools.camera import CAMERA_LOOK_SCHEMA, CAMERA_ON_NOTE, make_camera_look
 from app.tools.schemas import DISPATCH, TOOL_SCHEMAS
 
 MAX_ITERATIONS = 8
@@ -159,14 +160,14 @@ def split_reply(text: str) -> tuple[str, str]:
     return display or spoken, spoken or display
 
 
-def _execute_tool_call(tool_call) -> tuple[str, dict, dict]:
+def _execute_tool_call(tool_call, handlers: dict = DISPATCH) -> tuple[str, dict, dict]:
     name = tool_call.function.name
     try:
         args = json.loads(tool_call.function.arguments or "{}")
     except json.JSONDecodeError:
         args = {}
 
-    handler = DISPATCH.get(name)
+    handler = handlers.get(name)
     if handler is None:
         result = {"ok": False, "error": f"Unknown tool: {name}"}
     else:
@@ -226,7 +227,17 @@ TERMINAL_MODE = (
 )
 
 
-def run_invoke(message: str, session_id: str | None, channel: str = "console") -> dict:
+def run_invoke(
+    message: str,
+    session_id: str | None,
+    channel: str = "console",
+    image: str | None = None,
+    image_type: str = "image/jpeg",
+    look: bool = False,
+) -> dict:
+    """`image` is a base64 camera frame the console attaches while its
+    camera is on; `look` means Andrew pressed Look, so the frame is
+    described up front instead of waiting for Groq to ask for it."""
     session_id = session_id or str(uuid.uuid4())
     settings = get_settings()
     client = get_groq_client()
@@ -239,6 +250,16 @@ def run_invoke(message: str, session_id: str | None, channel: str = "console") -
     ]
     if channel == "terminal":
         messages.append({"role": "system", "content": TERMINAL_MODE})
+
+    tools = TOOL_SCHEMAS
+    handlers = DISPATCH
+    camera_look = None
+    # The terminal has no camera, so a frame there could only be a bug.
+    if image and channel == "console":
+        camera_look = make_camera_look(image, image_type)
+        tools = [*TOOL_SCHEMAS, CAMERA_LOOK_SCHEMA]
+        handlers = {**DISPATCH, "camera_look": camera_look}
+        messages.append({"role": "system", "content": CAMERA_ON_NOTE})
 
     recall_block = get_relevant_context(message)
     if recall_block:
@@ -256,11 +277,38 @@ def run_invoke(message: str, session_id: str | None, channel: str = "console") -
     tool_call_trace: list[dict] = []
     final_text = ""
 
+    # Look pressed: describe the frame before Groq's first call, so the
+    # answer is grounded in it even if Groq would not have thought to ask.
+    # Recorded as an ordinary camera_look round so the history and the
+    # console's tool results cannot tell the two paths apart.
+    if look and camera_look is not None:
+        args = {"question": message}
+        result = camera_look(args)
+        tools_used.append("camera_look")
+        tool_call_trace.append({"name": "camera_look", "args": args, "result": result})
+        call_id = f"look_{uuid.uuid4().hex[:12]}"
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": "camera_look", "arguments": json.dumps(args)},
+                    }
+                ],
+            }
+        )
+        messages.append(
+            {"tool_call_id": call_id, "role": "tool", "name": "camera_look", "content": json.dumps(result)}
+        )
+
     for _ in range(MAX_ITERATIONS):
         response = client.chat.completions.create(
             model=settings.groq_model,
             messages=_build_request_messages(messages, prefix_len),
-            tools=TOOL_SCHEMAS,
+            tools=tools,
             tool_choice="auto",
             temperature=0.3,
             # Code needs room; a spoken reply shouldn't run long.
@@ -276,7 +324,7 @@ def run_invoke(message: str, session_id: str | None, channel: str = "console") -
         # Submitted up front so every call in this round starts running
         # concurrently; results are applied in original order (not
         # completion order) so tool_call_trace/tools_used stay stable.
-        futures = [_TOOL_EXECUTOR.submit(_execute_tool_call, tc) for tc in choice.tool_calls]
+        futures = [_TOOL_EXECUTOR.submit(_execute_tool_call, tc, handlers) for tc in choice.tool_calls]
         for tool_call, future in zip(choice.tool_calls, futures):
             try:
                 name, args, result = future.result()

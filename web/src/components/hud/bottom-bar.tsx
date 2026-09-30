@@ -1,9 +1,17 @@
 "use client"
 
 import { useRef, useState, type KeyboardEvent } from "react"
-import { BriefcaseIcon, MailIcon, SettingsIcon, TrendingUpIcon } from "lucide-react"
+import {
+  BriefcaseIcon,
+  CameraIcon,
+  CameraOffIcon,
+  MailIcon,
+  SettingsIcon,
+  TrendingUpIcon,
+} from "lucide-react"
 
 import { MicButton, type MicButtonHandle } from "@/components/mic-button"
+import { useSpatial } from "@/lib/spatial-store"
 import { useJarvis } from "@/lib/store"
 
 // The spec's Search / Screenshot / Open App buttons had nothing behind
@@ -105,9 +113,18 @@ interface BottomBarProps {
   onSend: (message: string, viaVoice: boolean) => void
   onAuthError: () => void
   micRef: React.RefObject<MicButtonHandle | null>
+  onToggleCamera: () => void
 }
 
-export function BottomBar({ token, disabled, onSend, onAuthError, micRef }: BottomBarProps) {
+export function BottomBar({
+  token,
+  disabled,
+  onSend,
+  onAuthError,
+  micRef,
+  onToggleCamera,
+}: BottomBarProps) {
+  const cameraOn = useSpatial((state) => state.cameraOn)
   const [value, setValue] = useState("")
   const [focused, setFocused] = useState(false)
   const setSettingsOpen = useJarvis((state) => state.setSettingsOpen)
@@ -196,6 +213,11 @@ export function BottomBar({ token, disabled, onSend, onAuthError, micRef }: Bott
             onClick={() => onSend(action.prompt, false)}
           />
         ))}
+        <ActionButton
+          label={cameraOn ? "Turn camera off" : "Turn camera on"}
+          Icon={cameraOn ? CameraOffIcon : CameraIcon}
+          onClick={onToggleCamera}
+        />
         <ActionButton
           label="Settings"
           Icon={SettingsIcon}

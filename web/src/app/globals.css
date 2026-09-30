@@ -389,6 +389,82 @@ body {
 }
 
 /* ============================================================
+   SPATIAL - camera, hand cursors, holograms
+   ============================================================ */
+
+/* Camera privacy indicator. Solid rather than pulsing: the three
+   budgeted infinite animations are spent, and a steady red dot is the
+   convention people already read as "recording". */
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff2d2d;
+  box-shadow: 0 0 6px #ff2d2d;
+}
+
+.holo-card {
+  position: relative;
+  overflow: hidden;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0px,
+      transparent 3px,
+      rgba(var(--accent-rgb), 0.04) 3px,
+      rgba(var(--accent-rgb), 0.04) 4px
+    ),
+    linear-gradient(160deg, rgba(var(--accent-rgb), 0.12), rgba(5, 7, 14, 0.78) 45%);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  border-radius: var(--radius);
+  box-shadow:
+    0 0 14px rgba(var(--accent-rgb), 0.22),
+    inset 0 0 24px rgba(var(--accent-rgb), 0.06);
+  backdrop-filter: blur(6px);
+  color: var(--text-primary);
+  user-select: none;
+}
+
+/* Held or under a hand cursor: brighter edge and a deeper glow, which is
+   also what makes the lift toward the viewer read as depth. */
+.holo-card[data-lit="true"] {
+  border-color: rgba(var(--accent-rgb), 0.9);
+  box-shadow:
+    0 0 28px rgba(var(--accent-rgb), 0.45),
+    0 18px 40px rgba(0, 0, 0, 0.55),
+    inset 0 0 30px rgba(var(--accent-rgb), 0.1);
+}
+
+.holo-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: 4px var(--sp-2);
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.25);
+  color: var(--accent);
+}
+
+.holo-card-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.25);
+  opacity: 0.9;
+}
+
+.holo-card-body {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+/* ============================================================
    SCROLLBARS - 4px, accent at 30%
    ============================================================ */
 

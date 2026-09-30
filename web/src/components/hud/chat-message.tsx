@@ -1,12 +1,13 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Loader2Icon, SquareIcon, Volume2Icon } from "lucide-react"
+import { Loader2Icon, PinIcon, SquareIcon, Volume2Icon } from "lucide-react"
 
 import { ToolBadge } from "@/components/tool-badge"
 import { startAudioAnalysis, stopAudioAnalysis } from "@/lib/audio-amplitude"
 import { JarvisAuthError, speak } from "@/lib/jarvis-client"
 import { clearNarration, registerNarration, stopNarration } from "@/lib/narration"
+import { useSpatial } from "@/lib/spatial-store"
 import { useTypewriter } from "@/lib/use-typewriter"
 
 export interface ChatMessageData {
@@ -156,6 +157,22 @@ export function ChatMessage({
               ) : (
                 <Volume2Icon size={11} />
               )}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                useSpatial.getState().addHologram({
+                  kind: "note",
+                  title: `JARVIS · ${message.time}`,
+                  body: message.content,
+                })
+              }
+              aria-label="Pin reply as a hologram"
+              title="Pin to space"
+              className="cursor-pointer"
+              style={{ background: "transparent", border: 0, color: "var(--text-secondary)" }}
+            >
+              <PinIcon size={11} />
             </button>
           </>
         )}

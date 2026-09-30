@@ -94,15 +94,28 @@ export interface InvokeResult {
   session_id: string
 }
 
+export interface InvokeOptions {
+  /** Base64 JPEG camera frame, sent while the camera is on. */
+  image?: string
+  /** Describe the frame up front (the Look button). */
+  look?: boolean
+}
+
 export async function invoke(
   message: string,
   sessionId: string,
-  token: string
+  token: string,
+  options: InvokeOptions = {}
 ): Promise<InvokeResult> {
   const res = await jarvisFetch("/invoke", token, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({
+      message,
+      session_id: sessionId,
+      image: options.image,
+      look: options.look ?? false,
+    }),
   })
   return res.json()
 }

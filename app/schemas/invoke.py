@@ -10,6 +10,15 @@ class InvokeRequest(BaseModel):
     # may be spoken aloud; "terminal" is the jarvis CLI (cli/jarvis_cli.py),
     # used from VS Code and shells during programming work.
     channel: Literal["console", "terminal"] = "console"
+    # A webcam frame, base64 without the data: prefix, attached by the
+    # console while its camera is on. Used for this turn only and never
+    # stored. ~8MB of base64 is far above the console's downscaled JPEGs
+    # and well under Claude's per-image limit.
+    image: str | None = Field(default=None, max_length=8_000_000)
+    image_type: Literal["image/jpeg", "image/png", "image/webp"] = "image/jpeg"
+    # Look button: describe the frame up front rather than leaving it to
+    # Groq to decide whether to call camera_look.
+    look: bool = False
 
 
 class ToolResult(BaseModel):

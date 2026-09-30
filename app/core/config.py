@@ -128,6 +128,15 @@ class Settings(BaseSettings):
     # credit wallet will serve. Verified returning real audio.
     fish_audio_model: str = "s2.1-pro-free"
 
+    # Claude is Jarvis's eyes: when the console's camera is on and Groq
+    # decides a question depends on what is in front of it, the frame is
+    # described by Claude (app/integrations/claude_vision.py) and Groq
+    # answers from that description. Optional like Fish above - without a
+    # key the camera_look tool reports "not configured" and nothing else
+    # changes.
+    anthropic_api_key: str | None = None
+    vision_model: str = "claude-opus-5"
+
     # JARVIS_ACCESS_TOKEN — the ORIGINAL shared-secret gate. Google
     # sign-in (above) is now the console's way in; this stays as the
     # non-browser path, so curl/scripts/smoke tests keep working without

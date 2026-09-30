@@ -16,6 +16,9 @@ import { LeftPanel } from "@/components/hud/left-panel"
 import { RightPanel } from "@/components/hud/right-panel"
 import { SettingsPanel } from "@/components/hud/settings-panel"
 import { StatusRing } from "@/components/hud/status-ring"
+import { CameraPreview } from "@/components/spatial/camera-preview"
+import { HandCursors } from "@/components/spatial/hand-cursors"
+import { HologramLayer } from "@/components/spatial/hologram-layer"
 import { TopBar } from "@/components/hud/top-bar"
 import { LoginGate } from "@/components/login-gate"
 import type { MicButtonHandle } from "@/components/mic-button"
@@ -35,8 +38,11 @@ import {
   type ToolResult,
 } from "@/lib/jarvis-client"
 import { audioAmplitude } from "@/lib/audio-amplitude"
+import { captureFrame, startCamera, stopCamera } from "@/lib/camera"
+import { startHands, stopHands } from "@/lib/hand-tracking"
 import { stopNarration } from "@/lib/narration"
 import { sfx, unlockAudio } from "@/lib/sfx"
+import { useSpatial } from "@/lib/spatial-store"
 import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store"
 import { useBoot } from "@/lib/use-boot"
 import {
@@ -275,6 +281,16 @@ function Shell({
     }
   }, [token, setConnections, pushLog, notify])
 
+  // Signing out unmounts the shell but not the camera stream; without
+  // this the light would stay on behind the login screen.
+  useEffect(() => {
+    return () => {
+      stopHands()
+      stopCamera()
+      useSpatial.getState().setCameraOn(false)
+    }
+  }, [])
+
   // Assistant turns held in the backend's rolling context window.
   useEffect(() => {
     setTurns(messages.filter((message) => message.role === "assistant").length)
@@ -303,7 +319,53 @@ function Shell({
     if (firstPanel) useJarvis.getState().setActiveTab(firstPanel)
   }
 
-  async function handleSend(text: string, viaVoice: boolean) {
+  async function toggleCamera() {
+    const spatial = useSpatial.getState()
+    if (spatial.cameraOn) {
+      stopHands()
+      stopCamera()
+      spatial.setCameraOn(false)
+      pushLog("NONE", "Camera off")
+      return
+    }
+    try {
+      await startCamera()
+      spatial.setCameraOn(true)
+      pushLog("OK", "Camera on")
+    } catch (err) {
+      const denied = err instanceof DOMException && err.name === "NotAllowedError"
+      notify(
+        "warning",
+        denied ? "Camera blocked" : "Camera unavailable",
+        denied
+          ? "Allow camera access for this site in the browser's address bar, then try again."
+          : "No camera could be opened. Check that one is connected and not in use."
+      )
+      pushLog("WARN", denied ? "Camera permission denied" : "Camera unavailable")
+    }
+  }
+
+  async function toggleHands() {
+    if (useSpatial.getState().handsStatus === "tracking") {
+      stopHands()
+      pushLog("NONE", "Hand tracking off")
+      return
+    }
+    try {
+      await startHands()
+      pushLog("OK", "Hand tracking on")
+      notify("info", "Hands online", "Pinch to grab or tap. Pinch a hologram with both hands to resize it.")
+    } catch {
+      notify("warning", "Hand tracking failed", "The hand model could not load. Check the connection and try again.")
+      pushLog("ERR", "Hand tracking failed to load")
+    }
+  }
+
+  async function handleSend(text: string, viaVoice: boolean, look = false) {
+    // While the camera is on every message carries a frame, and Jarvis
+    // decides whether the question needs it; the frame only goes on to
+    // the vision model if he does, or if Look was pressed.
+    const frame = useSpatial.getState().cameraOn ? captureFrame() : null
     setMessages((prev) => [
       ...prev,
       { id: crypto.randomUUID(), role: "user", content: text, time: clockTime() },
@@ -314,7 +376,20 @@ function Shell({
     pushLog("NONE", viaVoice ? "Voice command received" : "Command received")
 
     try {
-      const result = await invoke(text, sessionId, token)
+      const result = await invoke(text, sessionId, token, { image: frame?.base64, look })
+      const sight = result.tool_results.find((entry) => entry.name === "camera_look")
+      const seen = sight?.result as { ok?: boolean; description?: string } | undefined
+      if (frame && seen?.ok && seen.description) {
+        // What he saw, pinned beside the frame he saw it in, so the
+        // answer can be checked against the picture.
+        useSpatial.getState().addHologram({
+          kind: "vision",
+          title: `VISUAL · ${clockTime()}`,
+          body: seen.description,
+          image: frame.thumbnail,
+        })
+        pushLog("OK", "Frame analysed")
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -491,6 +566,7 @@ function Shell({
           onSend={handleSend}
           onAuthError={onAuthError}
           micRef={micRef}
+          onToggleCamera={toggleCamera}
         />
       </motion.div>
 
@@ -510,6 +586,15 @@ function Shell({
           <PortfolioPanel token={token} onAuthError={onAuthError} livePortfolio={livePortfolio} />
         </div>
       </DataWindow>
+
+      <HologramLayer />
+      <CameraPreview
+        lookDisabled={pending}
+        onLook={() => handleSend("What do you see?", false, true)}
+        onToggleHands={toggleHands}
+        onClose={toggleCamera}
+      />
+      <HandCursors />
 
       <SettingsPanel sessionId={sessionId} onSignOut={onSignOut} />
       <GlobalEffects />
