@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { motion } from "framer-motion"
 
-import { ArcReactor } from "@/components/hud/arc-reactor"
 import { AudioVisualizer } from "@/components/hud/audio-visualizer"
 import { BottomBar } from "@/components/hud/bottom-bar"
+import { CoreCipher } from "@/components/hud/core-cipher"
 import { DataWindow } from "@/components/hud/data-window"
 import { ChatInterface } from "@/components/hud/chat-interface"
 import type { ChatMessageData } from "@/components/hud/chat-message"
@@ -19,6 +19,7 @@ import { StatusRing } from "@/components/hud/status-ring"
 import { CameraPreview } from "@/components/spatial/camera-preview"
 import { HandCursors } from "@/components/spatial/hand-cursors"
 import { HologramLayer } from "@/components/spatial/hologram-layer"
+import { Workshop } from "@/components/workshop/workshop"
 import { TopBar } from "@/components/hud/top-bar"
 import { LoginGate } from "@/components/login-gate"
 import type { MicButtonHandle } from "@/components/mic-button"
@@ -40,6 +41,7 @@ import {
 } from "@/lib/jarvis-client"
 import { audioAmplitude } from "@/lib/audio-amplitude"
 import { captureFrame, startCamera, stopCamera } from "@/lib/camera"
+import { emitCore } from "@/lib/core-events"
 import { startHands, stopHands } from "@/lib/hand-tracking"
 import { stopNarration } from "@/lib/narration"
 import { sfx, unlockAudio } from "@/lib/sfx"
@@ -216,7 +218,10 @@ function Shell({
     // sfx to make a sound.
     const click = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null
-      if (target?.closest("button, [role=\"button\"], a[href]")) sfx.click()
+      if (target?.closest("button, [role=\"button\"], a[href]")) {
+        sfx.click()
+        emitCore({ kind: "click", x: event.clientX, y: event.clientY })
+      }
     }
     window.addEventListener("pointerdown", click)
 
@@ -393,11 +398,14 @@ function Shell({
     setPending(true)
     setError(null)
     sfx.send()
+    emitCore({ kind: "send" })
     pushLog("NONE", viaVoice ? "Voice command received" : "Command received")
 
     try {
       const result = await invoke(text, sessionId, token, { image: frame?.base64, look })
       setContext(result.context_turns, result.context_window)
+      emitCore({ kind: "reply" })
+      result.tool_results.forEach((entry) => emitCore({ kind: "tool", name: entry.name }))
       const sight = result.tool_results.find((entry) => entry.name === "camera_look")
       const seen = sight?.result as { ok?: boolean; description?: string } | undefined
       if (frame && seen?.ok && seen.description) {
@@ -451,6 +459,7 @@ function Shell({
           : "Something went wrong."
       setError(message)
       sfx.alert()
+      emitCore({ kind: "error" })
       pushLog("ERR", message)
       notify("warning", "Request failed", message)
     } finally {
@@ -528,7 +537,7 @@ function Shell({
           <div className="relative aspect-square h-full max-h-full">
             <StatusRing visible={boot.statusRing} />
             <div className="absolute inset-[13%]">
-              <ArcReactor
+              <CoreCipher
                 status={agentStatus}
                 onToggle={handleReactorToggle}
                 ringsRevealed={boot.rings}
@@ -609,6 +618,7 @@ function Shell({
       </DataWindow>
 
       <HologramLayer />
+      <Workshop />
       <CameraPreview
         lookDisabled={pending}
         onLook={() => handleSend("What do you see?", false, true)}

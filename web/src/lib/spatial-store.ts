@@ -32,7 +32,10 @@ interface SpatialState {
   grabbed: string[]
   /** Id under a hand cursor, for the hover glow. */
   hovered: string | null
+  /** The full-screen 3D workshop is open. */
+  workshopOpen: boolean
 
+  setWorkshopOpen: (open: boolean) => void
   setCameraOn: (on: boolean) => void
   setHandsStatus: (status: HandsStatus) => void
   addHologram: (input: Pick<Hologram, "kind" | "title" | "body" | "image">) => void
@@ -80,7 +83,9 @@ export const useSpatial = create<SpatialState>((set, get) => ({
   holograms: load(),
   grabbed: [],
   hovered: null,
+  workshopOpen: false,
 
+  setWorkshopOpen: (workshopOpen) => set({ workshopOpen }),
   setCameraOn: (cameraOn) => set({ cameraOn }),
   setHandsStatus: (handsStatus) => set({ handsStatus }),
 

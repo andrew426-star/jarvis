@@ -52,6 +52,21 @@ export interface HandPointer {
 
 type Listener = (pointers: HandPointer[]) => void
 
+/** A 3D space (the workshop) that takes pinches the DOM does not claim.
+ *  Coordinates are viewport pixels; `id` is stable per hand. */
+export interface SpatialHandler {
+  down: (id: string, x: number, y: number) => boolean
+  move: (id: string, x: number, y: number) => void
+  up: (id: string, x: number, y: number, tap: boolean) => void
+  hover: (x: number | null, y: number | null) => void
+}
+
+let spatialHandler: SpatialHandler | null = null
+
+export function setSpatialHandler(handler: SpatialHandler | null) {
+  spatialHandler = handler
+}
+
 // --- smoothing -----------------------------------------------------------
 // One Euro filter: heavy smoothing when the hand is nearly still (kills
 // jitter while aiming), light smoothing when it moves fast (kills lag
@@ -97,6 +112,9 @@ interface HandState {
   pinching: boolean
   /** Hologram this hand is holding, if any. */
   holding: string | null
+  /** This pinch belongs to the spatial handler (the workshop). */
+  spatial: boolean
+  id: string
   lastX: number
   lastY: number
   /** Where and when the current pinch started, for air-tap detection. */
@@ -158,6 +176,10 @@ function pinchStart(hand: HandState, x: number, y: number, now: number) {
   // A control inside a hologram (its close button) is a tap target, not
   // a handle, so it wins over grabbing the hologram around it.
   hand.downTarget = control
+  if (!control && !holoId && spatialHandler?.down(hand.id, x, y)) {
+    hand.spatial = true
+    return
+  }
   if (holoId && !control) {
     hand.holding = holoId
     const spatial = useSpatial.getState()
@@ -181,6 +203,12 @@ function pinchStart(hand: HandState, x: number, y: number, now: number) {
 
 function pinchEnd(hand: HandState, x: number, y: number, now: number) {
   const spatial = useSpatial.getState()
+  if (hand.spatial) {
+    hand.spatial = false
+    const travel = Math.hypot(x - hand.downX, y - hand.downY)
+    spatialHandler?.up(hand.id, x, y, now - hand.downAt < TAP_MAX_MS && travel < TAP_MAX_TRAVEL)
+    return
+  }
   if (hand.holding) {
     const stillHeld = [...hands.values()].some((h) => h !== hand && h.holding === hand.holding)
     if (!stillHeld) spatial.release(hand.holding)
@@ -217,6 +245,8 @@ function process(result: { landmarks: NormalizedLandmark[][]; handedness: { cate
         fy: new OneEuro(),
         pinching: false,
         holding: null,
+        spatial: false,
+        id,
         lastX: 0,
         lastY: 0,
         downX: 0,
@@ -246,6 +276,7 @@ function process(result: { landmarks: NormalizedLandmark[][]; handedness: { cate
 
     if (hand.pinching && !wasPinching) pinchStart(hand, x, y, now)
     else if (!hand.pinching && wasPinching) pinchEnd(hand, x, y, now)
+    else if (hand.pinching && hand.spatial) spatialHandler?.move(id, x, y)
     else if (hand.pinching && hand.holding) {
       if (twoHand?.id === hand.holding) {
         const other = [...hands.values()].find((h) => h !== hand && h.holding === hand.holding)
@@ -280,6 +311,7 @@ function process(result: { landmarks: NormalizedLandmark[][]; handedness: { cate
 
   const hover = next.find((p) => !p.pinching)
   spatial.setHovered(hover ? hitTest(hover.x, hover.y).holoId : null)
+  spatialHandler?.hover(hover?.x ?? null, hover?.y ?? null)
 
   pointers = next
   listeners.forEach((listener) => listener(pointers))

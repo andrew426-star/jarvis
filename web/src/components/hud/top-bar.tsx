@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react"
 
 import { sfx } from "@/lib/sfx"
+import { useSpatial } from "@/lib/spatial-store"
 import { useClock } from "@/lib/use-clock"
 import { useJarvis, type TabKey } from "@/lib/store"
 import { centralDate, centralTime, centralZoneLabel } from "@/lib/time"
@@ -44,6 +45,7 @@ export function TopBar() {
   const muted = useSyncExternalStore(sfx.subscribeMuted, sfx.isMuted, () => false)
 
   const { activeTab, setActiveTab, mode, toggleMode, signals } = useJarvis()
+  const setWorkshopOpen = useSpatial((state) => state.setWorkshopOpen)
   // 0 until the first client tick - see use-clock.ts for why the clock
   // is an external store rather than state driven by an effect.
   const epoch = useClock()
@@ -97,6 +99,17 @@ export function TopBar() {
               {tab.label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab(null)
+              setWorkshopOpen(true)
+            }}
+            className="btn"
+            style={{ padding: "4px 12px" }}
+          >
+            Workshop
+          </button>
         </nav>
       </div>
 

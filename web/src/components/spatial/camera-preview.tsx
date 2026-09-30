@@ -84,7 +84,8 @@ export function CameraPreview({ lookDisabled, onLook, onToggleHands, onClose }: 
         left: 12,
         bottom: 56 + 12,
         width: 248,
-        zIndex: 26,
+        // Above the workshop (35), so hands can be switched on from inside it.
+        zIndex: 40,
         background: "rgba(5, 7, 14, 0.9)",
         borderColor: "rgba(var(--accent-rgb), 0.45)",
       }}
