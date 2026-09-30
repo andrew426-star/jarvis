@@ -17,8 +17,11 @@ class InvokeRequest(BaseModel):
     image: str | None = Field(default=None, max_length=8_000_000)
     image_type: Literal["image/jpeg", "image/png", "image/webp"] = "image/jpeg"
     # Look button: describe the frame up front rather than leaving it to
-    # Groq to decide whether to call camera_look.
+    # the model to decide whether to call camera_look.
     look: bool = False
+    # What the console currently has open (panels, workshop items, camera),
+    # so Jarvis can operate it: see app/tools/console_control.py.
+    console_state: dict | None = None
 
 
 class ToolResult(BaseModel):

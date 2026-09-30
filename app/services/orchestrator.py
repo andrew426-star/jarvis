@@ -5,23 +5,29 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
+from google.genai import types
+
 from app.core.config import get_settings
-from app.core.groq_client import get_groq_client
+from app.core.gemini import AllModelsExhausted, GeminiNotConfigured, generate
 from app.core.local_time import now_for_prompt
 from app.memory.interaction_log import fetch_recent_turns, write_interaction
 from app.memory.semantic_recall import get_relevant_context, record_interaction
 from app.memory.session_buffer import append_turn, count_turns, get_recent_turns
 from app.tools.camera import CAMERA_LOOK_SCHEMA, CAMERA_ON_NOTE, make_camera_look
+from app.tools.console_control import (
+    CONSOLE_CONTROL_NOTE,
+    CONSOLE_SCHEMA,
+    WORKSHOP_SCHEMA,
+    console,
+    state_note,
+    workshop,
+)
 from app.tools.schemas import DISPATCH, TOOL_SCHEMAS
 
 MAX_ITERATIONS = 8
 
-# How many past tool-call rounds (one assistant tool_calls message + its
-# tool-result messages) get resent to Groq per iteration, and a per-result
-# size guard — bounds the growing request payload on long multi-step turns
-# without touching the full, authoritative `messages` accumulator or the
-# audit trail written to Supabase/Pinecone.
-MAX_TOOL_ROUNDS_IN_CONTEXT = 4
+# Per-result size guard on what goes back to the model. The full result
+# still lands in the audit trail (Supabase/Pinecone) and the console.
 TOOL_RESULT_CHAR_CAP = 4000
 
 # Separate, independent pool from FastAPI/Starlette's own threadpool (which
@@ -160,13 +166,25 @@ def split_reply(text: str) -> tuple[str, str]:
     return display or spoken, spoken or display
 
 
-def _execute_tool_call(tool_call, handlers: dict = DISPATCH) -> tuple[str, dict, dict]:
-    name = tool_call.function.name
-    try:
-        args = json.loads(tool_call.function.arguments or "{}")
-    except json.JSONDecodeError:
-        args = {}
+def _declaration(schema: dict) -> types.FunctionDeclaration:
+    """TOOL_SCHEMAS are OpenAI-shaped (what Groq took); Gemini takes the
+    same JSON Schema, just wrapped differently."""
+    fn = schema["function"]
+    return types.FunctionDeclaration(
+        name=fn["name"],
+        description=fn.get("description", ""),
+        parameters_json_schema=fn.get("parameters") or {"type": "object", "properties": {}},
+    )
 
+
+_DECLARATIONS = [_declaration(schema) for schema in TOOL_SCHEMAS]
+_CAMERA_DECLARATION = _declaration(CAMERA_LOOK_SCHEMA)
+_CONSOLE_DECLARATIONS = [_declaration(CONSOLE_SCHEMA), _declaration(WORKSHOP_SCHEMA)]
+
+
+def _execute_tool_call(call: types.FunctionCall, handlers: dict = DISPATCH) -> tuple[str, dict, dict]:
+    name = call.name or ""
+    args = dict(call.args or {})
     handler = handlers.get(name)
     if handler is None:
         result = {"ok": False, "error": f"Unknown tool: {name}"}
@@ -178,35 +196,54 @@ def _execute_tool_call(tool_call, handlers: dict = DISPATCH) -> tuple[str, dict,
     return name, args, result
 
 
-def _build_request_messages(messages: list[dict], prefix_len: int) -> list[dict]:
-    """The payload actually sent to Groq: the full fixed prefix (system
-    prompt, recall block, session history, user message) + only the most
-    recent MAX_TOOL_ROUNDS_IN_CONTEXT tool-call rounds. `messages` itself
-    is never mutated — this is a fresh, request-scoped view, so the loop's
-    own continuation logic and the audit trail stay correct either way.
-    A "round" is one assistant message with tool_calls plus every tool
-    message immediately following it — dropped as a whole unit, since
-    Groq's function-calling format requires each tool message's
-    tool_call_id to correlate to a tool_calls entry earlier in the same
-    request; splitting a round would break that pairing.
-    """
-    prefix, tail = messages[:prefix_len], messages[prefix_len:]
+def _capped(result: dict) -> dict:
+    payload = json.dumps(result, default=str)
+    if len(payload) <= TOOL_RESULT_CHAR_CAP:
+        return json.loads(payload)
+    return {"truncated_json": payload[:TOOL_RESULT_CHAR_CAP] + "...[truncated]"}
 
-    rounds: list[list[dict]] = []
-    for msg in tail:
-        if msg.get("role") == "assistant" and msg.get("tool_calls"):
-            rounds.append([msg])
-        elif rounds:
-            rounds[-1].append(msg)
 
-    kept = [m for r in rounds[-MAX_TOOL_ROUNDS_IN_CONTEXT:] for m in r]
+def _history_contents(turns: list[dict]) -> list[types.Content]:
+    """Stored turns as Gemini contents. Consecutive same-role turns (a user
+    message whose reply was never stored) are merged, since Gemini expects
+    user and model to alternate."""
+    contents: list[types.Content] = []
+    for turn in turns:
+        role = "model" if turn["role"] == "assistant" else "user"
+        part = types.Part.from_text(text=turn["content"])
+        if contents and contents[-1].role == role:
+            contents[-1].parts.append(part)
+        else:
+            contents.append(types.Content(role=role, parts=[part]))
+    return contents
 
-    def _capped(msg: dict) -> dict:
-        if msg.get("role") == "tool" and len(msg.get("content", "")) > TOOL_RESULT_CHAR_CAP:
-            return {**msg, "content": msg["content"][:TOOL_RESULT_CHAR_CAP] + "...[truncated]"}
-        return msg
 
-    return prefix + [_capped(m) for m in kept]
+def _reseed(base: list[types.Content], executed: list[tuple[str, dict, dict]]) -> list[types.Content]:
+    """The conversation for a model taking over mid-turn. Function-call
+    history carries thought signatures bound to the model that wrote it,
+    so the new model gets the turn from the top plus what the tools have
+    already returned, as text - and does not re-run tools with side
+    effects (a logged pilot, an opened issue) just because it switched."""
+    lines = [
+        "Tool results already gathered for this message (another model started the turn). "
+        "Use them; call a tool again only if something is missing."
+    ]
+    for name, args, result in executed:
+        lines.append(f"- {name}({json.dumps(args, default=str)}) -> {json.dumps(_capped(result), default=str)}")
+    contents = list(base)
+    contents[-1] = types.Content(
+        role="user", parts=[*contents[-1].parts, types.Part.from_text(text="\n".join(lines))]
+    )
+    return contents
+
+
+def _quota_message(exc: AllModelsExhausted) -> str:
+    wait = max(1, int((exc.retry_at - time.time()) / 60))
+    when = f"in about {wait} minute{'s' if wait != 1 else ''}" if wait < 90 else f"in about {round(wait / 60)} hours"
+    return (
+        "Every model I have on the free tier is at its limit for the moment, sir. "
+        f"The first one frees up {when}."
+    )
 
 
 TERMINAL_MODE = (
@@ -234,113 +271,136 @@ def run_invoke(
     image: str | None = None,
     image_type: str = "image/jpeg",
     look: bool = False,
+    console_state: dict | None = None,
 ) -> dict:
     """`image` is a base64 camera frame the console attaches while its
     camera is on; `look` means Andrew pressed Look, so the frame is
-    described up front instead of waiting for Groq to ask for it."""
+    described up front instead of waiting for the model to ask for it."""
     session_id = session_id or str(uuid.uuid4())
     settings = get_settings()
-    client = get_groq_client()
     started = time.monotonic()
 
-    messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+    system: list[str] = [
+        SYSTEM_PROMPT,
         # Jarvis has no clock of his own; without this, "today" is a guess.
-        {"role": "system", "content": now_for_prompt()},
+        now_for_prompt(),
     ]
     if channel == "terminal":
-        messages.append({"role": "system", "content": TERMINAL_MODE})
+        system.append(TERMINAL_MODE)
 
-    tools = TOOL_SCHEMAS
+    declarations = _DECLARATIONS
     handlers = DISPATCH
+    # The console can be driven from any console message; the terminal has
+    # no console to drive.
+    if channel == "console":
+        declarations = [*_DECLARATIONS, *_CONSOLE_DECLARATIONS]
+        handlers = {**DISPATCH, "console": console, "workshop": workshop}
+        system.append(CONSOLE_CONTROL_NOTE)
+        live_state = state_note(console_state)
+        if live_state:
+            system.append(live_state)
     camera_look = None
     # The terminal has no camera, so a frame there could only be a bug.
     if image and channel == "console":
         camera_look = make_camera_look(image, image_type)
-        tools = [*TOOL_SCHEMAS, CAMERA_LOOK_SCHEMA]
-        handlers = {**DISPATCH, "camera_look": camera_look}
-        messages.append({"role": "system", "content": CAMERA_ON_NOTE})
+        declarations = [*declarations, _CAMERA_DECLARATION]
+        handlers = {**handlers, "camera_look": camera_look}
+        system.append(CAMERA_ON_NOTE)
 
     recall_block = get_relevant_context(message)
     if recall_block:
-        messages.append({"role": "system", "content": recall_block})
+        system.append(recall_block)
 
     recent_turns = get_recent_turns(session_id)
     if not recent_turns:  # None (Redis failure) or [] (empty/expired) — fall back to Supabase
         recent_turns = fetch_recent_turns(session_id)
-    messages.extend(recent_turns)
-
-    messages.append({"role": "user", "content": message})
-    prefix_len = len(messages)
 
     tools_used: list[str] = []
     tool_call_trace: list[dict] = []
+    executed: list[tuple[str, dict, dict]] = []
     final_text = ""
 
-    # Look pressed: describe the frame before Groq's first call, so the
-    # answer is grounded in it even if Groq would not have thought to ask.
-    # Recorded as an ordinary camera_look round so the history and the
-    # console's tool results cannot tell the two paths apart.
+    user_parts = [types.Part.from_text(text=message)]
+    # Look pressed: describe the frame before the first call, so the answer
+    # is grounded in it even if the model would not have thought to ask.
     if look and camera_look is not None:
         args = {"question": message}
         result = camera_look(args)
         tools_used.append("camera_look")
         tool_call_trace.append({"name": "camera_look", "args": args, "result": result})
-        call_id = f"look_{uuid.uuid4().hex[:12]}"
-        messages.append(
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": call_id,
-                        "type": "function",
-                        "function": {"name": "camera_look", "arguments": json.dumps(args)},
-                    }
-                ],
-            }
-        )
-        messages.append(
-            {"tool_call_id": call_id, "role": "tool", "name": "camera_look", "content": json.dumps(result)}
-        )
+        seen = result.get("description") or f"(the look failed: {result.get('error')})"
+        user_parts.append(types.Part.from_text(text=f"[Camera look taken for this message. It showed: {seen}]"))
 
+    base = _history_contents(recent_turns)
+    if base and base[-1].role == "user":
+        base[-1].parts.extend(user_parts)
+    else:
+        base.append(types.Content(role="user", parts=user_parts))
+    contents = list(base)
+
+    config = types.GenerateContentConfig(
+        system_instruction="\n\n".join(system),
+        tools=[types.Tool(function_declarations=declarations)],
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        # Low thinking keeps a spoken exchange quick. Thinking tokens count
+        # against the output limit, hence the room above a reply's length.
+        thinking_config=types.ThinkingConfig(thinking_level="low"),
+        max_output_tokens=8192 if channel == "terminal" else 4096,
+    )
+
+    turn_model: str | None = None
+    used_model = ""
     for _ in range(MAX_ITERATIONS):
-        response = client.chat.completions.create(
-            model=settings.groq_model,
-            messages=_build_request_messages(messages, prefix_len),
-            tools=tools,
-            tool_choice="auto",
-            temperature=0.3,
-            # Code needs room; a spoken reply shouldn't run long.
-            max_completion_tokens=4096 if channel == "terminal" else 1024,
-        )
-        choice = response.choices[0].message
-        messages.append(choice.model_dump(exclude_none=True))
-
-        if not choice.tool_calls:
-            final_text = choice.content or ""
+        try:
+            if turn_model and executed:
+                # Tool history in `contents` is bound to turn_model, so only
+                # it may continue. If it has run out, hand the turn to the
+                # ladder as text instead of as that history.
+                try:
+                    response, used_model = generate(contents, config, only=turn_model)
+                except AllModelsExhausted:
+                    contents = _reseed(base, executed)
+                    response, used_model = generate(contents, config)
+            else:
+                response, used_model = generate(contents, config, prefer=turn_model)
+        except AllModelsExhausted as exc:
+            final_text = _quota_message(exc)
             break
+        except GeminiNotConfigured:
+            final_text = "My reasoning model isn't configured, sir: GEMINI_API_KEY needs to be set on the server."
+            break
+        turn_model = used_model
+
+        calls = response.function_calls or []
+        if not calls:
+            final_text = response.text or ""
+            if not final_text.strip():
+                reason = response.candidates[0].finish_reason if response.candidates else None
+                final_text = f"I lost the thread of that one, sir ({reason or 'empty reply'}). Would you ask again?"
+            break
+
+        # The model's own turn goes back verbatim: it carries the thought
+        # signatures Gemini needs to continue a function-calling turn.
+        contents.append(response.candidates[0].content)
 
         # Submitted up front so every call in this round starts running
         # concurrently; results are applied in original order (not
         # completion order) so tool_call_trace/tools_used stay stable.
-        futures = [_TOOL_EXECUTOR.submit(_execute_tool_call, tc, handlers) for tc in choice.tool_calls]
-        for tool_call, future in zip(choice.tool_calls, futures):
+        futures = [_TOOL_EXECUTOR.submit(_execute_tool_call, call, handlers) for call in calls]
+        parts: list[types.Part] = []
+        for call, future in zip(calls, futures):
             try:
                 name, args, result = future.result()
             except Exception as exc:  # noqa: BLE001 — defense-in-depth; _execute_tool_call already catches handler errors
-                name, args, result = tool_call.function.name, {}, {"ok": False, "error": str(exc)}
+                name, args, result = call.name or "", {}, {"ok": False, "error": str(exc)}
 
             tools_used.append(name)
             tool_call_trace.append({"name": name, "args": args, "result": result})
-            messages.append(
-                {
-                    "tool_call_id": tool_call.id,
-                    "role": "tool",
-                    "name": name,
-                    "content": json.dumps(result),
-                }
+            executed.append((name, args, result))
+            parts.append(
+                types.Part(function_response=types.FunctionResponse(id=call.id, name=name, response=_capped(result)))
             )
+        contents.append(types.Content(role="user", parts=parts))
     else:
         final_text = (
             "I've rather run up against my tool-call ceiling on that one, sir. "
@@ -362,11 +422,13 @@ def run_invoke(
         assistant_response=final_text,
         tools_used=tools_used,
         tool_call_trace=tool_call_trace,
-        model=settings.groq_model,
+        model=used_model or "none",
         latency_ms=latency_ms,
     )
     append_turn(session_id, interaction_id, message, final_text, created_at)
-    record_interaction(interaction_id, session_id, message, final_text, tools_used, created_at)
+    record_interaction(
+        interaction_id, session_id, message, final_text, tools_used, created_at, model=used_model
+    )
 
     tool_results = [{"name": t["name"], "result": t["result"]} for t in tool_call_trace]
 

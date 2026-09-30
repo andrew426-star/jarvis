@@ -41,6 +41,13 @@ import {
 } from "@/lib/jarvis-client"
 import { audioAmplitude } from "@/lib/audio-amplitude"
 import { captureFrame, startCamera, stopCamera } from "@/lib/camera"
+import {
+  consoleState,
+  runConsoleActions,
+  runWorkshopActions,
+  type ConsoleAction,
+  type WorkshopAction,
+} from "@/lib/console-commands"
 import { emitCore } from "@/lib/core-events"
 import { startHands, stopHands } from "@/lib/hand-tracking"
 import { stopNarration } from "@/lib/narration"
@@ -176,6 +183,7 @@ function Shell({
   const [pending, setPending] = useState(false)
   const [speaking, setSpeaking] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [standby, setStandby] = useState(false)
 
   const [liveMarketSnapshot, setLiveMarketSnapshot] = useState<MarketSnapshot | undefined>()
   const [liveMarketHistory, setLiveMarketHistory] = useState<MarketHistory | undefined>()
@@ -321,14 +329,49 @@ function Shell({
     }
   }, [sessionId, token, setContext])
 
+  // Close the console: everything that runs stops, and the shell shows a
+  // standby screen (a browser tab cannot close itself unless a script
+  // opened it, so window.close() is only a best effort).
+  function closeConsole() {
+    stopHands()
+    stopCamera()
+    useSpatial.getState().setCameraOn(false)
+    useSpatial.getState().setWorkshopOpen(false)
+    useJarvis.getState().setActiveTab(null)
+    useJarvis.getState().setSettingsOpen(false)
+    sfx.sleep()
+    pushLog("NONE", "Console closed by Jarvis")
+    setStandby(true)
+    window.close()
+  }
+
+  function wake() {
+    sfx.wake()
+    setStandby(false)
+  }
+
   function handleToolResults(results: ToolResult[]) {
     let firstPanel: TabKey | null = null
     for (const entry of results) {
+      // Jarvis operating the console himself.
+      const control = entry.result as { ok?: boolean; actions?: unknown[] } | null
+      if (control?.ok && Array.isArray(control.actions)) {
+        if (entry.name === "console") {
+          void runConsoleActions(control.actions as ConsoleAction[], { setCamera, setHands, closeConsole })
+        }
+        if (entry.name === "workshop") runWorkshopActions(control.actions as WorkshopAction[])
+      }
       if (entry.name === "market_analysis") setLiveMarketSnapshot(entry.result as MarketSnapshot)
       if (entry.name === "market_history") setLiveMarketHistory(entry.result as MarketHistory)
       if (entry.name === "news_feed") setLiveNews(entry.result as NewsResult)
       if (entry.name === "portfolio") setLivePortfolio(entry.result as PortfolioResult)
       const mapped = TOOL_PANEL_MAP[entry.name]
+      // A panel Jarvis opened or closed on purpose wins over the automatic
+      // "show the data behind that answer" switch.
+      if (entry.name === "console" || entry.name === "workshop") {
+        pushLog("OK", `Jarvis ran ${entry.name}`)
+        continue
+      }
       if (mapped && !firstPanel) firstPanel = mapped
       pushLog("OK", `Tool ${entry.name}`)
 
@@ -345,8 +388,13 @@ function Shell({
   }
 
   async function toggleCamera() {
+    await setCamera(!useSpatial.getState().cameraOn)
+  }
+
+  async function setCamera(on: boolean) {
     const spatial = useSpatial.getState()
-    if (spatial.cameraOn) {
+    if (on === spatial.cameraOn) return
+    if (!on) {
       stopHands()
       stopCamera()
       spatial.setCameraOn(false)
@@ -371,11 +419,20 @@ function Shell({
   }
 
   async function toggleHands() {
-    if (useSpatial.getState().handsStatus === "tracking") {
+    await setHands(useSpatial.getState().handsStatus !== "tracking")
+  }
+
+  async function setHands(on: boolean) {
+    const tracking = useSpatial.getState().handsStatus === "tracking"
+    if (on === tracking) return
+    if (!on) {
       stopHands()
       pushLog("NONE", "Hand tracking off")
       return
     }
+    // Hands need the camera; switching them on brings it up first.
+    if (!useSpatial.getState().cameraOn) await setCamera(true)
+    if (!useSpatial.getState().cameraOn) return
     try {
       await startHands()
       pushLog("OK", "Hand tracking on")
@@ -402,7 +459,11 @@ function Shell({
     pushLog("NONE", viaVoice ? "Voice command received" : "Command received")
 
     try {
-      const result = await invoke(text, sessionId, token, { image: frame?.base64, look })
+      const result = await invoke(text, sessionId, token, {
+        image: frame?.base64,
+        look,
+        consoleState: consoleState(),
+      })
       setContext(result.context_turns, result.context_window)
       emitCore({ kind: "reply" })
       result.tool_results.forEach((entry) => emitCore({ kind: "tool", name: entry.name }))
@@ -628,6 +689,21 @@ function Shell({
       <HandCursors />
 
       <SettingsPanel sessionId={sessionId} onSignOut={onSignOut} />
+
+      {standby && (
+        <button
+          type="button"
+          onClick={wake}
+          className="fixed inset-0 flex cursor-pointer flex-col items-center justify-center"
+          style={{ zIndex: 2000, background: "#020306", border: 0, gap: "var(--sp-3)" }}
+          aria-label="Wake J.A.R.V.I.S."
+        >
+          <span className="t-header" style={{ color: "var(--accent)", fontSize: 18, letterSpacing: "0.3em" }}>
+            J.A.R.V.I.S.
+          </span>
+          <span className="t-time">STANDING BY · CLICK TO RESUME</span>
+        </button>
+      )}
       <GlobalEffects />
     </div>
   )

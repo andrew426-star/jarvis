@@ -561,3 +561,94 @@ export const CATALOGUE: { key: string; label: string; build: () => BuiltItem }[]
   { key: "tower", label: "Tower", build: tower },
   { key: "missile", label: "Jericho", build: missile },
 ]
+
+// --- generated models ------------------------------------------------------
+//
+// Jarvis designs these himself (the workshop tool's "build" action): a list
+// of primitive parts, each with a size, position, rotation and one of the
+// workshop's materials. The server has already clamped every number; this
+// turns the list into meshes, lifts the result onto the stage and scales
+// it to fit.
+
+export interface GeneratedPart {
+  shape: "box" | "rounded_box" | "sphere" | "cylinder" | "cone" | "torus" | "capsule"
+  size: number[]
+  position: number[]
+  rotation: number[]
+  material: "red" | "gold" | "steel" | "dark" | "copper" | "glow" | "glass"
+}
+
+export interface GeneratedModel {
+  name: string
+  designation: string
+  notes: string[]
+  parts: GeneratedPart[]
+}
+
+function partGeometry(part: GeneratedPart): THREE.BufferGeometry {
+  const [a = 0.2, b = 0.2, c = 0.2] = part.size ?? []
+  switch (part.shape) {
+    case "box":
+      return new THREE.BoxGeometry(a, b, c)
+    case "rounded_box":
+      return new RoundedBoxGeometry(a, b, c, 3, Math.min(a, b, c) * 0.2)
+    case "sphere":
+      return new THREE.SphereGeometry(a, 32, 20)
+    case "cylinder":
+      return new THREE.CylinderGeometry(a, b, c, 32)
+    case "cone":
+      return new THREE.ConeGeometry(a, b, 32)
+    case "torus":
+      return new THREE.TorusGeometry(a, Math.min(b, a * 0.9), 16, 48)
+    case "capsule":
+      return new THREE.CapsuleGeometry(a, b, 8, 16)
+  }
+}
+
+export function buildGenerated(model: GeneratedModel): BuiltItem {
+  const m = mats()
+  const design = new THREE.Group()
+  const glowSpots: THREE.Vector3[] = []
+  const deg = THREE.MathUtils.degToRad
+  for (const part of model.parts ?? []) {
+    const piece = mesh(partGeometry(part), m[part.material] ?? m.steel)
+    // The server fills these in, but a design is never trusted to be complete.
+    const [x = 0, y = 0, z = 0] = part.position ?? []
+    const [rx = 0, ry = 0, rz = 0] = part.rotation ?? []
+    piece.position.set(x, y, z)
+    piece.rotation.set(deg(rx), deg(ry), deg(rz))
+    if (part.shape === "rounded_box") piece.userData.edgeAngle = 10
+    design.add(piece)
+    if (part.material === "glow") glowSpots.push(piece.position.clone())
+  }
+
+  // One light for the glowing parts, at their centre, so metal near them
+  // picks the glow up.
+  if (glowSpots.length) {
+    const light = coreLight(2, 2.5)
+    light.position.copy(glowSpots.reduce((sum, p) => sum.add(p), new THREE.Vector3()).divideScalar(glowSpots.length))
+    design.add(light)
+  }
+
+  // Fit to the stage: no wider or taller than the catalogue pieces, and
+  // floating just above the floor like them.
+  const bounds = new THREE.Box3().setFromObject(design)
+  const size = bounds.getSize(new THREE.Vector3())
+  const fit = Math.min(1, 2.4 / Math.max(size.x, size.y, size.z, 0.001))
+  const centre = bounds.getCenter(new THREE.Vector3())
+  design.position.set(-centre.x, -bounds.min.y, -centre.z)
+  const g = new THREE.Group()
+  g.add(design)
+  g.scale.setScalar(fit)
+  g.position.y = 0.35
+
+  return {
+    object: g,
+    spec: {
+      key: "generated",
+      name: model.name,
+      designation: model.designation || "WORKSHOP PROTOTYPE",
+      lines: model.notes?.length ? model.notes : [`${model.parts?.length ?? 0} PARTS`, "DESIGNED BY J.A.R.V.I.S."],
+    },
+  }
+}

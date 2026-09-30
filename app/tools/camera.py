@@ -1,8 +1,9 @@
 from collections.abc import Callable
 
-from app.integrations.claude_vision import VisionNotConfigured, describe_frame
+from app.core.gemini import AllModelsExhausted, GeminiNotConfigured
+from app.integrations.gemini_vision import describe_frame
 
-# Only offered to Groq on turns where the console sent a frame (the camera
+# Only offered to the model on turns where the console sent a frame (the camera
 # is on); a turn without one has nothing to look at, so the tool would
 # only invite a hallucinated answer.
 CAMERA_LOOK_SCHEMA = {
@@ -47,7 +48,9 @@ def make_camera_look(image_b64: str, media_type: str) -> Callable[[dict], dict]:
         question = (args.get("question") or "What is in front of the camera?").strip()
         try:
             return {"ok": True, "description": describe_frame(image_b64, media_type, question)}
-        except VisionNotConfigured as exc:
+        except GeminiNotConfigured as exc:
             return {"ok": False, "error": str(exc)}
+        except AllModelsExhausted:
+            return {"ok": False, "error": "Every vision model is at its free-tier limit right now."}
 
     return camera_look

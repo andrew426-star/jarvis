@@ -42,6 +42,7 @@ interface SpatialState {
   moveHologram: (id: string, dx: number, dy: number) => void
   scaleHologram: (id: string, scale: number) => void
   removeHologram: (id: string) => void
+  clearHolograms: () => void
   grab: (id: string) => void
   release: (id: string) => void
   setHovered: (id: string | null) => void
@@ -126,6 +127,11 @@ export const useSpatial = create<SpatialState>((set, get) => ({
       hovered: get().hovered === id ? null : get().hovered,
     })
     save(holograms)
+  },
+
+  clearHolograms: () => {
+    set({ holograms: [], grabbed: [], hovered: null })
+    save([])
   },
 
   grab: (id) => {

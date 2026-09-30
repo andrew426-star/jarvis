@@ -101,6 +101,8 @@ export interface InvokeOptions {
   image?: string
   /** Describe the frame up front (the Look button). */
   look?: boolean
+  /** What the console has open, so Jarvis can operate it. */
+  consoleState?: Record<string, unknown>
 }
 
 export async function invoke(
@@ -117,6 +119,7 @@ export async function invoke(
       session_id: sessionId,
       image: options.image,
       look: options.look ?? false,
+      console_state: options.consoleState,
     }),
   })
   return res.json()

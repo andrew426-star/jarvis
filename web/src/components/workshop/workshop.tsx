@@ -5,11 +5,12 @@ import { AnimatePresence, motion } from "framer-motion"
 import { BoxIcon, RotateCcwIcon, ScanEyeIcon, Trash2Icon, XIcon } from "lucide-react"
 
 import { getVideo, startCamera, stopCamera } from "@/lib/camera"
+import { registerWorkshop } from "@/lib/console-commands"
 import { setSpatialHandler, startHands, stopHands, subscribeHands } from "@/lib/hand-tracking"
 import { sfx } from "@/lib/sfx"
 import { useSpatial } from "@/lib/spatial-store"
 import type { ItemMode, WorkshopScene } from "@/lib/workshop/scene"
-import { CATALOGUE, type ItemSpec } from "@/lib/workshop/models"
+import { CATALOGUE, buildGenerated, type ItemSpec } from "@/lib/workshop/models"
 
 type Focus = (ItemSpec & { id: string; mode: ItemMode }) | null
 
@@ -137,8 +138,26 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
         },
       })
       sceneRef.current = scene
+      // Jarvis works the stage through this. Registering flushes anything
+      // he asked for while the scene was still loading, so when he has a
+      // job queued the stage opens straight onto it instead of the default.
+      let queued = false
+      registerWorkshop({
+        spawn: (key) => {
+          queued = true
+          scene.spawn(key)
+        },
+        build: (model) => {
+          queued = true
+          scene.spawnBuilt(buildGenerated(model))
+        },
+        discard: (target) => scene.discardWhere(target),
+        setMode: (target, mode) => scene.setModeWhere(target, mode),
+        clear: () => scene.clear(),
+        items: () => scene.listItems(),
+      })
       // Something to hold on arrival: the reactor as a hologram.
-      scene.spawn("reactor")
+      if (!queued) scene.spawn("reactor")
       setSpatialHandler({
         down: (id, x, y, size) => scene.down(id, x, y, size),
         move: (id, x, y, size) => scene.move(id, x, y, size),
@@ -152,6 +171,7 @@ function WorkshopStage({ onClose }: { onClose: () => void }) {
     return () => {
       disposed = true
       unsubscribe()
+      registerWorkshop(null)
       setSpatialHandler(null)
       sceneRef.current?.dispose()
       sceneRef.current = null

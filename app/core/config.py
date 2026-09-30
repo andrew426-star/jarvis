@@ -6,9 +6,22 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Groq now only transcribes voice (Whisper). Jarvis's brain and eyes
+    # are Gemini, below.
     groq_api_key: str
-    groq_model: str = "openai/gpt-oss-120b"
     groq_whisper_model: str = "whisper-large-v3-turbo"
+
+    # Gemini: the agent loop and camera vision. Optional so a deploy that
+    # has not set it yet still boots; /invoke then says what is missing.
+    gemini_api_key: str | None = None
+    # Best first. app/core/gemini.py uses the first one with quota left and
+    # falls down the list on quota errors, so this order is also the order
+    # of preference. Free-tier quotas are per model, so every entry adds
+    # headroom.
+    gemini_models: str = (
+        "gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,"
+        "gemini-3.1-flash-lite,gemini-3.5-flash-lite"
+    )
 
     supabase_url: str
     supabase_service_role_key: str
@@ -127,15 +140,6 @@ class Settings(BaseSettings):
     # s2.1-pro bills $15.00, and it is the only model an empty API
     # credit wallet will serve. Verified returning real audio.
     fish_audio_model: str = "s2.1-pro-free"
-
-    # Claude is Jarvis's eyes: when the console's camera is on and Groq
-    # decides a question depends on what is in front of it, the frame is
-    # described by Claude (app/integrations/claude_vision.py) and Groq
-    # answers from that description. Optional like Fish above - without a
-    # key the camera_look tool reports "not configured" and nothing else
-    # changes.
-    anthropic_api_key: str | None = None
-    vision_model: str = "claude-opus-5"
 
     # JARVIS_ACCESS_TOKEN — the ORIGINAL shared-secret gate. Google
     # sign-in (above) is now the console's way in; this stays as the

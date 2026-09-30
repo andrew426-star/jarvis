@@ -84,7 +84,6 @@ services:
     # Deliberately not listed, because they have defaults or are genuinely
     # optional — add them in the Render dashboard if you want the feature:
     #   FISH_AUDIO_API_KEY / FISH_AUDIO_VOICE_ID    -> /speak
-    #   ANTHROPIC_API_KEY                           -> camera vision
     #   SPOTIFY_CLIENT_ID / _SECRET / _REDIRECT_URI / _OAUTH_STATE_SECRET
     #   ZOHO_CLIENT_ID / _SECRET / _REDIRECT_URI / _OAUTH_STATE_SECRET
     # The two REDIRECT_URIs above are host-dependent in the same way

@@ -9,7 +9,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js"
 
 import { accentHex } from "@/lib/core-events"
 import { toViewport, type HandPointer } from "@/lib/hand-tracking"
-import { CATALOGUE, type ItemSpec } from "@/lib/workshop/models"
+import { CATALOGUE, type BuiltItem, type ItemSpec } from "@/lib/workshop/models"
 
 // The workshop: a lit stage where items can be grabbed, thrown into a spin,
 // resized with two hands, and switched between a wireframe hologram and
@@ -187,8 +187,11 @@ export class WorkshopScene {
 
   spawn(key: string) {
     const entry = CATALOGUE.find((c) => c.key === key)
-    if (!entry) return
-    const { object, spec } = entry.build()
+    if (entry) this.spawnBuilt(entry.build())
+  }
+
+  /** Put any built model on the stage - a catalogue piece or one Jarvis designed. */
+  spawnBuilt({ object, spec }: BuiltItem) {
     const root = new THREE.Group()
     const [x, z] = SLOTS[this.items.length % SLOTS.length]
     root.position.set(x, 0, z)
@@ -254,6 +257,39 @@ export class WorkshopScene {
     }
     this.items.push(item)
     this.focus(item)
+  }
+
+  /** What is on the stage, oldest first, for Jarvis's view of the console. */
+  listItems(): { name: string; mode: ItemMode }[] {
+    return this.live().map((item) => ({ name: item.spec.name, mode: item.mode }))
+  }
+
+  /** Discard by name (most recent match), "last", or "all". Returns how many went. */
+  discardWhere(target: string): number {
+    const matches = this.select(target)
+    matches.forEach((item) => this.discard(item))
+    return matches.length
+  }
+
+  setModeWhere(target: string, mode: ItemMode): number {
+    const matches = this.select(target)
+    matches.forEach((item) => (item.mode = mode))
+    if (this.focused && matches.includes(this.focused)) this.focus(this.focused)
+    return matches.length
+  }
+
+  private live() {
+    return this.items.filter((item) => item.dying === null)
+  }
+
+  private select(target: string): Item[] {
+    const live = this.live()
+    const wanted = target.trim().toLowerCase()
+    if (wanted === "all") return live
+    if (wanted === "last" || !wanted) return live.slice(-1)
+    const named = live.filter((item) => item.spec.name.toLowerCase() === wanted)
+    const loose = named.length ? named : live.filter((item) => item.spec.name.toLowerCase().includes(wanted))
+    return loose.slice(-1)
   }
 
   setAllModes(mode: ItemMode) {

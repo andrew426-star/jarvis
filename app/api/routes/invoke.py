@@ -9,7 +9,7 @@ from app.services.orchestrator import run_invoke
 router = APIRouter()
 
 
-# Sync (not async) on purpose — supabase-py and the Groq client are both
+# Sync (not async) on purpose — supabase-py and the Gemini client are both
 # synchronous; a plain `def` route lets FastAPI run this in its threadpool
 # automatically rather than blocking the event loop.
 @router.post("/invoke", response_model=InvokeResponse, dependencies=[Depends(require_access_token)])
@@ -21,6 +21,7 @@ def invoke(request: InvokeRequest) -> InvokeResponse:
         image=request.image,
         image_type=request.image_type,
         look=request.look,
+        console_state=request.console_state,
     )
     return InvokeResponse(**result)
 
