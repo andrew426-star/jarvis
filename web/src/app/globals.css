@@ -482,6 +482,72 @@ body {
   color: var(--accent);
 }
 
+/* Workshop library dock: preview cards and list rows. */
+.library-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(var(--accent-rgb), 0.25);
+  border-radius: var(--radius);
+  background: rgba(var(--accent-rgb), 0.04);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.library-card:hover:not(:disabled) {
+  border-color: rgba(var(--accent-rgb), 0.7);
+  background: rgba(var(--accent-rgb), 0.1);
+  transform: translateY(-1px);
+}
+
+.library-card:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.library-card-image {
+  display: block;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius);
+  background: radial-gradient(circle at 50% 60%, rgba(var(--accent-rgb), 0.16), rgba(2, 5, 10, 0.9) 70%);
+  overflow: hidden;
+}
+
+.library-card-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.library-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+  border-radius: var(--radius);
+  background: rgba(var(--accent-rgb), 0.03);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.library-row:hover:not(:disabled),
+.library-row[data-active="true"] {
+  border-color: rgba(var(--accent-rgb), 0.65);
+  background: rgba(var(--accent-rgb), 0.1);
+}
+
+.library-row:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Workshop discard bin: a holographic ring that arms red under a held
    item and flashes as one is discarded. */
 .workshop-bin {

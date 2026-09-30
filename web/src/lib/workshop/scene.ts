@@ -99,6 +99,8 @@ export interface WorkshopCallbacks {
   binAt?: (x: number, y: number) => boolean
   /** The bin's state changed: an item is over it, or one was discarded. */
   onBin?: (state: "idle" | "armed" | "discarded") => void
+  /** What is on the stage changed (added, removed, switched mode). */
+  onItems?: (items: { id: string; name: string; mode: ItemMode }[]) => void
 }
 
 const DISCARD_SECONDS = 0.55
@@ -352,6 +354,23 @@ export class WorkshopScene {
     }
     this.items.push(item)
     this.focus(item)
+    this.emitItems()
+  }
+
+  private emitItems() {
+    this.callbacks.onItems?.(this.live().map((item) => ({ id: item.id, name: item.spec.name, mode: item.mode })))
+  }
+
+  /** Select an item (label, STL export target) by id. */
+  focusId(id: string) {
+    const item = this.live().find((i) => i.id === id)
+    if (item) this.focus(item)
+  }
+
+  /** Discard an item by id, with the same break-apart as the bin. */
+  discardId(id: string) {
+    const item = this.live().find((i) => i.id === id)
+    if (item) this.discard(item)
   }
 
   /** What is on the stage, oldest first, for Jarvis's view of the console. */
@@ -470,6 +489,7 @@ export class WorkshopScene {
     const matches = this.select(target)
     matches.forEach((item) => (item.mode = mode))
     if (this.focused && matches.includes(this.focused)) this.focus(this.focused)
+    this.emitItems()
     return matches.length
   }
 
@@ -490,6 +510,7 @@ export class WorkshopScene {
   setAllModes(mode: ItemMode) {
     this.items.forEach((item) => (item.mode = mode))
     if (this.focused) this.focus(this.focused)
+    this.emitItems()
   }
 
   clear() {
@@ -499,6 +520,7 @@ export class WorkshopScene {
     this.twoHand = null
     this.hovered = null
     this.focus(null)
+    this.emitItems()
   }
 
   /** Pointer pressed (mouse button or pinch). Always claims: empty space orbits. */
@@ -580,6 +602,7 @@ export class WorkshopScene {
     if (tap) {
       grip.item.mode = grip.item.mode === "wire" ? "solid" : "wire"
       this.focus(grip.item)
+      this.emitItems()
     } else {
       // Thrown: the release speed becomes spin, then friction takes over.
       grip.item.spin += grip.vx * 0.06
@@ -598,6 +621,7 @@ export class WorkshopScene {
     if (this.focused === item) this.focus(null)
     if (this.hovered === item) this.hovered = null
     this.callbacks.onBin?.("discarded")
+    this.emitItems()
   }
 
   /** Draw the tracked hands inside the scene, or none. */
@@ -672,6 +696,7 @@ export class WorkshopScene {
     if (!item) return
     item.mode = item.mode === "wire" ? "solid" : "wire"
     this.focus(item)
+    this.emitItems()
   }
 
   dispose() {
