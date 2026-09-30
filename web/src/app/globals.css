@@ -570,6 +570,66 @@ button {
   mix-blend-mode: normal;
 }
 
+/* Mode glitch (lib/mode-fx.ts). While the wipe runs, the old console
+   keeps breaking up underneath the reveal: jumps sideways, splits its
+   colour channels and loses slices. steps() so it snaps between states
+   like a bad signal instead of easing like an animation. */
+:root.mode-glitch::view-transition-old(root) {
+  animation: snapshot-glitch 700ms steps(1, end) both;
+}
+
+@keyframes snapshot-glitch {
+  0%   { transform: none; filter: none; clip-path: none; }
+  8%   { transform: translateX(-10px); filter: hue-rotate(-35deg) contrast(1.4); }
+  16%  { transform: translateX(7px) skewX(-3deg); clip-path: inset(12% 0 55% 0); }
+  24%  { transform: translateX(-4px); clip-path: none; filter: saturate(2.5) brightness(1.3); }
+  34%  { transform: translateX(12px); clip-path: inset(48% 0 18% 0); filter: invert(0.12); }
+  44%  { transform: translateX(-6px) skewX(4deg); clip-path: none; filter: hue-rotate(40deg); }
+  56%  { transform: translateX(3px); clip-path: inset(0 0 72% 0); filter: contrast(1.6); }
+  68%  { transform: none; clip-path: none; filter: brightness(0.7); }
+  80%  { transform: translateX(-5px); filter: saturate(3); }
+  100% { transform: none; filter: none; clip-path: none; }
+}
+
+/* The live console, before and after the wipe. drop-shadow pairs in
+   red and cyan fake a chromatic split without duplicating the DOM. */
+:root.glitching .hud-grid {
+  animation: console-glitch var(--glitch-ms, 260ms) steps(1, end) both;
+}
+
+@keyframes console-glitch {
+  0%   { transform: none; filter: none; }
+  12%  { transform: translate(-7px, 1px) skewX(-2deg);
+         filter: drop-shadow(-4px 0 rgba(255, 0, 64, 0.8)) drop-shadow(4px 0 rgba(0, 229, 255, 0.8)); }
+  26%  { transform: translate(6px, -2px); filter: hue-rotate(50deg) saturate(2.2); }
+  40%  { transform: translate(-3px, 0) skewX(3deg);
+         filter: drop-shadow(5px 0 rgba(255, 0, 64, 0.85)) drop-shadow(-5px 0 rgba(0, 229, 255, 0.85)) contrast(1.5); }
+  55%  { transform: translate(4px, 1px); filter: invert(0.18) brightness(1.3); }
+  70%  { transform: translate(-2px, -1px); filter: drop-shadow(-2px 0 rgba(255, 0, 64, 0.7)) drop-shadow(2px 0 rgba(0, 229, 255, 0.7)); }
+  85%  { transform: translate(1px, 0); filter: none; }
+  100% { transform: none; filter: none; }
+}
+
+.glitch-tears {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1001;
+  overflow: hidden;
+}
+
+.glitch-band {
+  position: absolute;
+  left: -5%;
+  right: -5%;
+  background: rgba(var(--accent-rgb), 0.18);
+  mix-blend-mode: screen;
+  /* The band shows the console behind it shifted and inverted, which is
+     what makes it read as a torn signal rather than a coloured stripe. */
+  backdrop-filter: invert(0.85) hue-rotate(160deg) saturate(3);
+  box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.5);
+}
+
 .mode-switching,
 .mode-switching *,
 .mode-switching *::before,

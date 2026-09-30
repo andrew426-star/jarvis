@@ -191,6 +191,12 @@ function Shell({
         ? "thinking"
         : "idle"
 
+  // Serious mode runs its own ambience layer. Keyed on the mode itself,
+  // so it also applies on load after a reload in serious mode.
+  useEffect(() => {
+    sfx.setAmbience(mode)
+  }, [mode])
+
   useEffect(() => {
     setAgentStatus(agentStatus)
     // The ambience follows the same state the reactor and EQ do, so the

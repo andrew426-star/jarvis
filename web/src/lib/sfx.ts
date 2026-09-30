@@ -15,6 +15,7 @@
 // cannot be fetched or played.
 
 type Status = "idle" | "listening" | "speaking" | "thinking"
+type Ambience = "normal" | "serious"
 
 const STORAGE_KEY = "jarvis.sfx.muted"
 
@@ -30,6 +31,12 @@ let thinkTimer: ReturnType<typeof setInterval> | null = null
 let bedEl: HTMLAudioElement | null = null
 let muted = false
 let mutedLoaded = false
+// The recorded (or synth) bed passes through normalGain and bedTone so
+// serious mode can pull it back and darken it under the Mechanicus layer.
+let normalGain: GainNode | null = null
+let bedTone: BiquadFilterNode | null = null
+let reverb: ConvolverNode | null = null
+let ambienceMode: Ambience = "normal"
 // The top bar's Audio/Muted label reads mute state as an external store
 // (useSyncExternalStore) rather than copying it into React state.
 const muteListeners = new Set<() => void>()
@@ -97,6 +104,7 @@ export function unlockAudio(): void {
   if (!started) {
     started = true
     startBed()
+    if (ambienceMode === "serious") startMechanicus()
   }
 }
 
@@ -105,13 +113,26 @@ export function unlockAudio(): void {
 // otherwise.
 const AMBIENCE_URL = "/ambience.mp3"
 
+// Where the normal bed plugs in. Shared by the recorded bed and its synth
+// fallback, so the fallback reuses the chain instead of orphaning it.
+function bedInput(context: AudioContext): GainNode {
+  if (!bedGain) {
+    bedGain = context.createGain()
+    bedGain.gain.value = 0.0
+    bedGain.connect(master!)
+  }
+  if (!normalGain) {
+    normalGain = context.createGain()
+    normalGain.gain.value = ambienceMode === "serious" ? SERIOUS_BED_LEVEL : 1
+    normalGain.connect(bedGain)
+  }
+  return normalGain
+}
+
 function startBed(): void {
   const context = ensure()
   if (!context || !master) return
-
-  bedGain = context.createGain()
-  bedGain.gain.value = 0.0
-  bedGain.connect(master)
+  const input = bedInput(context)
 
   const el = new Audio(AMBIENCE_URL)
   el.loop = true
@@ -126,8 +147,9 @@ function startBed(): void {
   // a second thing to keep in step.
   const tone = context.createBiquadFilter()
   tone.type = "lowpass"
-  tone.frequency.value = 760
+  tone.frequency.value = ambienceMode === "serious" ? SERIOUS_BED_CUTOFF : 760
   tone.Q.value = 0.4
+  bedTone = tone
 
   const rumble = context.createBiquadFilter()
   rumble.type = "highpass"
@@ -136,7 +158,7 @@ function startBed(): void {
   const source = context.createMediaElementSource(el)
   source.connect(rumble)
   rumble.connect(tone)
-  tone.connect(bedGain)
+  tone.connect(input)
 
   // A missing or unplayable file falls back to the synthesised bed
   // rather than leaving the console silent. Worth having: the asset is
@@ -145,16 +167,13 @@ function startBed(): void {
   el.addEventListener("error", () => startSynthBed(), { once: true })
   void el.play().catch(() => startSynthBed())
 
-  bedGain.gain.linearRampToValueAtTime(0.6, context.currentTime + 3)
+  bedGain!.gain.linearRampToValueAtTime(0.6, context.currentTime + 3)
 }
 
 function startSynthBed(): void {
   const context = ensure()
   if (!context || !master) return
-
-  bedGain = context.createGain()
-  bedGain.gain.value = 0.0
-  bedGain.connect(master)
+  const input = bedInput(context)
 
   // A trace of filtered air, well under the hum. At 0.05 this was the
   // loudest thing in the bed and read as static; it is here to give the
@@ -169,7 +188,7 @@ function startSynthBed(): void {
   airGain.gain.value = 0.011
   air.connect(airFilter)
   airFilter.connect(airGain)
-  airGain.connect(bedGain)
+  airGain.connect(input)
   air.start()
 
   // The hum. A fundamental with its harmonics falling away above it -
@@ -183,7 +202,7 @@ function startSynthBed(): void {
   const warm = context.createBiquadFilter()
   warm.type = "lowpass"
   warm.frequency.value = 900
-  warm.connect(bedGain)
+  warm.connect(input)
 
   const partials: [number, number][] = [
     [98, 0.055],
@@ -216,7 +235,7 @@ function startSynthBed(): void {
     lfo.start()
   }
 
-  bedGain.gain.linearRampToValueAtTime(0.6, context.currentTime + 3)
+  bedGain!.gain.linearRampToValueAtTime(0.6, context.currentTime + 3)
 }
 
 // One short tone with a percussive envelope - the shape every UI sound
@@ -236,6 +255,527 @@ function blip(freq: number, peak: number, decay: number, type: OscillatorType = 
   g.connect(master)
   osc.start(now)
   osc.stop(now + decay + 0.02)
+}
+
+// ---------------------------------------------------------------------------
+// Serious mode: the Mechanicus layer.
+//
+// A forge-cathedral under the normal bed rather than instead of it: the
+// recorded bed drops to SERIOUS_BED_LEVEL and darkens, and over it runs an
+// organ drone on A, a formant "choir" pad walking a slow modal progression,
+// piston beats, binary chatter (binharic cant: two tones, 0 and 1), servo
+// whirs and a distant bell - all in a long synthetic cathedral reverb.
+// Everything is synthesised, so it costs no download and reacts to mode
+// the instant it changes.
+// ---------------------------------------------------------------------------
+
+const SERIOUS_BED_LEVEL = 0.4
+const SERIOUS_BED_CUTOFF = 420
+// Overall level of the layer inside the bed, before status ducking.
+const MECH_LEVEL = 0.9
+
+let mechGain: GainNode | null = null
+let mechNodes: AudioScheduledSourceNode[] = []
+let mechTimers: ReturnType<typeof setTimeout>[] = []
+let choirVoices: OscillatorNode[][] = []
+let mechanicusOn = false
+
+// A long, dark hall: stereo noise with an exponential tail, darker as it
+// decays because every sample is averaged with the last.
+function cathedral(context: AudioContext): ConvolverNode {
+  if (reverb) return reverb
+  const seconds = 5.5
+  const length = Math.floor(context.sampleRate * seconds)
+  const impulse = context.createBuffer(2, length, context.sampleRate)
+  for (let channel = 0; channel < 2; channel += 1) {
+    const data = impulse.getChannelData(channel)
+    let last = 0
+    for (let i = 0; i < length; i += 1) {
+      const t = i / length
+      const smooth = 0.4 + t * 0.55
+      last = last * smooth + (Math.random() * 2 - 1) * (1 - smooth)
+      data[i] = last * Math.pow(1 - t, 2.6) * 3
+    }
+  }
+  reverb = context.createConvolver()
+  reverb.buffer = impulse
+  reverb.connect(master!)
+  return reverb
+}
+
+// Sends a source into the layer: part dry, part into the hall.
+function mechSend(context: AudioContext, node: AudioNode, dry: number, wet: number) {
+  if (!mechGain) return
+  const d = context.createGain()
+  d.gain.value = dry
+  node.connect(d)
+  d.connect(mechGain)
+  const w = context.createGain()
+  w.gain.value = wet
+  node.connect(w)
+  w.connect(cathedral(context))
+}
+
+function later(ms: number, fn: () => void) {
+  mechTimers.push(setTimeout(fn, ms))
+}
+
+function oneShotNoise(context: AudioContext, seconds: number): AudioBufferSourceNode {
+  const source = context.createBufferSource()
+  source.buffer = noiseBuffer(context)
+  source.loop = true
+  source.start(context.currentTime, Math.random())
+  source.stop(context.currentTime + seconds + 0.05)
+  return source
+}
+
+// One bit of binharic cant. Square waves through a narrow band, so it
+// sounds like a vox-grille, not a synth.
+function binharicBit(one: boolean, peak = 0.018, at = 0, into?: AudioNode) {
+  const context = ensure()
+  if (!context || !master || muted) return
+  const now = context.currentTime + at
+  const osc = context.createOscillator()
+  osc.type = "square"
+  osc.frequency.value = one ? 1780 : 1190
+  const band = context.createBiquadFilter()
+  band.type = "bandpass"
+  band.frequency.value = 1500
+  band.Q.value = 2.5
+  const g = context.createGain()
+  g.gain.setValueAtTime(0, now)
+  g.gain.linearRampToValueAtTime(peak, now + 0.003)
+  g.gain.setValueAtTime(peak, now + 0.028)
+  g.gain.linearRampToValueAtTime(0, now + 0.034)
+  osc.connect(band)
+  band.connect(g)
+  g.connect(into ?? master)
+  osc.start(now)
+  osc.stop(now + 0.05)
+}
+
+function cant(bits: number, spacing: number, peak: number, into?: AudioNode) {
+  for (let i = 0; i < bits; i += 1) binharicBit(Math.random() < 0.5, peak, i * spacing, into)
+}
+
+// Inharmonic partials are what make a bell a bell and not a chord.
+const BELL_PARTIALS: [number, number, number][] = [
+  [0.5, 1, 7],
+  [1, 0.8, 5.5],
+  [1.19, 0.5, 4],
+  [1.56, 0.4, 3.2],
+  [2, 0.35, 3],
+  [2.51, 0.2, 2.2],
+  [2.66, 0.18, 2],
+]
+
+function toll(base: number, peak: number) {
+  const context = ensure()
+  if (!context || !master || muted) return
+  const now = context.currentTime
+  const out = context.createGain()
+  out.connect(cathedral(context))
+  const dry = context.createGain()
+  dry.gain.value = 0.35
+  out.connect(dry)
+  dry.connect(mechGain ?? master)
+  for (const [ratio, level, decay] of BELL_PARTIALS) {
+    const osc = context.createOscillator()
+    osc.frequency.value = base * ratio
+    const g = context.createGain()
+    g.gain.setValueAtTime(0, now)
+    g.gain.linearRampToValueAtTime(peak * level, now + 0.01)
+    g.gain.exponentialRampToValueAtTime(0.0001, now + decay)
+    osc.connect(g)
+    g.connect(out)
+    osc.start(now)
+    osc.stop(now + decay + 0.1)
+  }
+}
+
+// A minor, F major, D minor, E major: slow and modal, a chant rather
+// than a song.
+const CHORDS = [
+  [220, 261.63, 329.63],
+  [174.61, 220, 261.63],
+  [146.83, 174.61, 220],
+  [164.81, 207.65, 246.94],
+]
+let chordIndex = 0
+
+// Organ drone plus choir: the continuous part of the layer.
+function startDroneAndChoir(context: AudioContext) {
+  const now = context.currentTime
+
+  // Organ: A1, E2, A2. Detuned pairs of saws through a slowly breathing
+  // low-pass read as pipes in a big room rather than as a synth.
+  const organFilter = context.createBiquadFilter()
+  organFilter.type = "lowpass"
+  organFilter.frequency.value = 300
+  organFilter.Q.value = 1.6
+  const organ = context.createGain()
+  organ.gain.value = 0.05
+  organFilter.connect(organ)
+  mechSend(context, organ, 0.8, 0.5)
+
+  const pipes: [number, number, OscillatorType][] = [
+    [55, 1, "sawtooth"],
+    [82.41, 0.55, "sawtooth"],
+    [110, 0.35, "square"],
+  ]
+  for (const [freq, level, type] of pipes) {
+    for (const cents of [-5, 5]) {
+      const osc = context.createOscillator()
+      osc.type = type
+      osc.frequency.value = freq
+      osc.detune.value = cents
+      const g = context.createGain()
+      g.gain.value = level * 0.5
+      osc.connect(g)
+      g.connect(organFilter)
+      osc.start(now)
+      mechNodes.push(osc)
+    }
+  }
+  const breathe = context.createOscillator()
+  breathe.frequency.value = 0.035
+  const depth = context.createGain()
+  depth.gain.value = 130
+  breathe.connect(depth)
+  depth.connect(organFilter.frequency)
+  breathe.start(now)
+  mechNodes.push(breathe)
+
+  // Choir: three voices of detuned saws through two vowel formants ("ah"),
+  // almost entirely wet, so it hangs in the hall rather than in the room.
+  const f1 = context.createBiquadFilter()
+  f1.type = "bandpass"
+  f1.frequency.value = 780
+  f1.Q.value = 5
+  const f2 = context.createBiquadFilter()
+  f2.type = "bandpass"
+  f2.frequency.value = 1150
+  f2.Q.value = 7
+  const choir = context.createGain()
+  choir.gain.setValueAtTime(0, now)
+  choir.gain.linearRampToValueAtTime(0.09, now + 6)
+  f1.connect(choir)
+  f2.connect(choir)
+  mechSend(context, choir, 0.15, 1)
+
+  const swell = context.createOscillator()
+  swell.frequency.value = 0.06
+  const swellDepth = context.createGain()
+  swellDepth.gain.value = 0.035
+  swell.connect(swellDepth)
+  swellDepth.connect(choir.gain)
+  swell.start(now)
+  mechNodes.push(swell)
+
+  chordIndex = 0
+  choirVoices = CHORDS[0].map((freq) =>
+    [-9, 0, 8].map((cents) => {
+      const osc = context.createOscillator()
+      osc.type = "sawtooth"
+      osc.frequency.value = freq
+      osc.detune.value = cents
+      const g = context.createGain()
+      g.gain.value = 0.12
+      osc.connect(g)
+      g.connect(f1)
+      g.connect(f2)
+      osc.start(now)
+      mechNodes.push(osc)
+      return osc
+    })
+  )
+}
+
+function walkChoir() {
+  const context = ensure()
+  if (!context || !mechanicusOn) return
+  chordIndex = (chordIndex + 1) % CHORDS.length
+  const chord = CHORDS[chordIndex]
+  choirVoices.forEach((voices, i) =>
+    voices.forEach((osc) => osc.frequency.setTargetAtTime(chord[i], context.currentTime, 1.2))
+  )
+  later(18000 + Math.random() * 8000, walkChoir)
+}
+
+// Piston: a low thump, and a metallic clank as it returns. Every fourth
+// stroke vents steam.
+let stroke = 0
+function piston() {
+  const context = ensure()
+  if (!context || !mechanicusOn || !mechGain) return
+  if (!muted) {
+    const now = context.currentTime
+    const thump = context.createOscillator()
+    thump.frequency.setValueAtTime(62, now)
+    thump.frequency.exponentialRampToValueAtTime(34, now + 0.35)
+    const tg = context.createGain()
+    tg.gain.setValueAtTime(0, now)
+    tg.gain.linearRampToValueAtTime(0.14, now + 0.01)
+    tg.gain.exponentialRampToValueAtTime(0.0001, now + 0.45)
+    thump.connect(tg)
+    mechSend(context, tg, 1, 0.3)
+    thump.start(now)
+    thump.stop(now + 0.5)
+
+    const clank = oneShotNoise(context, 0.6)
+    const ring = context.createBiquadFilter()
+    ring.type = "bandpass"
+    ring.frequency.value = 1900 + Math.random() * 400
+    ring.Q.value = 14
+    const cg = context.createGain()
+    cg.gain.setValueAtTime(0, now + 0.42)
+    cg.gain.linearRampToValueAtTime(0.09, now + 0.425)
+    cg.gain.exponentialRampToValueAtTime(0.0001, now + 0.55)
+    clank.connect(ring)
+    ring.connect(cg)
+    mechSend(context, cg, 0.6, 0.5)
+
+    stroke += 1
+    if (stroke % 4 === 0) {
+      const steam = oneShotNoise(context, 1.4)
+      const hiss = context.createBiquadFilter()
+      hiss.type = "highpass"
+      hiss.frequency.value = 2800
+      const sg = context.createGain()
+      sg.gain.setValueAtTime(0, now + 0.5)
+      sg.gain.linearRampToValueAtTime(0.022, now + 0.6)
+      sg.gain.exponentialRampToValueAtTime(0.0001, now + 1.4)
+      steam.connect(hiss)
+      hiss.connect(sg)
+      mechSend(context, sg, 0.7, 0.4)
+    }
+  }
+  later(2600 + Math.random() * 500, piston)
+}
+
+function chatter() {
+  if (!mechanicusOn) return
+  if (mechGain) cant(6 + Math.floor(Math.random() * 10), 0.045, 0.02, mechGain)
+  later(4000 + Math.random() * 6000, chatter)
+}
+
+// A servo: a buzzing saw whose filter sweeps up and back like a joint
+// turning under load.
+function servo() {
+  const context = ensure()
+  if (!context || !mechanicusOn || !mechGain) return
+  if (!muted) {
+    const now = context.currentTime
+    const osc = context.createOscillator()
+    osc.type = "sawtooth"
+    osc.frequency.setValueAtTime(78, now)
+    osc.frequency.linearRampToValueAtTime(140, now + 0.7)
+    osc.frequency.linearRampToValueAtTime(96, now + 1.3)
+    const band = context.createBiquadFilter()
+    band.type = "bandpass"
+    band.Q.value = 4
+    band.frequency.setValueAtTime(320, now)
+    band.frequency.linearRampToValueAtTime(1500, now + 0.7)
+    band.frequency.linearRampToValueAtTime(520, now + 1.3)
+    const g = context.createGain()
+    g.gain.setValueAtTime(0, now)
+    g.gain.linearRampToValueAtTime(0.03, now + 0.15)
+    g.gain.linearRampToValueAtTime(0, now + 1.35)
+    osc.connect(band)
+    band.connect(g)
+    mechSend(context, g, 0.7, 0.4)
+    osc.start(now)
+    osc.stop(now + 1.4)
+  }
+  later(8000 + Math.random() * 8000, servo)
+}
+
+function bell() {
+  if (!mechanicusOn) return
+  toll(110, 0.035)
+  later(26000 + Math.random() * 14000, bell)
+}
+
+function startMechanicus() {
+  const context = ensure()
+  if (!context || !bedGain || mechanicusOn) return
+  mechanicusOn = true
+  const now = context.currentTime
+
+  mechGain = context.createGain()
+  mechGain.gain.setValueAtTime(0, now)
+  mechGain.gain.linearRampToValueAtTime(MECH_LEVEL, now + 3)
+  // Inside the bed, so thinking lifts it and narration ducks it exactly
+  // as it does the normal ambience.
+  mechGain.connect(bedGain)
+
+  startDroneAndChoir(context)
+  later(1800, piston)
+  later(3000, chatter)
+  later(6000, servo)
+  later(12000, walkChoir)
+  later(20000, bell)
+}
+
+function stopMechanicus() {
+  const context = ensure()
+  if (!context || !mechanicusOn) return
+  mechanicusOn = false
+  mechTimers.forEach(clearTimeout)
+  mechTimers = []
+  const gain = mechGain
+  const nodes = mechNodes
+  mechGain = null
+  mechNodes = []
+  choirVoices = []
+  const now = context.currentTime
+  if (gain) {
+    gain.gain.cancelScheduledValues(now)
+    gain.gain.setValueAtTime(gain.gain.value, now)
+    gain.gain.linearRampToValueAtTime(0, now + 2)
+  }
+  // Stopped after the fade, not during it, or the drone would cut dead.
+  setTimeout(() => {
+    nodes.forEach((node) => {
+      try {
+        node.stop()
+      } catch {
+        // Already stopped.
+      }
+    })
+    gain?.disconnect()
+  }, 2200)
+}
+
+// Digital corruption: a handful of 20-30ms slices, each a random burst of
+// band-passed noise or a square blip at a random pitch.
+function stutter(slices: number, peak: number) {
+  const context = ensure()
+  if (!context || !master || muted) return
+  const start = context.currentTime
+  for (let i = 0; i < slices; i += 1) {
+    const at = start + i * 0.028
+    const g = context.createGain()
+    g.gain.setValueAtTime(0, at)
+    g.gain.linearRampToValueAtTime(peak * (0.5 + Math.random() * 0.5), at + 0.002)
+    g.gain.setValueAtTime(peak * 0.6, at + 0.018)
+    g.gain.linearRampToValueAtTime(0, at + 0.022)
+    g.connect(master)
+    if (Math.random() < 0.55) {
+      const burst = context.createBufferSource()
+      burst.buffer = noiseBuffer(context)
+      const band = context.createBiquadFilter()
+      band.type = "bandpass"
+      band.frequency.value = 300 + Math.random() * 5000
+      band.Q.value = 3
+      burst.connect(band)
+      band.connect(g)
+      burst.start(at, Math.random())
+      burst.stop(at + 0.03)
+    } else {
+      const osc = context.createOscillator()
+      osc.type = "square"
+      osc.frequency.value = 150 + Math.random() * 2800
+      osc.connect(g)
+      osc.start(at)
+      osc.stop(at + 0.03)
+    }
+  }
+}
+
+function sweep(
+  from: number,
+  to: number,
+  seconds: number,
+  peak: number,
+  type: OscillatorType,
+  cutoff: [number, number]
+) {
+  const context = ensure()
+  if (!context || !master || muted) return
+  const now = context.currentTime
+  const osc = context.createOscillator()
+  osc.type = type
+  osc.frequency.setValueAtTime(from, now)
+  osc.frequency.exponentialRampToValueAtTime(to, now + seconds)
+  const filter = context.createBiquadFilter()
+  filter.type = "lowpass"
+  filter.frequency.setValueAtTime(cutoff[0], now)
+  filter.frequency.exponentialRampToValueAtTime(cutoff[1], now + seconds)
+  const g = context.createGain()
+  g.gain.setValueAtTime(0, now)
+  g.gain.linearRampToValueAtTime(peak, now + 0.02)
+  g.gain.exponentialRampToValueAtTime(0.0001, now + seconds + 0.1)
+  osc.connect(filter)
+  filter.connect(g)
+  g.connect(master)
+  osc.start(now)
+  osc.stop(now + seconds + 0.15)
+}
+
+function impact() {
+  const context = ensure()
+  if (!context || !master || muted) return
+  const now = context.currentTime
+  const sub = context.createOscillator()
+  sub.frequency.setValueAtTime(72, now)
+  sub.frequency.exponentialRampToValueAtTime(28, now + 0.9)
+  const sg = context.createGain()
+  sg.gain.setValueAtTime(0, now)
+  sg.gain.linearRampToValueAtTime(0.22, now + 0.01)
+  sg.gain.exponentialRampToValueAtTime(0.0001, now + 1.1)
+  sub.connect(sg)
+  sg.connect(master)
+  sg.connect(cathedral(context))
+  sub.start(now)
+  sub.stop(now + 1.2)
+
+  const rumble = oneShotNoise(context, 0.7)
+  const low = context.createBiquadFilter()
+  low.type = "lowpass"
+  low.frequency.value = 260
+  const rg = context.createGain()
+  rg.gain.setValueAtTime(0, now)
+  rg.gain.linearRampToValueAtTime(0.12, now + 0.01)
+  rg.gain.exponentialRampToValueAtTime(0.0001, now + 0.7)
+  rumble.connect(low)
+  low.connect(rg)
+  rg.connect(master)
+}
+
+function applyAmbience(mode: Ambience) {
+  ambienceMode = mode
+  const context = ensure()
+  if (!context || !started) return // applied when the bed starts
+  const now = context.currentTime
+  const serious = mode === "serious"
+  normalGain?.gain.setTargetAtTime(serious ? SERIOUS_BED_LEVEL : 1, now, 0.8)
+  bedTone?.frequency.setTargetAtTime(serious ? SERIOUS_BED_CUTOFF : 760, now, 0.8)
+  if (serious) startMechanicus()
+  else stopMechanicus()
+}
+
+// The sound of the switch itself, timed against the visual transition in
+// lib/mode-fx.ts: corruption first, then (into serious) the power drop and
+// impact as the wipe starts, the binary cant, and a bell as it lands.
+function playModeShift(mode: Ambience) {
+  if (muted) return
+  if (mode === "serious") {
+    stutter(10, 0.05)
+    setTimeout(() => {
+      sweep(420, 34, 0.95, 0.07, "sawtooth", [1600, 160])
+      impact()
+      cant(12, 0.03, 0.022)
+    }, 290)
+    setTimeout(() => toll(110, 0.05), 950)
+  } else {
+    stutter(5, 0.035)
+    setTimeout(() => {
+      sweep(260, 1500, 0.5, 0.05, "sine", [3000, 6000])
+      blip(880, 0.045, 0.14, "sine")
+      setTimeout(() => blip(1320, 0.04, 0.24, "sine"), 110)
+    }, 180)
+  }
 }
 
 export const sfx = {
@@ -277,7 +817,8 @@ export const sfx = {
       thinkTimer = setInterval(() => {
         // Slight random detune so a fixed interval doesn't read as a
         // metronome - it should sound like work, not a countdown.
-        blip(1400 + Math.random() * 500, 0.022, 0.045)
+        if (ambienceMode === "serious") binharicBit(Math.random() < 0.5, 0.02)
+        else blip(1400 + Math.random() * 500, 0.022, 0.045)
       }, 340)
       return
     }
@@ -290,6 +831,17 @@ export const sfx = {
       return
     }
     bedGain.gain.linearRampToValueAtTime(0.6, now + 0.8)
+  },
+
+  // Serious mode's Mechanicus layer on or off. Called whenever the mode
+  // changes, including once on load, so a reload into serious mode comes
+  // back with its ambience.
+  setAmbience(mode: Ambience): void {
+    applyAmbience(mode)
+  },
+  // The sound of the switch itself, once per toggle.
+  modeShift(mode: Ambience): void {
+    playModeShift(mode)
   },
 
   isMuted(): boolean {

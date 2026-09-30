@@ -1,9 +1,9 @@
 "use client"
 
-import { flushSync } from "react-dom"
 import { create } from "zustand"
 
 import type { ConnectionInfo } from "@/lib/jarvis-client"
+import { playModeTransition } from "@/lib/mode-fx"
 import { centralTime } from "@/lib/time"
 
 export type Mode = "normal" | "serious"
@@ -108,58 +108,21 @@ export function clockTime(date = new Date()): string {
   return centralTime(date)
 }
 
-// Mode switch as one wipe instead of a 500ms colour fade. The fade could
-// only move colours: the background gradients, scanlines, vignette and
-// corner radius cannot be transitioned, so they snapped while the rest
-// faded. A view transition snapshots the old console and reveals the new
-// one through a circle growing from `origin`, so everything changes in
-// the same motion. Browsers without the API, and reduced motion, get the
-// plain switch.
-const WIPE_MS = 750
-
-function playModeWipe(apply: () => void, origin?: { x: number; y: number }) {
-  const reduced =
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  if (typeof document === "undefined" || !document.startViewTransition || reduced) {
-    apply()
-    return
+function readStoredMode(): Mode {
+  if (typeof window === "undefined") return "normal"
+  try {
+    return localStorage.getItem("jarvis_mode") === "serious" ? "serious" : "normal"
+  } catch {
+    return "normal"
   }
-
-  const root = document.documentElement
-  const x = origin?.x ?? window.innerWidth / 2
-  const y = origin?.y ?? 0
-  // Far enough to clear the farthest corner from the origin.
-  const radius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y))
-
-  // Per-element colour transitions would still be mid-fade when the new
-  // snapshot is taken, so they are paused for the length of the wipe.
-  root.classList.add("mode-switching")
-  const transition = document.startViewTransition(() => {
-    // Flushed so mode-driven React state (grid and stream opacity) is
-    // already in the new snapshot rather than changing after it.
-    flushSync(apply)
-  })
-  transition.ready
-    .then(() => {
-      root.animate(
-        { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`] },
-        {
-          duration: WIPE_MS,
-          easing: "cubic-bezier(0.65, 0, 0.35, 1)",
-          pseudoElement: "::view-transition-new(root)",
-        }
-      )
-    })
-    .catch(() => {
-      // Transition skipped (tab hidden, another one started); the mode
-      // itself has still been applied by the update callback.
-    })
-  transition.finished.finally(() => root.classList.remove("mode-switching"))
 }
 
 export const useJarvis = create<JarvisState>((set, get) => ({
-  mode: "normal",
+  // Read at startup like gridVisible below. layout.tsx already puts the
+  // serious class on <html> before first paint; defaulting to "normal"
+  // here left the store disagreeing with the screen after every reload
+  // in serious mode (wrong toggle label, normal grid, normal ambience).
+  mode: readStoredMode(),
   status: "idle",
   listening: false,
   settingsOpen: false,
@@ -201,7 +164,7 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   // state can never drift apart - there is one place that writes them.
   toggleMode: (origin) => {
     const next = get().mode === "normal" ? "serious" : "normal"
-    playModeWipe(() => get().setMode(next), origin)
+    void playModeTransition(next, () => get().setMode(next), origin)
   },
 
   setStatus: (status) => set({ status }),
