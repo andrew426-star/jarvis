@@ -1,5 +1,12 @@
-from app.core.google_oauth import get_google_access_token
+from app.core.google_oauth import ROW_ID, SCHOOL_ROW_ID, get_google_access_token
 from app.integrations import google_api
+
+# Tool-facing account names -> connection row ids.
+ACCOUNTS = {"kivaro": ROW_ID, "school": SCHOOL_ROW_ID}
+# The school account is read-only (see SCHOOL_SCOPES); these merge across
+# both accounts by default, tagging every item with its account.
+MERGED_READS = ("gmail_list_messages", "calendar_list_events")
+SCHOOL_READS = MERGED_READS + ("gmail_get_message",)
 
 
 def _ok(operation: str, data) -> dict:
@@ -10,19 +17,93 @@ def _err(operation: str, message: str) -> dict:
     return {"ok": False, "operation": operation, "error": message}
 
 
+def _tagged(items: list[dict], account: str) -> list[dict]:
+    return [{**item, "account": account} for item in items]
+
+
+def _list(operation: str, access_token: str, args: dict) -> list[dict]:
+    if operation == "gmail_list_messages":
+        return google_api.gmail_list_messages(
+            access_token, args.get("query"), int(args.get("max_results") or 10)
+        )
+    return google_api.calendar_list_events(
+        access_token,
+        int(args.get("days_ahead") or 14),
+        int(args.get("max_results") or 50),
+    )
+
+
+def _merged_read(operation: str, args: dict, account: str) -> dict:
+    """gmail_list_messages / calendar_list_events across the requested
+    accounts. With 'all', a school account that isn't connected or is
+    failing is reported in `school_account` rather than failing the call —
+    the Kivaro results are still real."""
+    names = ["kivaro", "school"] if account == "all" else [account]
+    items: list[dict] = []
+    school_note = None
+    for name in names:
+        try:
+            token = get_google_access_token(ACCOUNTS[name])
+        except Exception as exc:  # noqa: BLE001
+            if account == "all" and name == "school":
+                school_note = f"school account failed: {exc}"
+                continue
+            raise
+        if not token:
+            if account == "all" and name == "school":
+                school_note = "school account not connected (/auth/google/connect?account=school)"
+                continue
+            return _err(
+                operation,
+                f"Google {name} account not connected — visit /auth/google/connect"
+                + ("?account=school" if name == "school" else "")
+                + " first",
+            )
+        try:
+            items.extend(_tagged(_list(operation, token, args), name))
+        except Exception as exc:  # noqa: BLE001
+            if account == "all" and name == "school":
+                school_note = f"school account failed: {exc}"
+                continue
+            raise
+
+    if operation == "calendar_list_events":
+        items.sort(key=lambda e: e.get("start") or "")
+    data: dict | list = items
+    if school_note:
+        data = {"items": items, "school_account": school_note}
+    return _ok(operation, data)
+
+
 def google_titan(args: dict) -> dict:
     operation = args.get("operation")
+    # Reads default to both accounts; gmail_get_message and every write
+    # default to Kivaro.
+    account = args.get("account") or ("all" if operation in MERGED_READS else "kivaro")
 
     try:
-        access_token = get_google_access_token()
-        if not access_token:
-            return _err(str(operation), "Google not connected — visit /auth/google/connect first")
-
-        if operation == "gmail_list_messages":
-            data = google_api.gmail_list_messages(
-                access_token, args.get("query"), int(args.get("max_results") or 10)
+        if account not in ("kivaro", "school", "all"):
+            return _err(str(operation), f"Unknown account: {account}")
+        if account == "all" and operation not in MERGED_READS:
+            return _err(str(operation), "account 'all' only works for list operations")
+        if account == "school" and operation not in SCHOOL_READS:
+            return _err(
+                str(operation),
+                "The school account is read-only — sending, creating events, Drive and Docs "
+                "only work on the Kivaro account.",
             )
-            return _ok(operation, data)
+
+        if operation in MERGED_READS:
+            return _merged_read(operation, args, account)
+
+        access_token = get_google_access_token(ACCOUNTS[account])
+        if not access_token:
+            return _err(
+                str(operation),
+                "Google not connected — visit /auth/google/connect"
+                + ("?account=school" if account == "school" else "")
+                + " first",
+            )
 
         if operation == "gmail_get_message":
             message_id = args.get("message_id")
@@ -43,14 +124,6 @@ def google_titan(args: dict) -> dict:
                 body=body,
                 thread_id=args.get("thread_id"),
                 in_reply_to=args.get("in_reply_to"),
-            )
-            return _ok(operation, data)
-
-        if operation == "calendar_list_events":
-            data = google_api.calendar_list_events(
-                access_token,
-                int(args.get("days_ahead") or 14),
-                int(args.get("max_results") or 50),
             )
             return _ok(operation, data)
 

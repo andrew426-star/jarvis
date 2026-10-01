@@ -5,7 +5,7 @@ import threading
 import time
 from datetime import date, datetime
 
-from app.core.google_oauth import get_google_access_token
+from app.core.google_oauth import SCHOOL_ROW_ID, get_google_access_token
 from app.core.local_time import LOCAL_TZ
 from app.core.redis_client import get_redis_client
 from app.integrations.google_api import calendar_list_events
@@ -117,6 +117,16 @@ def _refresh_calendar() -> list[dict] | None:
     except Exception:  # noqa: BLE001
         logger.debug("calendar fetch failed", exc_info=True)
         events = None
+    # Classes live on the Louisiana Tech calendar, so "in class until 1:45"
+    # needs it too. Best-effort: not connected or failing just leaves the
+    # Kivaro events.
+    try:
+        school_token = get_google_access_token(SCHOOL_ROW_ID)
+        if school_token:
+            school_events = calendar_list_events(school_token, 1, 8)
+            events = sorted((events or []) + school_events, key=lambda e: e.get("start") or "")
+    except Exception:  # noqa: BLE001
+        logger.debug("school calendar fetch failed", exc_info=True)
     with _calendar_lock:
         _calendar_cache = (time.time(), events)
         _refreshing = False

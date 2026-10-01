@@ -117,9 +117,12 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "google_titan",
             "description": (
-                "Andrew's connected Google account — Gmail, Calendar, Drive, and Docs. Use to "
+                "Andrew's connected Google accounts — Gmail, Calendar, Drive, and Docs. Use to "
                 "list/search/read/send Gmail messages, list/create Calendar events, search "
-                "Drive files by name or content, and create/read Google Docs."
+                "Drive files by name or content, and create/read Google Docs. Two accounts: "
+                "'kivaro' (his company account, full access) and 'school' (his Louisiana Tech "
+                "account, agt537@email.latech.edu, read-only: mail and calendar). Listing mail "
+                "or events covers both by default and tags each item with its account."
             ),
             "parameters": {
                 "type": "object",
@@ -136,6 +139,15 @@ TOOL_SCHEMAS = [
                             "docs_create_document",
                             "docs_get_document",
                         ],
+                    },
+                    "account": {
+                        "type": "string",
+                        "enum": ["kivaro", "school", "all"],
+                        "description": "Which Google account. gmail_list_messages and "
+                        "calendar_list_events default to 'all'. gmail_get_message defaults to "
+                        "'kivaro'; pass the `account` from the listed message to read a school "
+                        "email. Everything else (sending, creating events, Drive, Docs) is "
+                        "Kivaro-only.",
                     },
                     "query": {
                         "type": "string",

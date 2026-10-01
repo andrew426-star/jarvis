@@ -12,8 +12,12 @@ router = APIRouter()
 # Deliberately a table rather than three near-identical blocks: adding a
 # fourth provider should be one line here, not a fourth copy of the same
 # try/except.
+# The optional fourth field is the row id, for a provider with more than
+# one connection in its table (the read-only Louisiana Tech Google account
+# is row 'school' in jarvis_google_connection).
 PROVIDERS = (
     ("google", "jarvis_google_connection", "google_email"),
+    ("google_school", "jarvis_google_connection", "google_email", "school"),
     ("spotify", "jarvis_spotify_connection", "display_name"),
     ("zoho", "jarvis_zoho_connection", "email_address"),
 )
@@ -29,7 +33,7 @@ def _is_configured(provider: str) -> bool:
     OAuth consent screen - so the console should never conflate them.
     """
     settings = get_settings()
-    if provider == "google":
+    if provider in ("google", "google_school"):
         return bool(settings.google_client_id and settings.google_redirect_uri)
     if provider == "spotify":
         return bool(settings.spotify_client_id and settings.spotify_redirect_uri)
@@ -38,13 +42,13 @@ def _is_configured(provider: str) -> bool:
     return False
 
 
-def _read(table: str, identity_column: str) -> dict:
+def _read(table: str, identity_column: str, row_id: str = ROW_ID) -> dict:
     """Reads one connection row. Never returns a token."""
     supabase = get_supabase_client()
     res = (
         supabase.table(table)
         .select(f"id,{identity_column},refresh_token,updated_at")
-        .eq("id", ROW_ID)
+        .eq("id", row_id)
         .maybe_single()
         .execute()
     )
@@ -73,14 +77,14 @@ def status() -> dict:
     tokens, no refresh tokens, no scopes.
     """
     connections = []
-    for provider, table, identity_column in PROVIDERS:
+    for provider, table, identity_column, *row in PROVIDERS:
         if not _is_configured(provider):
             connections.append(
                 {"provider": provider, "status": "not_configured", "account": None, "updated_at": None}
             )
             continue
         try:
-            connections.append({"provider": provider, **_read(table, identity_column)})
+            connections.append({"provider": provider, **_read(table, identity_column, *row)})
         except Exception:  # noqa: BLE001
             # One unreachable table must not take the whole panel down,
             # and "unknown" is honest where "disconnected" would be a

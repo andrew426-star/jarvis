@@ -32,6 +32,12 @@ interface Connection {
 // typing the URL by hand.
 const CONNECTIONS: Connection[] = [
   { key: "google", label: "Google", path: "/auth/google/connect", note: "Gmail, Calendar, Drive" },
+  {
+    key: "google_school",
+    label: "Louisiana Tech",
+    path: "/auth/google/connect?account=school",
+    note: "School mail + calendar, read-only",
+  },
   { key: "spotify", label: "Spotify", path: "/auth/spotify/connect", note: "Playback control" },
   { key: "zoho", label: "Zoho Mail", path: "/auth/zoho/connect", note: "Inbox, read-only" },
 ]

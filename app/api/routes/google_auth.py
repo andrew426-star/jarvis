@@ -3,7 +3,11 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from app.core.config import get_settings
 from app.core.google_oauth import (
+    ROW_ID,
+    ROW_IDS,
+    SCHOOL_ROW_ID,
     build_auth_url,
+    connect_purpose,
     exchange_code_for_tokens,
     fetch_google_email,
     store_connection,
@@ -33,13 +37,15 @@ _WRONG_PATH = (
 
 
 @router.get("/auth/google/connect")
-def google_connect():
+def google_connect(account: str | None = None):
+    """?account=school connects the read-only Louisiana Tech account as a
+    second row; anything else is the main Kivaro account, as before."""
     uri = get_settings().google_redirect_uri
     if not uri:
         return PlainTextResponse(_UNSET, status_code=500)
     if not uri.rstrip("/").endswith(CONNECT_CALLBACK_PATH):
         return PlainTextResponse(_WRONG_PATH.format(uri=uri), status_code=500)
-    return RedirectResponse(build_auth_url())
+    return RedirectResponse(build_auth_url(SCHOOL_ROW_ID if account == "school" else ROW_ID))
 
 
 # Jarvis has no frontend yet, so this returns a plain inline-HTML message
@@ -50,7 +56,11 @@ def google_callback(code: str | None = None, state: str | None = None, error: st
         return HTMLResponse(f"<h1>Connection failed</h1><p>{error}</p>", status_code=400)
     if not get_settings().google_redirect_uri:
         return PlainTextResponse(_UNSET, status_code=500)
-    if not code or not state or not verify_oauth_state(state):
+    row_id = next(
+        (r for r in ROW_IDS if state and verify_oauth_state(state, connect_purpose(r))),
+        None,
+    )
+    if not code or row_id is None:
         return HTMLResponse("<h1>Connection failed</h1><p>Invalid or expired request.</p>", status_code=400)
 
     try:
@@ -64,7 +74,7 @@ def google_callback(code: str | None = None, state: str | None = None, error: st
                 status_code=400,
             )
         email = fetch_google_email(tokens["access_token"])
-        store_connection(tokens, email)
+        store_connection(tokens, email, row_id)
     except Exception as exc:  # noqa: BLE001
         return HTMLResponse(f"<h1>Connection failed</h1><p>{exc}</p>", status_code=500)
 
