@@ -6,6 +6,10 @@ from app.core.pinecone_client import get_pinecone_index
 logger = logging.getLogger(__name__)
 
 MAX_CHUNK_CHARS = 6000
+# What one recalled turn may add to the prompt. Stored chunks run to
+# MAX_CHUNK_CHARS (a whole morning brief), and recall is a reminder of
+# what was said, not a replay of it.
+HIT_CHARS = 600
 
 
 def record_interaction(
@@ -45,6 +49,10 @@ def record_interaction(
         logger.warning("Pinecone record_interaction failed for %s", interaction_id, exc_info=True)
 
 
+def _clip(text: str) -> str:
+    return text if len(text) <= HIT_CHARS else text[:HIT_CHARS].rstrip() + " [...]"
+
+
 def get_relevant_context(query_text: str) -> str | None:
     """Tier 3 (Pinecone) read — semantically similar past interactions,
     across all sessions, formatted as a ready-to-inject system message.
@@ -67,7 +75,7 @@ def get_relevant_context(query_text: str) -> str | None:
         return None
 
     survivors = [
-        hit.fields["chunk_text"]
+        _clip(hit.fields["chunk_text"])
         for hit in hits
         if hit.score >= settings.pinecone_min_score and hit.fields.get("chunk_text")
     ]

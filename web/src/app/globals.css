@@ -793,3 +793,12 @@ button {
     display: none;
   }
 }
+
+/* ============================================================
+   PHONE VIEW (components/mobile/mobile-console.tsx). The mic is
+   the main control there, so it gets a thumb-sized target.
+   ============================================================ */
+.mobile-mic .btn-circle {
+  width: 46px;
+  height: 46px;
+}

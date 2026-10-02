@@ -23,8 +23,10 @@ class InvokeRequest(BaseModel):
     session_id: str | None = None
     # Where the reply will be read. "console" is the web HUD, where replies
     # may be spoken aloud; "terminal" is the jarvis CLI (cli/jarvis_cli.py),
-    # used from VS Code and shells during programming work.
-    channel: Literal["console", "terminal"] = "console"
+    # used from VS Code and shells during programming work; "mobile" is the
+    # phone view of the console, spoken like the console but with nothing
+    # on screen for Jarvis to operate.
+    channel: Literal["console", "terminal", "mobile"] = "console"
     # A webcam frame, base64 without the data: prefix, attached by the
     # console while its camera is on. Used for this turn only and never
     # stored. ~8MB of base64 is far above the console's downscaled JPEGs

@@ -7,6 +7,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import datetime, timezone
 
 import httpx
@@ -14,7 +15,7 @@ from google.genai import errors as genai_errors
 from google.genai import types
 
 from app.core.config import get_settings
-from app.core.gemini import AllModelsExhausted, GeminiNotConfigured, generate_stream
+from app.core.gemini import AllModelsExhausted, GeminiNotConfigured, OutOfTime, generate_stream
 from app.core.local_time import now_for_prompt
 from app.memory.interaction_log import fetch_recent_turns, write_interaction
 from app.memory.semantic_recall import get_relevant_context, record_interaction
@@ -31,7 +32,33 @@ from app.tools.console_control import (
 )
 from app.tools.schemas import DISPATCH, TOOL_SCHEMAS
 
-MAX_ITERATIONS = 8
+MAX_ITERATIONS = 6
+
+# A turn's time budget. Past WRAP_UP_AFTER_S the model is told to answer
+# with what it has instead of calling more tools; past TURN_DEADLINE_S no
+# new model call starts at all. Before these, nothing bounded a turn: a
+# slow model, a stuck tool or a walk down the whole fallback ladder could
+# hold a reply for minutes, and the console would wait on it forever.
+WRAP_UP_AFTER_S = 45
+TURN_DEADLINE_S = 90
+# One round of tool calls. A tool that has not answered by then is
+# reported to the model as failed; its thread is left to finish alone.
+TOOL_TIMEOUT_S = 30
+# One stored message, as replayed in history. Long replies (a morning
+# brief) otherwise ride along in full on every call for the next ten turns.
+HISTORY_CHARS = 2000
+
+# What the console shows while a round of tools runs, by the first tool.
+_TOOL_STATUS = {
+    "google_titan": "Checking Google",
+    "zoho_mail": "Reading the Kivaro inbox",
+    "web_research": "Searching the web",
+    "market_analysis": "Pulling quotes",
+    "market_history": "Pulling price history",
+    "news_feed": "Reading the news",
+    "portfolio": "Checking the portfolio",
+    "spotify": "Talking to Spotify",
+}
 
 # Per-result size guard on what goes back to the model. The full result
 # still lands in the audit trail (Supabase/Pinecone) and the console.
@@ -116,8 +143,7 @@ SYSTEM_PROMPT = (
     "Andrew's problem. If a request is unsafe, unclear, or needs a decision only Andrew can make, "
     "say so plainly and ask — briefly, without a wall of caveats.\n\n"
     "TOOLS — all real, not simulated: database_agent (Andrew's own contacts, stored in Supabase), "
-    "web_research (live web search), think (a reasoning scratchpad — use it to plan out "
-    "multi-step requests before acting), calculator (precise arithmetic/financial math — use it "
+    "web_research (live web search), calculator (precise arithmetic/financial math — use it "
     "instead of doing math inline), market_analysis (live stock/crypto quotes via Finnhub), "
     "market_history (historical daily price bars for a single equity/ETF symbol, for chart-type "
     "questions), portfolio (Andrew's Alpaca investment account, read-only), company_financials (Kivaro AI's "
@@ -193,7 +219,10 @@ def _declaration(schema: dict) -> types.FunctionDeclaration:
     )
 
 
-_DECLARATIONS = [_declaration(schema) for schema in TOOL_SCHEMAS]
+# Not `think`: the model already thinks natively, and the scratchpad cost a
+# whole extra model round (often the slowest part of a turn) every time
+# the prompt's "plan multi-step requests first" sent it there.
+_DECLARATIONS = [_declaration(schema) for schema in TOOL_SCHEMAS if schema["function"]["name"] != "think"]
 _CAMERA_DECLARATION = _declaration(CAMERA_LOOK_SCHEMA)
 _CONSOLE_DECLARATIONS = [_declaration(CONSOLE_SCHEMA), _declaration(WORKSHOP_SCHEMA)]
 
@@ -253,7 +282,10 @@ def _history_contents(turns: list[dict]) -> list[types.Content]:
     contents: list[types.Content] = []
     for turn in turns:
         role = "model" if turn["role"] == "assistant" else "user"
-        part = types.Part.from_text(text=turn["content"])
+        content = turn["content"]
+        if len(content) > HISTORY_CHARS:
+            content = content[:HISTORY_CHARS].rstrip() + " [...]"
+        part = types.Part.from_text(text=content)
         if contents and contents[-1].role == role:
             contents[-1].parts.append(part)
         else:
@@ -367,6 +399,28 @@ TERMINAL_MODE = (
 )
 
 
+MOBILE_MODE = (
+    "CHANNEL: PHONE. Andrew is talking to you from his phone, often on the move. The screen is "
+    "narrow, so keep the on-screen reply short: the answer first, then a few short lines, a short "
+    "dash list at most. The SCREEN AND VOICE rules above still apply. The console's panels, "
+    "workshop, camera and hand tracking are not available on the phone; if he asks for them, say "
+    "they are on the desktop console."
+)
+
+_OUT_OF_TIME = (
+    "My reasoning model is answering far too slowly at the moment, sir, so I stopped rather than "
+    "keep you waiting. Would you ask again?"
+)
+
+
+def _no_more_tools(config: types.GenerateContentConfig) -> types.GenerateContentConfig:
+    """The same call, but the model must answer now. The declarations stay:
+    the history already holds calls to them."""
+    return config.model_copy(
+        update={"tool_config": types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="NONE"))}
+    )
+
+
 def run_invoke(*args, **kwargs) -> dict:
     """One whole turn, for callers that want the finished reply (/invoke,
     the terminal CLI): the streamed turn, run to its end."""
@@ -388,6 +442,7 @@ def stream_invoke(
 ) -> Iterator[dict]:
     """A turn as a stream of events, for /invoke/stream:
 
+      status  {"label"}           what the turn is doing now ("Thinking")
       text    {"delta"}           more of the on-screen reply
       spoken  {"delta"}           more of the voice line (it comes first)
       reset   {}                  text so far was a preamble to tool calls; drop it
@@ -408,6 +463,8 @@ def stream_invoke(
     ]
     if channel == "terminal":
         system.append(TERMINAL_MODE)
+    elif channel == "mobile":
+        system.append(MOBILE_MODE)
 
     declarations = _DECLARATIONS
     handlers = DISPATCH
@@ -441,7 +498,11 @@ def stream_invoke(
     # The moment he is speaking in (hour, day, gap, calendar), built while
     # recall is still in flight.
     situation_future = _TOOL_EXECUTOR.submit(situation_note, session_id, recent_turns)
-    recall_block = recall_future.result()
+    try:
+        recall_block = recall_future.result(timeout=4)
+    except FutureTimeout:
+        logger.warning("recall timed out; answering without it")
+        recall_block = None
     if recall_block:
         system.append(recall_block)
     try:
@@ -481,30 +542,40 @@ def stream_invoke(
         system_instruction="\n\n".join(system),
         tools=[types.Tool(function_declarations=declarations)],
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        # Low thinking keeps a spoken exchange quick. Thinking tokens count
-        # against the output limit, hence the room above a reply's length.
-        thinking_config=types.ThinkingConfig(thinking_level="low"),
+        # Thinking is kept short (config.gemini_thinking_level) so a spoken
+        # exchange stays quick. Thinking tokens count against the output
+        # limit, hence the room above a reply's length.
+        thinking_config=types.ThinkingConfig(thinking_level=settings.gemini_thinking_level),
         max_output_tokens=8192 if channel == "terminal" else 4096,
     )
 
     turn_model: str | None = None
     used_model = ""
-    for _ in range(MAX_ITERATIONS):
+    deadline = started + TURN_DEADLINE_S
+    for iteration in range(MAX_ITERATIONS):
         step = time.monotonic()
+        # Out of rounds or out of patience: answer with what is gathered,
+        # rather than call another tool or give up empty-handed.
+        wrap_up = bool(executed) and (iteration == MAX_ITERATIONS - 1 or step - started > WRAP_UP_AFTER_S)
+        round_config = _no_more_tools(config) if wrap_up else config
+        yield {"type": "status", "label": "Composing" if executed else "Thinking"}
         try:
             if turn_model and executed:
                 # Tool history in `contents` is bound to turn_model, so only
                 # it may continue. If it has run out, hand the turn to the
                 # ladder as text instead of as that history.
                 try:
-                    chunks, used_model = generate_stream(contents, config, only=turn_model)
+                    chunks, used_model = generate_stream(contents, round_config, only=turn_model, deadline=deadline)
                 except AllModelsExhausted:
                     contents = _reseed(base, executed)
-                    chunks, used_model = generate_stream(contents, config)
+                    chunks, used_model = generate_stream(contents, round_config, deadline=deadline)
             else:
-                chunks, used_model = generate_stream(contents, config, prefer=turn_model)
+                chunks, used_model = generate_stream(contents, round_config, prefer=turn_model, deadline=deadline)
         except AllModelsExhausted as exc:
             final_text = _quota_message(exc)
+            break
+        except OutOfTime:
+            final_text = _OUT_OF_TIME
             break
         except GeminiNotConfigured:
             final_text = "My reasoning model isn't configured, sir: GEMINI_API_KEY needs to be set on the server."
@@ -562,10 +633,19 @@ def stream_invoke(
         # concurrently; results are applied in original order (not
         # completion order) so tool_call_trace/tools_used stay stable.
         futures = [_TOOL_EXECUTOR.submit(_execute_tool_call, call, handlers) for call in calls]
+        yield {"type": "status", "label": _TOOL_STATUS.get(calls[0].name or "", "Working")}
+        tools_started = time.monotonic()
         parts: list[types.Part] = []
         for call, future in zip(calls, futures):
             try:
-                name, args, result, ms = future.result()
+                # One shared budget, so a round of parallel calls waits at
+                # most TOOL_TIMEOUT_S in all, not that much per call.
+                remaining = max(0.1, TOOL_TIMEOUT_S - (time.monotonic() - tools_started))
+                name, args, result, ms = future.result(timeout=remaining)
+            except FutureTimeout:
+                logger.warning("tool %s timed out after %ss", call.name, TOOL_TIMEOUT_S)
+                name, args = call.name or "", dict(call.args or {})
+                result, ms = {"ok": False, "error": f"Timed out after {TOOL_TIMEOUT_S}s."}, TOOL_TIMEOUT_S * 1000
             except Exception as exc:  # noqa: BLE001 — defense-in-depth; _execute_tool_call already catches handler errors
                 name, args, result, ms = call.name or "", {}, {"ok": False, "error": str(exc)}, 0
 
@@ -579,6 +659,8 @@ def stream_invoke(
             )
         contents.append(types.Content(role="user", parts=parts))
     else:
+        # Unreachable while the last round is forced to answer (wrap_up),
+        # kept as the backstop if it ever is not.
         final_text = (
             "I've rather run up against my tool-call ceiling on that one, sir. "
             "Shall I try again with a narrower request?"

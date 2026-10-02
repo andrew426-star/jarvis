@@ -107,6 +107,8 @@ export interface InvokeOptions {
   consoleState?: Record<string, unknown>
   /** Files attached to the message (lib/attachments.ts). */
   attachments?: { name: string; mime: string; data?: string; text?: string }[]
+  /** "mobile" is the phone view: no console for Jarvis to operate. */
+  channel?: "console" | "mobile"
 }
 
 // Only what the server reads: previews and sizes stay in the browser.
@@ -154,6 +156,13 @@ export type StreamEvent =
   | { type: "tool"; name: string; result: unknown }
   | ({ type: "done" } & InvokeResult)
   | { type: "error"; message: string }
+  | { type: "status"; label: string }
+
+// The server sends something at least every model round and tool round,
+// and ends any turn by ~90s (TURN_DEADLINE_S in orchestrator.py). Silence
+// this long means the connection is dead even though it never closed,
+// which is what used to leave the console waiting with no reply at all.
+const STREAM_STALL_MS = 100_000
 
 /** /invoke/stream: the same turn as invoke(), delivered as it is written.
  *  Events go to onEvent as they arrive; resolves with the finished turn. */
@@ -164,19 +173,44 @@ export async function invokeStream(
   options: InvokeOptions,
   onEvent: (event: StreamEvent) => void
 ): Promise<InvokeResult> {
-  const res = await jarvisFetch("/invoke/stream", token, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message,
-      session_id: sessionId,
-      image: options.image,
-      look: options.look ?? false,
-      console_state: options.consoleState,
-      attachments: wireAttachments(options),
-    }),
-  })
-  if (!res.body) throw new JarvisApiError("The reply stream never opened.")
+  const abort = new AbortController()
+  let stalled = false
+  let watchdog: ReturnType<typeof setTimeout> | undefined
+  const feed = () => {
+    clearTimeout(watchdog)
+    watchdog = setTimeout(() => {
+      stalled = true
+      abort.abort()
+    }, STREAM_STALL_MS)
+  }
+  feed()
+  const stalledError = () =>
+    new JarvisApiError("J.A.R.V.I.S. stopped responding mid-reply. Try again.")
+
+  let res: Response
+  try {
+    res = await jarvisFetch("/invoke/stream", token, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: abort.signal,
+      body: JSON.stringify({
+        message,
+        session_id: sessionId,
+        channel: options.channel ?? "console",
+        image: options.image,
+        look: options.look ?? false,
+        console_state: options.consoleState,
+        attachments: wireAttachments(options),
+      }),
+    })
+  } catch (err) {
+    clearTimeout(watchdog)
+    throw stalled ? stalledError() : err
+  }
+  if (!res.body) {
+    clearTimeout(watchdog)
+    throw new JarvisApiError("The reply stream never opened.")
+  }
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -193,6 +227,7 @@ export async function invokeStream(
     for (;;) {
       const { value, done } = await reader.read()
       if (done) break
+      feed()
       pending += decoder.decode(value, { stream: true })
       // Newline-delimited JSON: complete lines are events, the tail waits.
       let newline: number
@@ -203,8 +238,11 @@ export async function invokeStream(
     }
     handle(pending)
   } catch (err) {
+    if (stalled) throw stalledError()
     if (err instanceof JarvisApiError) throw err
     throw new JarvisNetworkError()
+  } finally {
+    clearTimeout(watchdog)
   }
   if (!result) throw new JarvisApiError("The reply stream ended early.")
   return result
@@ -236,9 +274,18 @@ export async function speak(text: string, token: string, voiceId?: string): Prom
   return res.blob()
 }
 
+// Whisper reads the container from the file name, and recorders differ:
+// Chrome records WebM, Safari (every iPhone browser) records MP4.
+function recordingName(type: string): string {
+  if (type.includes("mp4") || type.includes("aac") || type.includes("m4a")) return "recording.mp4"
+  if (type.includes("ogg")) return "recording.ogg"
+  if (type.includes("wav")) return "recording.wav"
+  return "recording.webm"
+}
+
 export async function transcribe(audio: Blob, token: string): Promise<string> {
   const form = new FormData()
-  form.append("file", audio, "recording.webm")
+  form.append("file", audio, recordingName(audio.type))
   // No Content-Type header here on purpose — the browser sets the correct
   // multipart boundary itself when the body is a FormData instance.
   const res = await jarvisFetch("/transcribe", token, {

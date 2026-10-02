@@ -36,9 +36,14 @@ export class SpeechQueue {
   private wake: (() => void) | null = null
   private readonly stopFn = () => this.stop()
 
+  /** `element`, when given, plays every clip: iOS only lets audio start
+   *  without a tap on an element a tap has already unlocked, and these
+   *  clips start long after the tap that sent the message. Clips through
+   *  it skip the visualiser, which would claim the element for good. */
   constructor(
     private readonly token: string,
-    private readonly handlers: Handlers
+    private readonly handlers: Handlers,
+    private readonly element?: HTMLAudioElement
   ) {
     void this.run()
   }
@@ -121,7 +126,8 @@ export class SpeechQueue {
   private play(blob: Blob): Promise<void> {
     return new Promise((resolve) => {
       const url = URL.createObjectURL(blob)
-      const audio = new Audio(url)
+      const audio = this.element ?? new Audio()
+      audio.src = url
       this.playing = audio
       const done = () => {
         URL.revokeObjectURL(url)
@@ -140,7 +146,7 @@ export class SpeechQueue {
             registerNarration(this.stopFn)
             this.handlers.onStart()
           }
-          startAudioAnalysis(audio)
+          if (!this.element) startAudioAnalysis(audio)
         })
         .catch(done)
       // A stop() mid-clip pauses the element, which does not fire ended.

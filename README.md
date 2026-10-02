@@ -45,6 +45,17 @@ on :8000, and :3000 is already in the CORS allowlist (`app/main.py`).
 If `web/out/` has never been built, the static mount is simply skipped
 and :8000 serves the API alone.
 
+## On a phone
+
+Phones get a separate, lightweight view of the console (chat, voice in
+and out, nothing to operate) — `web/src/components/mobile/`. It is picked
+by screen size and touch; `?view=mobile` or `?view=desktop` overrides it
+and is remembered per device, and each view's menu can switch. Turns from
+it go out on the `mobile` channel, which keeps replies short.
+
+To install it like an app: open the site in Safari, Share → Add to Home
+Screen. It opens full-screen, straight into the phone view.
+
 ## Signing in
 
 The console authenticates with Google, restricted to an allowlist. Three

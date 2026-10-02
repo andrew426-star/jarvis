@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     )
     # Image models for workshop renders (app/integrations/gemini_render.py),
     # best first, on the same quota-aware fallback.
+    # How long the model thinks before answering. "minimal" keeps a spoken
+    # exchange quick: at "low", a one-line reply spent nine seconds
+    # thinking first. A model that does not offer the level is asked at
+    # "low" instead (app/core/gemini.py).
+    gemini_thinking_level: str = "minimal"
     gemini_image_models: str = "gemini-3.1-flash-image,gemini-3.1-flash-lite-image,gemini-3-pro-image"
 
     supabase_url: str
@@ -41,7 +46,9 @@ class Settings(BaseSettings):
     pinecone_namespace: str = "interactions"
     pinecone_embedding_model: str = "llama-text-embed-v2"
     pinecone_dimension: int = 1024
-    pinecone_top_k: int = 5
+    # Every hit rides along on every model call of the turn, so a few
+    # short ones (semantic_recall.HIT_CHARS) beat many long ones.
+    pinecone_top_k: int = 3
     pinecone_min_score: float = 0.5
 
     # Same Google Cloud OAuth Client ID/Secret as kiv-console's registration

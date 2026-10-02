@@ -143,7 +143,8 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
       recorder.onstop = async () => {
         stopVadLoop()
         stream.getTracks().forEach((track) => track.stop())
-        const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" })
+        // The recorder's own type: Safari records MP4, not WebM.
+        const audioBlob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" })
         applyState("transcribing")
         try {
           const text = await transcribe(audioBlob, token)

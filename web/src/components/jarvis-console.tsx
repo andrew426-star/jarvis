@@ -57,13 +57,8 @@ import { SpeechQueue } from "@/lib/speech-queue"
 import { useSpatial } from "@/lib/spatial-store"
 import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store"
 import { useBoot } from "@/lib/use-boot"
-import {
-  clearSession,
-  clearStoredToken,
-  getOrCreateSessionId,
-  getStoredToken,
-  setStoredToken,
-} from "@/lib/storage"
+import { resolveAuth, subscribeAuth } from "@/lib/auth-state"
+import { clearSession, clearStoredToken } from "@/lib/storage"
 
 const TOOL_PANEL_MAP: Record<string, TabKey> = {
   market_analysis: "markets",
@@ -71,52 +66,6 @@ const TOOL_PANEL_MAP: Record<string, TabKey> = {
   news_feed: "intel",
   portfolio: "assets",
 }
-
-type AuthState =
-  | { status: "authenticated"; token: string; sessionId: string }
-  | { status: "unauthenticated"; loginError: string | null }
-
-// How this page load is signed in, worked out once from the URL and
-// localStorage and cached for the life of the page. Read through
-// useSyncExternalStore (like use-clock.ts) rather than set from an effect:
-// the static export's server render can't see either source, so the
-// server snapshot is null ("resolving") and the client snapshot replaces
-// it after hydration without a mismatch.
-let resolvedAuth: AuthState | null = null
-
-function resolveAuth(): AuthState {
-  if (resolvedAuth) return resolvedAuth
-
-  // A completed Google sign-in lands back here as ?session=... since
-  // the callback has to hand the browser its credential somehow and
-  // this app talks Bearer, not cookies.
-  const params = new URLSearchParams(window.location.search)
-  const granted = params.get("session")
-  const failure = params.get("login_error")
-
-  if (granted || failure) {
-    // Strip it immediately: a session token in the address bar ends up
-    // in history, bookmarks, and any screenshot of the app.
-    window.history.replaceState({}, "", window.location.pathname)
-  }
-
-  if (granted) {
-    setStoredToken(granted)
-    resolvedAuth = { status: "authenticated", token: granted, sessionId: getOrCreateSessionId() }
-  } else if (failure) {
-    resolvedAuth = { status: "unauthenticated", loginError: failure }
-  } else {
-    const stored = getStoredToken()
-    resolvedAuth = stored
-      ? { status: "authenticated", token: stored, sessionId: getOrCreateSessionId() }
-      : { status: "unauthenticated", loginError: null }
-  }
-  return resolvedAuth
-}
-
-// Sign-in state only changes by leaving the page (the Google redirect) or
-// by handleAuthError below, so there is nothing to subscribe to.
-const subscribeAuth = () => () => {}
 
 export function JarvisConsole() {
   const auth = useSyncExternalStore(subscribeAuth, resolveAuth, () => null)

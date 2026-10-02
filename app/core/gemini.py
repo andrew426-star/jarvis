@@ -36,12 +36,17 @@ OVERLOADED_COOLDOWN = 30.0
 # comes back.
 UNAVAILABLE_COOLDOWN = 24 * 3600.0
 # A call that has not answered in this long is abandoned for the next
-# model rather than left to hang the turn.
-CALL_TIMEOUT_MS = 40_000
+# model rather than left to hang the turn. For a stream this bounds the
+# wait for each chunk, so it also catches a stream that stalls midway.
+CALL_TIMEOUT_MS = 25_000
 
 
 class GeminiNotConfigured(RuntimeError):
     pass
+
+
+class OutOfTime(RuntimeError):
+    """The turn's deadline passed before any model answered."""
 
 
 class AllModelsExhausted(RuntimeError):
@@ -144,15 +149,49 @@ def generate(
     raise AllModelsExhausted(retry_at)
 
 
+def _with_thinking(config: types.GenerateContentConfig, level: str) -> types.GenerateContentConfig:
+    return config.model_copy(update={"thinking_config": types.ThinkingConfig(thinking_level=level)})
+
+
+def _open_stream(client: genai.Client, model: str, contents, config: types.GenerateContentConfig):
+    """The model's stream with its first chunk already pulled, since quota
+    and bad-request errors only surface there. A model that does not take
+    the configured thinking level is asked again at "low", which every
+    thinking model accepts."""
+
+    def opened(cfg):
+        chunks = client.models.generate_content_stream(model=model, contents=contents, config=cfg)
+        try:
+            first = next(chunks)
+        except StopIteration:
+            return iter(())
+        return itertools.chain([first], chunks)
+
+    try:
+        return opened(config)
+    except errors.APIError as exc:
+        level = config.thinking_config.thinking_level if config.thinking_config else None
+        if exc.code != 400 or "thinking" not in str(exc).lower() or level in (None, "low", types.ThinkingLevel.LOW):
+            raise
+        logger.warning("Gemini %s rejected thinking level %s; retrying at low", model, level)
+        return opened(_with_thinking(config, "low"))
+
+
 def generate_stream(
     contents,
     config: types.GenerateContentConfig,
     prefer: str | None = None,
     only: str | None = None,
+    deadline: float | None = None,
 ):
     """generate_content_stream on the same ladder as generate(). Returns
     (chunks, model). Quota errors surface on the first chunk, so that one
-    is pulled here, inside the fallback, and chained back on the front."""
+    is pulled here, inside the fallback, and chained back on the front.
+
+    `deadline` (time.monotonic()) stops the ladder from starting another
+    model once it has passed: a turn that has already waited that long is
+    better answered with an apology than kept waiting for the next model.
+    Raises OutOfTime then."""
     client = get_gemini_client()
     models = ladder()
     if only:
@@ -161,16 +200,13 @@ def generate_stream(
         models = [prefer] + [m for m in models if m != prefer]
 
     for model in models:
+        if deadline is not None and time.monotonic() > deadline:
+            raise OutOfTime()
         with _lock:
             if _cooling.get(model, 0) > time.time():
                 continue
         try:
-            chunks = client.models.generate_content_stream(model=model, contents=contents, config=config)
-            try:
-                first = next(chunks)
-            except StopIteration:
-                return iter(()), model
-            return itertools.chain([first], chunks), model
+            return _open_stream(client, model, contents, config), model
         except errors.APIError as exc:
             rest = _cooldown_for(exc)
             if rest is None:

@@ -1,5 +1,5 @@
-import { JarvisConsole } from "@/components/jarvis-console"
+import { AppEntry } from "@/components/app-entry"
 
 export default function Home() {
-  return <JarvisConsole />
+  return <AppEntry />
 }

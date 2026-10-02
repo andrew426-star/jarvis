@@ -75,6 +75,8 @@ mimetypes.add_type("font/woff2", ".woff2")
 # export, and a wrong Content-Type makes it silently unplayable.
 mimetypes.add_type("audio/mpeg", ".mp3")
 mimetypes.add_type("font/woff", ".woff")
+# The phone view's install manifest (web/public/manifest.webmanifest).
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 
 
