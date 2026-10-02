@@ -18,9 +18,14 @@ class Settings(BaseSettings):
     # falls down the list on quota errors, so this order is also the order
     # of preference. Free-tier quotas are per model, so every entry adds
     # headroom.
+    #
+    # Ordered by measured speed, not version: 3.6-flash and the flash-lite
+    # models take "minimal" thinking and answered in 0.5-2.5s; 3.8 and 3.7
+    # refuse "minimal", run at "low" and took 7-30s or reported overload
+    # (Oct 2026). gemini.py also demotes any model that refuses the level.
     gemini_models: str = (
-        "gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,"
-        "gemini-3.1-flash-lite,gemini-3.5-flash-lite"
+        "gemini-3.6-flash,gemini-3.1-flash-lite,gemini-3.5-flash-lite,"
+        "gemini-3.8-flash,gemini-3.7-flash,gemini-3.5-flash"
     )
     # Image models for workshop renders (app/integrations/gemini_render.py),
     # best first, on the same quota-aware fallback.

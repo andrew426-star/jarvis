@@ -15,7 +15,7 @@ from google.genai import errors as genai_errors
 from google.genai import types
 
 from app.core.config import get_settings
-from app.core.gemini import AllModelsExhausted, GeminiNotConfigured, OutOfTime, generate_stream
+from app.core.gemini import AllModelsExhausted, GeminiNotConfigured, OutOfTime, generate_stream, rest
 from app.core.local_time import now_for_prompt
 from app.memory.interaction_log import fetch_recent_turns, write_interaction
 from app.memory.semantic_recall import get_relevant_context, record_interaction
@@ -552,6 +552,7 @@ def stream_invoke(
     turn_model: str | None = None
     used_model = ""
     deadline = started + TURN_DEADLINE_S
+    stream_retries = 2
     for iteration in range(MAX_ITERATIONS):
         step = time.monotonic()
         # Out of rounds or out of patience: answer with what is gathered,
@@ -610,6 +611,15 @@ def stream_invoke(
                             sent_display = len(display)
         except (genai_errors.APIError, httpx.HTTPError) as exc:
             logger.warning("Gemini stream broke on %s: %s", used_model, exc)
+            rest(used_model)
+            # Little or nothing written yet: run the round again on the next
+            # model rather than keep a fragment as the reply (one stream
+            # died after a single word, and "All" became the answer).
+            if not calls and len(text) < 200 and stream_retries and time.monotonic() < deadline:
+                stream_retries -= 1
+                if text:
+                    yield {"type": "reset"}
+                continue
             final_text = text or "The line to my reasoning model dropped mid-thought, sir. Would you ask again?"
             break
         timings.append({"step": "model", "model": used_model, "ms": int((time.monotonic() - step) * 1000)})

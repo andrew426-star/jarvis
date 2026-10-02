@@ -57,6 +57,11 @@ class AllModelsExhausted(RuntimeError):
 
 _lock = threading.Lock()
 _cooling: dict[str, float] = {}  # model -> time.time() it is usable again
+# Models that refused the configured thinking level and had to be asked at
+# "low". Measured: "low" is what makes a call slow (3.6-flash took 1.2s at
+# "minimal" and 16.7s at "low" for the same request), so these go to the
+# back of the ladder rather than leading it.
+_slow_thinkers: set[str] = set()
 
 
 @lru_cache
@@ -79,6 +84,13 @@ def status() -> list[dict]:
             {"model": m, "available_at": _cooling[m] if _cooling.get(m, 0) > now else None}
             for m in ladder()
         ]
+
+
+def rest(model: str, seconds: float = OVERLOADED_COOLDOWN) -> None:
+    """Take a model off the ladder for a while, for a failure seen outside
+    generate()/generate_stream(), such as a stream that died midway."""
+    with _lock:
+        _cooling[model] = max(_cooling.get(model, 0), time.time() + seconds)
 
 
 def _next_pacific_midnight() -> float:
@@ -174,6 +186,8 @@ def _open_stream(client: genai.Client, model: str, contents, config: types.Gener
         if exc.code != 400 or "thinking" not in str(exc).lower() or level in (None, "low", types.ThinkingLevel.LOW):
             raise
         logger.warning("Gemini %s rejected thinking level %s; retrying at low", model, level)
+        with _lock:
+            _slow_thinkers.add(model)
         return opened(_with_thinking(config, "low"))
 
 
@@ -193,7 +207,9 @@ def generate_stream(
     better answered with an apology than kept waiting for the next model.
     Raises OutOfTime then."""
     client = get_gemini_client()
-    models = ladder()
+    with _lock:
+        # Stable: the configured order holds within each group.
+        models = sorted(ladder(), key=lambda m: m in _slow_thinkers)
     if only:
         models = [only]
     elif prefer in models:
