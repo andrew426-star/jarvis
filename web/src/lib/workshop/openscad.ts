@@ -79,18 +79,19 @@ export function scadItem(name: string, code: string, stl: Uint8Array, notes: str
 }
 
 /** Starting points for the templates menu: the jarvis.scad modules at their defaults. */
-export const SCAD_TEMPLATES: { key: string; label: string; code: string }[] = [
+export const SCAD_TEMPLATES: { key: string; label: string; blurb: string; code: string }[] = [
   {
     key: "enclosure",
     label: "Enclosure",
+    blurb: "Box, board posts, cut-outs, lid",
     code: `include <jarvis.scad>
 // Body and lid. Size inner to the hardware plus ~5 mm clearance.
 enclosure(inner = [120, 80, 45],
           boards = [["arduino_uno", [-20, 0]]],
           cutouts = [["front", "rect", [13, 11], [-35, 8]]]);`,
   },
-  { key: "servo_mount", label: "Servo Mount", code: `include <jarvis.scad>\nservo_mount("mg996r");` },
-  { key: "arm_link", label: "Arm Link", code: `include <jarvis.scad>\narm_link(length = 100);` },
-  { key: "base_plate", label: "Base Plate", code: `include <jarvis.scad>\nbase_plate(d = 140, nema17 = true);` },
-  { key: "l_bracket", label: "L-Bracket", code: `include <jarvis.scad>\nl_bracket();` },
+  { key: "servo_mount", label: "Servo Mount", blurb: "Drop-in plate for a servo", code: `include <jarvis.scad>\nservo_mount("mg996r");` },
+  { key: "arm_link", label: "Arm Link", blurb: "Flat link, servo-horn end", code: `include <jarvis.scad>\narm_link(length = 100);` },
+  { key: "base_plate", label: "Base Plate", blurb: "Turntable disc, NEMA 17 mount", code: `include <jarvis.scad>\nbase_plate(d = 140, nema17 = true);` },
+  { key: "l_bracket", label: "L-Bracket", blurb: "Gusseted corner bracket", code: `include <jarvis.scad>\nl_bracket();` },
 ]

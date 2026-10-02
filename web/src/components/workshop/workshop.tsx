@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { BoxIcon, CameraIcon, DownloadIcon, ImageIcon, Loader2Icon, RotateCcwIcon, ScanEyeIcon, SparklesIcon, Trash2Icon, WrenchIcon, XIcon } from "lucide-react"
+import { CameraIcon, DownloadIcon, ImageIcon, Loader2Icon, RotateCcwIcon, ScanEyeIcon, SparklesIcon, Trash2Icon, XIcon } from "lucide-react"
 
 import { getVideo, startCamera, stopCamera } from "@/lib/camera"
 import { registerWorkshop, reportScadResult } from "@/lib/console-commands"
@@ -11,8 +11,9 @@ import { sfx } from "@/lib/sfx"
 import { useSpatial } from "@/lib/spatial-store"
 import { renderView } from "@/lib/jarvis-client"
 import type { ItemMode, WorkshopScene } from "@/lib/workshop/scene"
-import { CATALOGUE, buildGenerated, type ItemSpec } from "@/lib/workshop/models"
-import { SCAD_TEMPLATES, ScadError, compileScad, scadItem } from "@/lib/workshop/openscad"
+import { buildGenerated, type ItemSpec } from "@/lib/workshop/models"
+import { LibraryDock, type StageItem } from "@/components/workshop/library-dock"
+import { ScadError, compileScad, scadItem } from "@/lib/workshop/openscad"
 import { useJarvis } from "@/lib/store"
 
 type Focus = (ItemSpec & { id: string; mode: ItemMode }) | null
@@ -98,8 +99,8 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
   const [passthrough, setPassthrough] = useState(false)
   const [trackingError, setTrackingError] = useState<string | null>(null)
   const [bin, setBin] = useState<"idle" | "armed" | "discarded">("idle")
-  const [templatesOpen, setTemplatesOpen] = useState(false)
   const [compiling, setCompiling] = useState<string | null>(null)
+  const [stage, setStage] = useState<StageItem[]>([])
   const [rendering, setRendering] = useState(false)
   const [render, setRender] = useState<{ url: string; prompt: string; model: string } | null>(null)
   // Jarvis's render and snapshot controls are registered once, with the
@@ -189,6 +190,7 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
       if (disposed) return
       const scene = new WorkshopScene(host, label, {
         onFocus: setFocus,
+        onItems: setStage,
         // Generous: a hand cannot aim as finely as a mouse.
         binAt: (x, y) => {
           const rect = binRef.current?.getBoundingClientRect()
@@ -236,8 +238,8 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
       // Something to hold on arrival: the reactor as a hologram.
       if (!queued) scene.spawn("reactor")
       setSpatialHandler({
-        down: (id, x, y, size) => scene.down(id, x, y, size),
-        move: (id, x, y, size) => scene.move(id, x, y, size),
+        down: (id, x, y) => scene.down(id, x, y),
+        move: (id, x, y) => scene.move(id, x, y),
         up: (id, x, y, tap) => scene.up(id, x, y, tap),
         hover: (x, y) => scene.hover(x, y),
       })
@@ -337,59 +339,8 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
           <span className="t-header shrink-0" style={{ color: "var(--accent)" }}>
             WORKSHOP
           </span>
-          <nav className="flex min-w-0 items-center overflow-x-auto" style={{ gap: "var(--sp-2)" }}>
-            {CATALOGUE.map((entry) => (
-              <button
-                key={entry.key}
-                type="button"
-                className="btn flex shrink-0 items-center"
-                style={{ gap: 6, padding: "4px 10px" }}
-                onClick={() => sceneRef.current?.spawn(entry.key)}
-                disabled={!ready}
-                title={`Project ${entry.label}`}
-              >
-                <BoxIcon size={12} />
-                {entry.label.toUpperCase()}
-              </button>
-            ))}
-          </nav>
         </div>
         <div className="relative flex shrink-0 items-center" style={{ gap: "var(--sp-2)" }}>
-          <div className="relative">
-            <button
-              type="button"
-              className="btn flex items-center"
-              style={{ gap: 6, padding: "4px 10px" }}
-              onClick={() => setTemplatesOpen((open) => !open)}
-              data-active={templatesOpen}
-              disabled={!ready}
-              title="Printable part templates"
-            >
-              <WrenchIcon size={12} /> TEMPLATES
-            </button>
-            {templatesOpen && (
-              <div
-                className="card absolute right-0 flex flex-col"
-                style={{ top: 34, zIndex: 3, padding: 4, gap: 4, background: "rgba(5, 7, 14, 0.96)", minWidth: 160 }}
-              >
-                {SCAD_TEMPLATES.map((template) => (
-                  <button
-                    key={template.key}
-                    type="button"
-                    className="btn"
-                    style={{ padding: "4px 10px", textAlign: "left" }}
-                    disabled={!!compiling}
-                    onClick={() => {
-                      setTemplatesOpen(false)
-                      void buildScad.current(template.label, template.code)
-                    }}
-                  >
-                    {template.label.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
           <button
             type="button"
             className="btn flex items-center"
@@ -463,6 +414,16 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
       </header>
 
       <div className="relative min-h-0 flex-1">
+        <LibraryDock
+          ready={ready}
+          compiling={!!compiling}
+          items={stage}
+          focusedId={focus?.id ?? null}
+          onProject={(key) => sceneRef.current?.spawn(key)}
+          onTemplate={(label, code) => void buildScad.current(label, code)}
+          onFocus={(id) => sceneRef.current?.focusId(id)}
+          onDiscard={(id) => sceneRef.current?.discardId(id)}
+        />
         <div
           ref={hostRef}
           className="absolute inset-0"
@@ -500,7 +461,7 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
 
         {/* The latest render, top right, until dismissed. */}
         {render && (
-          <div className="holo-card absolute" style={{ top: 12, right: 12, width: 360, zIndex: 2 }}>
+          <div className="holo-card" style={{ position: "absolute", top: 12, right: 12, width: 360, zIndex: 2 }}>
             <header className="holo-card-header">
               <span className="t-label truncate-1 flex items-center" style={{ gap: 6 }}>
                 <ImageIcon size={12} /> RENDER · {render.model.replace("gemini-", "").toUpperCase()}

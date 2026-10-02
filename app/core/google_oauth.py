@@ -40,6 +40,27 @@ STATE_MAX_AGE_SECONDS = 15 * 60
 TABLE = "jarvis_google_connection"
 ROW_ID = "default"
 
+# Andrew's Louisiana Tech account (agt537@email.latech.edu) is a second row
+# in the same table, id 'school'. Read-only: gmail.readonly and
+# calendar.readonly, no send, no event writes, no Drive. Everything that
+# acts (sending mail, creating events, Docs) stays on the 'default' Kivaro
+# account. The 'default' row and every existing caller are unchanged.
+SCHOOL_ROW_ID = "school"
+SCHOOL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/userinfo.email",
+]
+ROW_IDS = (ROW_ID, SCHOOL_ROW_ID)
+
+
+def connect_purpose(row_id: str = ROW_ID) -> str:
+    """OAuth state purpose for each account's connect flow. Both share one
+    callback URL, so the purpose is how the callback knows which row the
+    tokens belong to — and a state minted for one can't land in the other.
+    """
+    return "connect" if row_id == ROW_ID else f"connect-{row_id}"
+
 
 # Sign-in only needs to learn who you are. No offline access, so Google
 # returns no refresh token and there is nothing to store.
@@ -85,16 +106,19 @@ def verify_oauth_state(state: str, purpose: str = "connect") -> bool:
     return 0 <= age <= STATE_MAX_AGE_SECONDS
 
 
-def build_auth_url() -> str:
+def build_auth_url(row_id: str = ROW_ID) -> str:
     settings = get_settings()
+    school = row_id == SCHOOL_ROW_ID
     params = {
         "client_id": settings.google_client_id,
         "redirect_uri": settings.google_redirect_uri,
         "response_type": "code",
-        "scope": " ".join(GOOGLE_SCOPES),
+        "scope": " ".join(SCHOOL_SCOPES if school else GOOGLE_SCOPES),
         "access_type": "offline",
-        "prompt": "consent",
-        "state": generate_oauth_state(),
+        # select_account so the school connect doesn't silently reuse the
+        # browser's signed-in Kivaro account.
+        "prompt": "consent select_account" if school else "consent",
+        "state": generate_oauth_state(connect_purpose(row_id)),
     }
     query = httpx.QueryParams(params)
     return f"{GOOGLE_AUTH_URL}?{query}"
@@ -162,11 +186,11 @@ def fetch_google_email(access_token: str) -> str | None:
     return res.json().get("email")
 
 
-def store_connection(tokens: dict, google_email: str | None) -> None:
+def store_connection(tokens: dict, google_email: str | None, row_id: str = ROW_ID) -> None:
     supabase = get_supabase_client()
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=tokens["expires_in"])
     row = {
-        "id": ROW_ID,
+        "id": row_id,
         "google_email": google_email,
         "access_token": tokens["access_token"],
         "access_token_expires_at": expires_at.isoformat(),
@@ -180,13 +204,14 @@ def store_connection(tokens: dict, google_email: str | None) -> None:
     supabase.table(TABLE).upsert(row).execute()
 
 
-def get_google_access_token() -> str | None:
-    """The one function everything else calls — reads the singleton
-    connection row, refreshing the access token first if it's missing or
-    expiring within 60s, mirroring kiv-console's getWorkspaceAccessToken().
+def get_google_access_token(row_id: str = ROW_ID) -> str | None:
+    """The one function everything else calls — reads a connection row
+    ('default' unless asked for 'school'), refreshing the access token first
+    if it's missing or expiring within 60s, mirroring kiv-console's
+    getWorkspaceAccessToken().
     """
     supabase = get_supabase_client()
-    res = supabase.table(TABLE).select("*").eq("id", ROW_ID).maybe_single().execute()
+    res = supabase.table(TABLE).select("*").eq("id", row_id).maybe_single().execute()
     connection = res.data if res else None
     if not connection:
         return None
@@ -210,6 +235,6 @@ def get_google_access_token() -> str | None:
                 "access_token_expires_at": new_expires_at.isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
-        ).eq("id", ROW_ID).execute()
+        ).eq("id", row_id).execute()
 
     return access_token

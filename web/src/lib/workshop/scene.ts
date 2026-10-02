@@ -53,13 +53,13 @@ type Grip =
   | {
       kind: "item"
       item: Item
-      offset: THREE.Vector3
       lastX: number
       lastY: number
       vx: number
-      /** Camera distance and hand size at the grab, for depth by hand. */
-      distance: number
-      size: number | null
+      /** The horizontal plane the item slides on (y at its centre), and
+       *  where the pointer last met it. */
+      height: number
+      lastHit: THREE.Vector3 | null
     }
   | { kind: "orbit"; lastX: number; lastY: number }
 
@@ -81,8 +81,8 @@ const HAND_BONES: [number, number][] = [
 ]
 const HAND_NEAR = 4.5
 const HAND_FAR = 9.5
-/** How far a held item travels per doubling of apparent hand size. */
-const DEPTH_GAIN = 5
+/** How far from the centre of the stage an item may be slid. */
+const STAGE_RADIUS = 8
 /** Scene units per unit of MediaPipe's per-joint z (relative to the wrist). */
 const JOINT_DEPTH = 4
 
@@ -99,6 +99,8 @@ export interface WorkshopCallbacks {
   binAt?: (x: number, y: number) => boolean
   /** The bin's state changed: an item is over it, or one was discarded. */
   onBin?: (state: "idle" | "armed" | "discarded") => void
+  /** What is on the stage changed (added, removed, switched mode). */
+  onItems?: (items: { id: string; name: string; mode: ItemMode }[]) => void
 }
 
 const DISCARD_SECONDS = 0.55
@@ -215,7 +217,7 @@ export class WorkshopScene {
   private observer: ResizeObserver
 
   private azimuth = 0.25
-  private elevation = 0.32
+  private elevation = 0.55
   private radius = 8.5
   private twoHand: { a: string; b: string; start: number; startValue: number; item: Item | null } | null = null
   private hovered: Item | null = null
@@ -352,6 +354,23 @@ export class WorkshopScene {
     }
     this.items.push(item)
     this.focus(item)
+    this.emitItems()
+  }
+
+  private emitItems() {
+    this.callbacks.onItems?.(this.live().map((item) => ({ id: item.id, name: item.spec.name, mode: item.mode })))
+  }
+
+  /** Select an item (label, STL export target) by id. */
+  focusId(id: string) {
+    const item = this.live().find((i) => i.id === id)
+    if (item) this.focus(item)
+  }
+
+  /** Discard an item by id, with the same break-apart as the bin. */
+  discardId(id: string) {
+    const item = this.live().find((i) => i.id === id)
+    if (item) this.discard(item)
   }
 
   /** What is on the stage, oldest first, for Jarvis's view of the console. */
@@ -470,6 +489,7 @@ export class WorkshopScene {
     const matches = this.select(target)
     matches.forEach((item) => (item.mode = mode))
     if (this.focused && matches.includes(this.focused)) this.focus(this.focused)
+    this.emitItems()
     return matches.length
   }
 
@@ -490,6 +510,7 @@ export class WorkshopScene {
   setAllModes(mode: ItemMode) {
     this.items.forEach((item) => (item.mode = mode))
     if (this.focused) this.focus(this.focused)
+    this.emitItems()
   }
 
   clear() {
@@ -499,22 +520,22 @@ export class WorkshopScene {
     this.twoHand = null
     this.hovered = null
     this.focus(null)
+    this.emitItems()
   }
 
   /** Pointer pressed (mouse button or pinch). Always claims: empty space orbits. */
-  down(id: string, x: number, y: number, size?: number): boolean {
+  down(id: string, x: number, y: number): boolean {
     const item = this.pick(x, y)
     if (item) {
-      const point = this.planeHit(x, y, item.root.position)
+      const height = item.bounds.getCenter(new THREE.Vector3()).y
       this.grips.set(id, {
         kind: "item",
         item,
-        offset: point ? item.root.position.clone().sub(point) : new THREE.Vector3(),
         lastX: x,
         lastY: y,
         vx: 0,
-        distance: point ? point.distanceTo(this.camera.position) : this.radius,
-        size: size ?? null,
+        height,
+        lastHit: this.floorHit(x, y, height),
       })
       this.focus(item)
     } else {
@@ -524,7 +545,7 @@ export class WorkshopScene {
     return true
   }
 
-  move(id: string, x: number, y: number, size?: number) {
+  move(id: string, x: number, y: number) {
     const grip = this.grips.get(id)
     if (!grip) return
     if (this.twoHand && (this.twoHand.a === id || this.twoHand.b === id)) {
@@ -534,26 +555,24 @@ export class WorkshopScene {
       return
     }
     if (grip.kind === "item") {
-      // A hand also carries depth: the item keeps its distance from the
-      // camera, pushed or pulled by how much the hand has grown or shrunk
-      // since the grab. The mouse has no depth and slides on a plane.
-      let point: THREE.Vector3 | null
-      if (size && grip.size) {
-        const distance = THREE.MathUtils.clamp(
-          grip.distance + Math.log2(size / grip.size) * DEPTH_GAIN,
-          2.5,
-          22
-        )
-        this.raycaster.setFromCamera(this.ndc(x, y), this.camera)
-        point = this.raycaster.ray.at(distance, new THREE.Vector3())
-      } else {
-        point = this.planeHit(x, y, grip.item.root.position)
+      // Tabletop drag: a held item slides across a horizontal plane at its
+      // own height, so pointer up the screen pushes it back and down pulls
+      // it forward - hand or mouse alike. Depth used to come from the
+      // hand's apparent size, which meant reaching toward the webcam to
+      // push something away, with the hand growing, speeding up and
+      // leaving the frame as it went.
+      const hit = this.floorHit(x, y, grip.height)
+      if (hit && grip.lastHit) {
+        const position = grip.item.root.position
+        position.x += hit.x - grip.lastHit.x
+        position.z += hit.z - grip.lastHit.z
+        const reach = Math.hypot(position.x, position.z)
+        if (reach > STAGE_RADIUS) {
+          position.x *= STAGE_RADIUS / reach
+          position.z *= STAGE_RADIUS / reach
+        }
       }
-      if (point) {
-        const next = point.add(grip.offset)
-        next.y = Math.max(-0.3, Math.min(4, next.y))
-        grip.item.root.position.copy(next)
-      }
+      if (hit) grip.lastHit = hit
       const armed = !!this.callbacks.binAt?.(x, y)
       if (armed !== grip.item.armed) {
         grip.item.armed = armed
@@ -580,6 +599,7 @@ export class WorkshopScene {
     if (tap) {
       grip.item.mode = grip.item.mode === "wire" ? "solid" : "wire"
       this.focus(grip.item)
+      this.emitItems()
     } else {
       // Thrown: the release speed becomes spin, then friction takes over.
       grip.item.spin += grip.vx * 0.06
@@ -598,6 +618,7 @@ export class WorkshopScene {
     if (this.focused === item) this.focus(null)
     if (this.hovered === item) this.hovered = null
     this.callbacks.onBin?.("discarded")
+    this.emitItems()
   }
 
   /** Draw the tracked hands inside the scene, or none. */
@@ -672,6 +693,7 @@ export class WorkshopScene {
     if (!item) return
     item.mode = item.mode === "wire" ? "solid" : "wire"
     this.focus(item)
+    this.emitItems()
   }
 
   dispose() {
@@ -825,11 +847,14 @@ export class WorkshopScene {
     return best
   }
 
-  private planeHit(x: number, y: number, through: THREE.Vector3): THREE.Vector3 | null {
+  /** Where the pointer's ray meets the horizontal plane y = height, if it
+   *  does in front of the camera and within reach (a ray grazing the plane
+   *  near the horizon would fling the item to infinity). */
+  private floorHit(x: number, y: number, height: number): THREE.Vector3 | null {
     this.raycaster.setFromCamera(this.ndc(x, y), this.camera)
-    const normal = this.camera.getWorldDirection(new THREE.Vector3()).negate()
-    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, through)
-    return this.raycaster.ray.intersectPlane(plane, new THREE.Vector3())
+    const hit = this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -height), new THREE.Vector3())
+    if (!hit || Math.hypot(hit.x, hit.z) > STAGE_RADIUS * 1.5) return null
+    return hit
   }
 
   // Two pointers down at once: both on one item resizes it, both on empty
