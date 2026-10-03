@@ -272,6 +272,31 @@ export async function renderView(image: string, prompt: string | undefined, toke
   return res.json()
 }
 
+// --- Linked folders (lib/linked-folders.ts, app/api/routes/files.py) ---
+
+/** path -> modified_at of Jarvis's copy of a linked folder. */
+export async function getFilesManifest(folder: string, token: string): Promise<Record<string, string>> {
+  const res = await jarvisFetch(`/files/manifest?${new URLSearchParams({ folder })}`, token, { method: "GET" })
+  return (await res.json()).files
+}
+
+export async function syncFiles(
+  folder: string,
+  files: { path: string; content: string; size: number; modified_at: string }[],
+  keep: string[] | null,
+  token: string
+): Promise<void> {
+  await jarvisFetch("/files/sync", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folder, files, keep }),
+  })
+}
+
+export async function unlinkFolderFiles(folder: string, token: string): Promise<void> {
+  await jarvisFetch(`/files/unlink?${new URLSearchParams({ folder })}`, token, { method: "POST" })
+}
+
 export type WatchLevel = "quiet" | "normal" | "coach"
 
 export interface ObserveResult {

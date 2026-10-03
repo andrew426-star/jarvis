@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes.brief import router as brief_router
+from app.api.routes.files import router as files_router
 from app.api.routes.google_auth import router as google_auth_router
 from app.api.routes.google_login import router as google_login_router
 from app.api.routes.invoke import router as invoke_router
@@ -40,6 +41,7 @@ app.add_middleware(
 
 app.include_router(invoke_router)
 app.include_router(brief_router)
+app.include_router(files_router)
 app.include_router(google_auth_router)
 app.include_router(google_login_router)
 app.include_router(spotify_auth_router)

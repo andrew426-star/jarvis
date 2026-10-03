@@ -61,6 +61,7 @@ import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store
 import { useBoot } from "@/lib/use-boot"
 import { useHeartbeat } from "@/lib/use-heartbeat"
 import { snoozeWatch, startWatch, stopWatch } from "@/lib/watch"
+import { loadLinkedFolders, startFolderSync, useLinkedFolders } from "@/lib/linked-folders"
 import { resolveAuth, subscribeAuth } from "@/lib/auth-state"
 import { clearSession, clearStoredToken } from "@/lib/storage"
 
@@ -278,6 +279,25 @@ function Shell({
   // empty after a reload, but the session and its memory carry on.
   useHeartbeat(token, sessionId, onAuthError)
 
+  // Linked folders (Settings > Files) are kept in step while the console
+  // is open. One that the browser wants re-approved is flagged once.
+  useEffect(() => {
+    void loadLinkedFolders()
+    const stop = startFolderSync(token)
+    let warned = false
+    const unsubscribe = useLinkedFolders.subscribe((state) => {
+      const waiting = state.folders.find((f) => f.status === "needs-permission")
+      if (waiting && !warned) {
+        warned = true
+        notify("info", `Reconnect ${waiting.name}`, "Allow reading it again in Settings > Files so Jarvis sees your latest work.")
+      }
+    })
+    return () => {
+      stop()
+      unsubscribe()
+    }
+  }, [token, notify])
+
   // Close the console: everything that runs stops, and the shell shows a
   // standby screen (a browser tab cannot close itself unless a script
   // opened it, so window.close() is only a best effort).
@@ -394,7 +414,20 @@ function Shell({
         sessionId,
         canSpeak: () => useJarvis.getState().status === "idle",
         onRemark: remark,
-        onError: (message) => pushLog("WARN", `Watch: ${message}`),
+        onError: (message) => {
+          pushLog("WARN", `Watch: ${message}`)
+          notify("warning", "Watch hit a snag", message)
+        },
+        // Every look shows in the camera header and the system log, with
+        // what he made of the board, so silence reads as "nothing worth
+        // saying" rather than "not working".
+        onLook: (looking, result) => {
+          useSpatial.getState().setWatchLooking(looking)
+          if (!looking && result && !result.spoke) {
+            const seen = result.notes.replace(/\s+/g, " ").trim()
+            pushLog("NONE", `Watch: looked, nothing to say${seen ? ` · ${seen.slice(0, 90)}` : ""}`)
+          }
+        },
       },
       level
     )

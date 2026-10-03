@@ -59,12 +59,16 @@ _TOOL_STATUS = {
     "news_feed": "Reading the news",
     "portfolio": "Checking the portfolio",
     "spotify": "Talking to Spotify",
+    "files": "Reading your files",
     "showcase": "Preparing the display",
 }
 
 # Per-result size guard on what goes back to the model. The full result
 # still lands in the audit trail (Supabase/Pinecone) and the console.
 TOOL_RESULT_CHAR_CAP = 4000
+# Except where the content IS the point: a source file cut at 4000
+# characters cannot be reviewed.
+_TOOL_CAPS = {"files": 24_000}
 
 # Separate, independent pool from FastAPI/Starlette's own threadpool (which
 # is what actually runs this sync route across concurrent requests) — this
@@ -180,7 +184,11 @@ SYSTEM_PROMPT = (
     "/auth/spotify/connect; if it says not configured, that one isn't set up yet), and "
     "zoho_mail (Andrew's Zoho Mail business inbox, andrew.thomas@kivaroai.com — read-only, "
     "entirely separate from his Gmail; if it says not connected, tell him to visit "
-    "/auth/zoho/connect; if it says not configured, that one isn't set up yet). If asked to "
+    "/auth/zoho/connect; if it says not configured, that one isn't set up yet), and files "
+    "(read-only access to folders he has linked from his PC, such as his CSC 1013 Python "
+    "projects - list, read, search; when he mentions his code, a lab or an assignment, read it "
+    "rather than asking him to paste it, and if nothing is linked, tell him to link the folder "
+    "in Settings > Files). If asked to "
     "do something outside what these can actually do, say so plainly rather than pretending. "
     "Keep replies tight and conversational, not a wall of text — this persona is a voice, not "
     "an excuse for padding.\n\n"
@@ -298,9 +306,9 @@ def _model_view(result: dict) -> dict:
     return result
 
 
-def _capped(result: dict) -> dict:
+def _capped(result: dict, name: str = "") -> dict:
     payload = json.dumps(result, default=str)
-    if len(payload) <= TOOL_RESULT_CHAR_CAP:
+    if len(payload) <= _TOOL_CAPS.get(name, TOOL_RESULT_CHAR_CAP):
         return json.loads(payload)
     return {"truncated_json": payload[:TOOL_RESULT_CHAR_CAP] + "...[truncated]"}
 
@@ -334,7 +342,7 @@ def _reseed(base: list[types.Content], executed: list[tuple[str, dict, dict]]) -
         "Use them; call a tool again only if something is missing."
     ]
     for name, args, result in executed:
-        lines.append(f"- {name}({json.dumps(args, default=str)}) -> {json.dumps(_capped(result), default=str)}")
+        lines.append(f"- {name}({json.dumps(args, default=str)}) -> {json.dumps(_capped(result, name), default=str)}")
     contents = list(base)
     contents[-1] = types.Content(
         role="user", parts=[*contents[-1].parts, types.Part.from_text(text="\n".join(lines))]
@@ -707,7 +715,7 @@ def stream_invoke(
             timings.append({"step": "tool", "name": name, "ms": ms})
             executed.append((name, args, result))
             parts.append(
-                types.Part(function_response=types.FunctionResponse(id=call.id, name=name, response=_capped(result)))
+                types.Part(function_response=types.FunctionResponse(id=call.id, name=name, response=_capped(result, name)))
             )
         contents.append(types.Content(role="user", parts=parts))
     else:
