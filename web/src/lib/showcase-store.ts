@@ -18,6 +18,8 @@ export interface ShowcaseItem {
   language?: string
   filename?: string
   mime?: string
+  /** text: the .txt it was saved as in Drive (app/tools/notes.py). */
+  drive_link?: string
   /** image: base64, without the data: prefix. */
   image_data?: string
   time: string

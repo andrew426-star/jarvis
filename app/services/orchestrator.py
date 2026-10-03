@@ -28,8 +28,8 @@ from app.tools.console_control import (
     CONSOLE_SCHEMA,
     WORKSHOP_SCHEMA,
     console,
+    make_workshop,
     state_note,
-    workshop,
 )
 from app.tools.schemas import DISPATCH, TOOL_SCHEMAS
 from app.tools.showcase import SHOWCASE_NOTE, SHOWCASE_SCHEMA, make_showcase, state_line
@@ -63,6 +63,7 @@ _TOOL_STATUS = {
     "files": "Reading your files",
     "browser": "Looking at your browser",
     "showcase": "Preparing the display",
+    "notes": "Opening your notes",
 }
 
 # Per-result size guard on what goes back to the model. The full result
@@ -70,7 +71,7 @@ _TOOL_STATUS = {
 TOOL_RESULT_CHAR_CAP = 4000
 # Except where the content IS the point: a source file cut at 4000
 # characters cannot be reviewed.
-_TOOL_CAPS = {"files": 24_000, "browser": 24_000}
+_TOOL_CAPS = {"files": 24_000, "browser": 24_000, "notes": 24_000}
 
 # Separate, independent pool from FastAPI/Starlette's own threadpool (which
 # is what actually runs this sync route across concurrent requests) — this
@@ -531,7 +532,7 @@ def stream_invoke(
         handlers = {
             **DISPATCH,
             "console": console,
-            "workshop": workshop,
+            "workshop": make_workshop(image, image_type),
             "showcase": make_showcase(image, image_type),
         }
         system.append(CONSOLE_CONTROL_NOTE)

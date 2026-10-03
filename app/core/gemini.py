@@ -50,13 +50,21 @@ class OutOfTime(RuntimeError):
 
 
 class AllModelsExhausted(RuntimeError):
-    def __init__(self, retry_at: float):
+    def __init__(self, retry_at: float, reasons: dict[str, str] | None = None):
         self.retry_at = retry_at
+        # model -> why it is resting. Not every rest is quota: a model the
+        # key cannot use (403/404) rests too, and saying "free-tier limit"
+        # for that hid a broken image ladder for weeks.
+        self.reasons = reasons or {}
         super().__init__("Every Gemini model is out of quota.")
+
+    def detail(self) -> str:
+        return "; ".join(f"{model}: {why}" for model, why in self.reasons.items()) or str(self)
 
 
 _lock = threading.Lock()
 _cooling: dict[str, float] = {}  # model -> time.time() it is usable again
+_why: dict[str, str] = {}  # model -> the error that put it in _cooling
 # Models that refused the configured thinking level and had to be asked at
 # "low". Measured: "low" is what makes a call slow (3.6-flash took 1.2s at
 # "minimal" and 16.7s at "low" for the same request), so these go to the
@@ -150,15 +158,24 @@ def generate(
                 raise
             with _lock:
                 _cooling[model] = time.time() + rest
+                _why[model] = _reason(exc)
             logger.warning("Gemini %s unavailable (%s); resting %.0fs", model, exc.code, rest)
         except httpx.TimeoutException:
             with _lock:
                 _cooling[model] = time.time() + OVERLOADED_COOLDOWN
+                _why[model] = "timed out"
             logger.warning("Gemini %s timed out; resting %.0fs", model, OVERLOADED_COOLDOWN)
 
     with _lock:
         retry_at = min((_cooling.get(m, 0) for m in candidates), default=time.time() + MINUTE_COOLDOWN)
-    raise AllModelsExhausted(retry_at)
+        reasons = {m: _why.get(m, "resting") for m in candidates}
+    raise AllModelsExhausted(retry_at, reasons)
+
+
+def _reason(exc: errors.APIError) -> str:
+    """A short, readable cause: the HTTP code and the first line of Google's message."""
+    message = (getattr(exc, "message", None) or str(exc)).strip().splitlines()[0]
+    return f"{exc.code} {message[:160]}"
 
 
 def _with_thinking(config: types.GenerateContentConfig, level: str) -> types.GenerateContentConfig:
@@ -229,10 +246,12 @@ def generate_stream(
                 raise
             with _lock:
                 _cooling[model] = time.time() + rest
+                _why[model] = _reason(exc)
             logger.warning("Gemini %s unavailable (%s); resting %.0fs", model, exc.code, rest)
         except httpx.TimeoutException:
             with _lock:
                 _cooling[model] = time.time() + OVERLOADED_COOLDOWN
+                _why[model] = "timed out"
             logger.warning("Gemini %s timed out; resting %.0fs", model, OVERLOADED_COOLDOWN)
 
     with _lock:

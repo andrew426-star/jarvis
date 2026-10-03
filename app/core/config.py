@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     # connect route reports it instead and everything else keeps serving.
     google_redirect_uri: str | None = None
 
+    # Where the showcase's notes are saved as .txt files (app/tools/notes.py).
+    # Unset: a top-level "Jarvis Notes" folder in the Kivaro Drive, made on
+    # first save. Set to a folder id to file them somewhere else.
+    notes_drive_folder_id: str | None = None
+
     # Sign-in is a SEPARATE Google flow from the connect flow above, and
     # needs its own registered redirect URI. Kept apart deliberately:
     # connect asks for the broad Gmail/Drive/Docs scopes with

@@ -511,6 +511,42 @@ export async function getPortfolio(token: string): Promise<PortfolioResult> {
   return res.json()
 }
 
+// --- Notes (app/api/routes/notes.py) -----------------------------------
+// The .txt notes Jarvis saved to the Jarvis Notes folder in Drive.
+
+export interface NoteFile {
+  id: string
+  name: string
+  title: string
+  size: number
+  modified_at: string | null
+  link: string | null
+}
+
+export interface NotesResult {
+  ok: boolean
+  notes?: NoteFile[]
+  folder_link?: string
+  error?: string
+}
+
+export interface NoteContent extends NoteFile {
+  ok: boolean
+  content?: string
+  error?: string
+}
+
+export async function getNotes(token: string, query?: string): Promise<NotesResult> {
+  const params = query ? `?${new URLSearchParams({ query })}` : ""
+  const res = await jarvisFetch(`/notes${params}`, token, { method: "GET" })
+  return res.json()
+}
+
+export async function getNote(id: string, token: string): Promise<NoteContent> {
+  const res = await jarvisFetch(`/notes/${encodeURIComponent(id)}`, token, { method: "GET" })
+  return res.json()
+}
+
 // --- Integration health -----------------------------------------------
 // Backed by GET /status (app/api/routes/status.py). Authenticated,
 // because it reveals which accounts are linked; returns presence and

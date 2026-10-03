@@ -8,7 +8,7 @@ import { centralTime } from "@/lib/time"
 
 export type Mode = "normal" | "serious"
 export type AgentStatus = "idle" | "listening" | "speaking" | "thinking"
-export type TabKey = "markets" | "intel" | "assets"
+export type TabKey = "markets" | "intel" | "assets" | "notes"
 export type LogLevel = "OK" | "WARN" | "ERR" | "NONE"
 
 export interface LogEntry {

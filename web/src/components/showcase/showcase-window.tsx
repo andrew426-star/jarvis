@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DownloadIcon, PinIcon, XIcon } from "lucide-react"
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DownloadIcon, ExternalLinkIcon, PinIcon, XIcon } from "lucide-react"
 import katex from "katex"
 import "katex/dist/katex.min.css"
 
@@ -408,6 +408,19 @@ export function ShowcaseWindow() {
               >
                 <DownloadIcon size={13} />
               </button>
+              {item.drive_link && (
+                <a
+                  href={item.drive_link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn"
+                  style={{ width: 26, height: 26, padding: 0 }}
+                  aria-label="Open the saved .txt in Drive"
+                  title="Saved to Drive: open it there"
+                >
+                  <ExternalLinkIcon size={13} />
+                </a>
+              )}
               {canPin && (
                 <button type="button" className="btn" style={{ width: 26, height: 26, padding: 0 }} onClick={pin} aria-label="Pin as hologram" title="Pin as hologram">
                   <PinIcon size={13} />

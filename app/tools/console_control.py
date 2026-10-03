@@ -1,4 +1,8 @@
 import math
+from collections.abc import Callable
+
+from app.core.gemini import AllModelsExhausted, GeminiNotConfigured
+from app.integrations.gemini_scad import scad_from_frame
 
 # Jarvis driving his own console. These tools run on the server but act in
 # Andrew's browser: each one validates what the model asked for and returns
@@ -30,7 +34,7 @@ CONSOLE_ACTIONS = [
     "clear_holograms",
     "close_console",
 ]
-PANELS = {"markets", "intel", "assets"}
+PANELS = {"markets", "intel", "assets", "notes"}
 WATCH_LEVELS = {"quiet", "normal", "coach"}
 MODES = {"normal", "serious"}
 
@@ -72,6 +76,15 @@ SCAD_GUIDE = (
     "setting (e.g. 'matte black PLA on a walnut desk beside a monitor, warm evening lamp light'). "
     "The part's geometry is held fixed, so describe looks, not shape. Use it whenever he asks to "
     "see a part for real, rendered or 'what it would look like'. "
+    "capture: model what is in front of his camera as a printable part - the object he is "
+    "holding up, a sketch on the whiteboard, a broken piece to replace. `prompt` says what to "
+    "model and anything to change or add (e.g. 'the bracket in my hand, but 4 mm thick with a "
+    "second mounting hole', 'a case that fits this board'), with any real dimensions he gave. A "
+    "model that sees the camera frame writes the part, so do not describe the object yourself "
+    "and do not call camera_look first. Needs the camera on (it is while watching); if it is "
+    "off, turn it on with the console tool and ask him to hold the object up. Size is judged "
+    "from the frame unless he gives it, so say which dimensions are estimates and offer to "
+    "adjust. "
     "snapshot: save the view as a PNG to download - for Veras (EvolveLAB's renderer, which has "
     "no API; he uploads it himself, and you can give him a Veras prompt) or anything else. "
 )
@@ -82,7 +95,7 @@ CONSOLE_SCHEMA = {
         "name": "console",
         "description": (
             "Operate Andrew's J.A.R.V.I.S. console in his browser: open or close the data "
-            "panels (markets, intel, assets), open or close the 3D workshop, turn the camera "
+            "panels (markets, intel, assets, notes: his saved notes), open or close the 3D workshop, turn the camera "
             "or hand tracking on or off, close the showcase window (close_showcase), start or stop watching his whiteboard (watch_on brings "
             "the camera up; target sets how readily you speak up: quiet | normal | coach; watch_snooze keeps you quiet "
             "for 15 minutes without stopping), switch between normal and serious mode, mute or "
@@ -104,7 +117,7 @@ CONSOLE_SCHEMA = {
                             "target": {
                                 "type": "string",
                                 "description": (
-                                    "open_panel: markets | intel | assets. set_mode: normal | serious. "
+                                    "open_panel: markets | intel | assets | notes. set_mode: normal | serious. "
                                     "watch_on: quiet | normal | coach (default normal)."
                                 ),
                             },
@@ -169,13 +182,13 @@ WORKSHOP_SCHEMA = {
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["spawn", "build", "scad", "export_stl", "render", "snapshot", "discard", "set_mode", "clear"],
+                                "enum": ["spawn", "build", "scad", "capture", "export_stl", "render", "snapshot", "discard", "set_mode", "clear"],
                             },
                             "target": {"type": "string"},
-                            "name": {"type": "string", "description": "scad: the part's name."},
+                            "name": {"type": "string", "description": "scad or capture: the part's name."},
                             "code": {"type": "string", "description": "scad: the OpenSCAD program."},
                             "notes": {"type": "array", "items": {"type": "string"}, "description": "scad: 2-4 key dimensions."},
-                            "prompt": {"type": "string", "description": "render: art direction."},
+                            "prompt": {"type": "string", "description": "render: art direction. capture: what to model from the camera."},
                             "mode": {"type": "string", "enum": ["holo", "solid"]},
                             "model": {
                                 "type": "object",
@@ -269,7 +282,33 @@ def console(args: dict) -> dict:
     return result
 
 
-def workshop(args: dict) -> dict:
+def make_workshop(frame_b64: str | None, frame_type: str) -> Callable[[dict], dict]:
+    """The workshop handler for this turn, holding the camera frame (if any)
+    for a capture."""
+    return lambda args: workshop(args, frame_b64, frame_type)
+
+
+def _capture(raw: dict, frame_b64: str | None, frame_type: str) -> tuple[dict | None, str | None]:
+    """A capture becomes an ordinary scad action, so the console compiles it
+    and reports a failed compile back like any other part."""
+    if not frame_b64:
+        return None, "capture needs the camera on: there is no frame this turn"
+    instructions = str(raw.get("prompt") or "").strip()[:1500] or "Model the main object in view."
+    try:
+        part = scad_from_frame(frame_b64, frame_type, instructions, SCAD_GUIDE)
+    except GeminiNotConfigured as exc:
+        return None, str(exc)
+    except AllModelsExhausted as exc:
+        return None, f"capture failed, no model would take it - {exc.detail()}"
+    except Exception as exc:  # noqa: BLE001 — say why, rather than failing the turn
+        return None, f"capture failed: {exc}"
+    if len(part["code"]) > MAX_SCAD_CHARS:
+        return None, "capture produced code too long to compile"
+    name = str(raw.get("name") or part["name"])[:60]
+    return {"action": "scad", "name": name, "code": part["code"], "notes": [str(n)[:60] for n in part["notes"][:4]]}, None
+
+
+def workshop(args: dict, frame_b64: str | None = None, frame_type: str = "image/jpeg") -> dict:
     actions = []
     problems = []
     for raw in args.get("actions") or []:
@@ -304,6 +343,12 @@ def workshop(args: dict) -> dict:
                     "notes": [str(n)[:60] for n in notes[:4]],
                 }
             )
+        elif action == "capture":
+            captured, error = _capture(raw, frame_b64, frame_type)
+            if error:
+                problems.append(error)
+                continue
+            actions.append(captured)
         elif action == "snapshot":
             actions.append({"action": "snapshot"})
         elif action == "render":
@@ -364,6 +409,12 @@ def state_note(state: dict | None) -> str | None:
             else "not watching the whiteboard; "
         )
         + f"audio {'muted' if state.get('muted') else 'on'}."
+        + (
+            " Workshop and camera are both up: when he asks you to model, capture or copy what he "
+            "is showing, use workshop capture."
+            if state.get("workshop_open") and state.get("camera_on")
+            else ""
+        )
         + (
             f" LAST OPENSCAD COMPILE FAILED for \"{(state.get('last_scad_error') or {}).get('name')}\": "
             f"{(state.get('last_scad_error') or {}).get('error', '')[:800]}"

@@ -1,4 +1,5 @@
 import base64
+import json
 from email.message import EmailMessage
 from typing import Any
 from urllib.parse import quote
@@ -229,6 +230,106 @@ def drive_search_files(access_token: str, query_text: str, max_results: int) -> 
     if not res.is_success:
         raise RuntimeError(f"Drive search failed: {res.text}")
     return res.json().get("files", [])
+
+
+FOLDER_MIME = "application/vnd.google-apps.folder"
+UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3"
+
+
+def drive_find_or_create_folder(access_token: str, name: str) -> str:
+    """The id of a top-level folder with this name, made if it isn't there."""
+    escaped = name.replace("'", "\\'")
+    q = f"name = '{escaped}' and mimeType = '{FOLDER_MIME}' and 'root' in parents and trashed = false"
+    res = httpx.get(
+        f"{DRIVE_BASE}/files",
+        headers=_headers(access_token),
+        params={"q": q, "pageSize": 1, "fields": "files(id)"},
+        timeout=15.0,
+    )
+    if not res.is_success:
+        raise RuntimeError(f"Drive folder lookup failed: {res.text}")
+    found = res.json().get("files", [])
+    if found:
+        return found[0]["id"]
+    res = httpx.post(
+        f"{DRIVE_BASE}/files",
+        headers=_headers(access_token),
+        params={"fields": "id"},
+        json={"name": name, "mimeType": FOLDER_MIME},
+        timeout=15.0,
+    )
+    if not res.is_success:
+        raise RuntimeError(f"Drive folder create failed: {res.text}")
+    return res.json()["id"]
+
+
+def drive_upload_text(access_token: str, folder_id: str, name: str, content: str) -> dict:
+    """A plain-text file in the folder. Multipart: metadata and body in one call."""
+    boundary = "jarvis-note-boundary"
+    metadata = json.dumps({"name": name, "parents": [folder_id], "mimeType": "text/plain"})
+    body = (
+        f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n".encode()
+        + metadata.encode()
+        + f"\r\n--{boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n".encode()
+        + content.encode("utf-8")
+        + f"\r\n--{boundary}--".encode()
+    )
+    res = httpx.post(
+        f"{UPLOAD_BASE}/files",
+        headers={**_headers(access_token), "Content-Type": f"multipart/related; boundary={boundary}"},
+        params={"uploadType": "multipart", "fields": "id,name,webViewLink,modifiedTime"},
+        content=body,
+        timeout=20.0,
+    )
+    if not res.is_success:
+        raise RuntimeError(f"Drive upload failed: {res.text}")
+    return res.json()
+
+
+def drive_list_folder(access_token: str, folder_id: str, query_text: str | None, max_results: int) -> list[dict]:
+    """Files directly in a folder, newest first, optionally matching text."""
+    q = f"'{folder_id}' in parents and trashed = false"
+    if query_text:
+        escaped = query_text.replace("'", "\\'")
+        q += f" and (name contains '{escaped}' or fullText contains '{escaped}')"
+    res = httpx.get(
+        f"{DRIVE_BASE}/files",
+        headers=_headers(access_token),
+        params={
+            "q": q,
+            "pageSize": max_results,
+            "orderBy": "modifiedTime desc",
+            "fields": "files(id,name,size,modifiedTime,webViewLink)",
+        },
+        timeout=15.0,
+    )
+    if not res.is_success:
+        raise RuntimeError(f"Drive list failed: {res.text}")
+    return res.json().get("files", [])
+
+
+def drive_get_metadata(access_token: str, file_id: str) -> dict:
+    res = httpx.get(
+        f"{DRIVE_BASE}/files/{quote(file_id, safe='')}",
+        headers=_headers(access_token),
+        params={"fields": "id,name,parents,size,modifiedTime,webViewLink"},
+        timeout=15.0,
+    )
+    if not res.is_success:
+        raise RuntimeError(f"Drive metadata failed: {res.text}")
+    return res.json()
+
+
+def drive_download_text(access_token: str, file_id: str) -> str:
+    res = httpx.get(
+        f"{DRIVE_BASE}/files/{quote(file_id, safe='')}",
+        headers=_headers(access_token),
+        params={"alt": "media"},
+        timeout=20.0,
+    )
+    if not res.is_success:
+        raise RuntimeError(f"Drive download failed: {res.text}")
+    return res.content.decode("utf-8", errors="replace")
 
 
 # --- Docs ---------------------------------------------------------------

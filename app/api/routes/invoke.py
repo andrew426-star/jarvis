@@ -94,6 +94,6 @@ def render(request: RenderRequest) -> dict:
     except GeminiNotConfigured as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except AllModelsExhausted as exc:
-        raise HTTPException(status_code=429, detail="Every image model is at its free-tier limit for now.") from exc
+        raise HTTPException(status_code=429, detail=f"No image model would take it - {exc.detail()}") from exc
     except Exception as exc:  # noqa: BLE001 — say why the render failed rather than a bare 500
         raise HTTPException(status_code=502, detail=f"Render failed: {exc}") from exc

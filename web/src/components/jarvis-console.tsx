@@ -26,6 +26,7 @@ import { LoginGate } from "@/components/login-gate"
 import type { MicButtonHandle } from "@/components/mic-button"
 import { MarketsPanel } from "@/components/panels/markets-panel"
 import { NewsPanel } from "@/components/panels/news-panel"
+import { NotesPanel } from "@/components/panels/notes-panel"
 import { PortfolioPanel } from "@/components/panels/portfolio-panel"
 import {
   JarvisApiError,
@@ -794,6 +795,9 @@ function Shell({
         </div>
         <div className={activeTab === "assets" ? "" : "hidden"}>
           <PortfolioPanel token={token} onAuthError={onAuthError} livePortfolio={livePortfolio} />
+        </div>
+        <div className={activeTab === "notes" ? "" : "hidden"}>
+          <NotesPanel token={token} onAuthError={onAuthError} />
         </div>
       </DataWindow>
 

@@ -14,6 +14,7 @@ from app.tools.launch_tracker import launch_tracker
 from app.tools.market_analysis import market_analysis
 from app.tools.market_history import market_history
 from app.tools.news_feed import news_feed
+from app.tools.notes import NOTES_SCHEMA, notes
 from app.tools.portfolio import portfolio
 from app.tools.spotify import spotify
 from app.tools.think import think
@@ -611,6 +612,7 @@ TOOL_SCHEMAS = [
     },
     FILES_SCHEMA,
     BROWSER_SCHEMA,
+    NOTES_SCHEMA,
 ]
 
 DISPATCH = {
@@ -635,4 +637,5 @@ DISPATCH = {
     "zoho_mail": zoho_mail,
     "files": files,
     "browser": browser,
+    "notes": notes,
 }

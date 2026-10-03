@@ -12,6 +12,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "markets", label: "Markets" },
   { key: "intel", label: "Intel" },
   { key: "assets", label: "Assets" },
+  { key: "notes", label: "Notes" },
 ]
 
 function Metric({ label, value, color }: { label: string; value: string; color?: string }) {
