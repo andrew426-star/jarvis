@@ -757,7 +757,7 @@ function Shell({
       />
       <HandCursors />
 
-      <SettingsPanel sessionId={sessionId} onSignOut={onSignOut} />
+      <SettingsPanel token={token} sessionId={sessionId} onSignOut={onSignOut} />
 
       {standby && (
         <button

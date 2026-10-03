@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     # Groq now only transcribes voice (Whisper). Jarvis's brain and eyes
     # are Gemini, below.
     groq_api_key: str
-    groq_whisper_model: str = "whisper-large-v3-turbo"
+    groq_whisper_model: str = "whisper-large-v3"
 
     # Gemini: the agent loop and camera vision. Optional so a deploy that
     # has not set it yet still boots; /invoke then says what is missing.

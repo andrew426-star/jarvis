@@ -6,6 +6,7 @@ import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react"
 
 import { apiOrigin, type ConnectionStatus } from "@/lib/jarvis-client"
 import { useJarvis } from "@/lib/store"
+import { VoiceSettings } from "@/components/hud/voice-settings"
 
 // Everything in this panel is either wired to something real or is not
 // here at all.
@@ -252,11 +253,12 @@ function Appearance() {
 }
 
 interface SettingsPanelProps {
+  token: string
   sessionId: string
   onSignOut: () => void
 }
 
-export function SettingsPanel({ sessionId, onSignOut }: SettingsPanelProps) {
+export function SettingsPanel({ token, sessionId, onSignOut }: SettingsPanelProps) {
   const open = useJarvis((state) => state.settingsOpen)
   const setOpen = useJarvis((state) => state.setSettingsOpen)
   const [expanded, setExpanded] = useState<string | null>("connections")
@@ -268,6 +270,7 @@ export function SettingsPanel({ sessionId, onSignOut }: SettingsPanelProps) {
       title: "Session",
       render: () => <Session sessionId={sessionId} onSignOut={onSignOut} />,
     },
+    { key: "voice", title: "Voice", render: () => <VoiceSettings token={token} /> },
     { key: "diagnostics", title: "Diagnostics", render: () => <Diagnostics /> },
     { key: "appearance", title: "Appearance", render: () => <Appearance /> },
   ]

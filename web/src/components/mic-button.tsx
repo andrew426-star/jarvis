@@ -5,6 +5,7 @@ import { Loader2Icon, MicIcon, MicOffIcon, SquareIcon } from "lucide-react"
 
 import { clearMicAmplitude, setMicAmplitude, setMicBands } from "@/lib/audio-amplitude"
 import { JarvisAuthError, transcribe } from "@/lib/jarvis-client"
+import { openMic } from "@/lib/microphone"
 
 type RecordState = "idle" | "recording" | "transcribing" | "error"
 
@@ -31,7 +32,14 @@ interface MicButtonProps {
 // turn as finished. MAX_RECORDING_MS is a hard safety cap so a stuck/very
 // noisy input can't leave the mic recording forever.
 const SILENCE_THRESHOLD = 0.02
-const SILENCE_DURATION_MS = 1300
+// Long enough for a breath mid-sentence; 1.3s cut him off while thinking.
+const SILENCE_DURATION_MS = 1500
+// A freshly opened mic can be dead air for a moment - a Bluetooth headset
+// switching into its hands-free mode takes most of a second - and words
+// spoken into that are lost. "Listening" is only shown once the signal
+// arrives (anything above digital silence), or after this long regardless.
+const LIVE_SIGNAL = 0.002
+const LIVE_TIMEOUT_MS = 1500
 const MAX_RECORDING_MS = 30000
 
 export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function MicButton(
@@ -47,12 +55,14 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
   const hasSpokenRef = useRef(false)
   const silenceStartRef = useRef<number | null>(null)
   const recordingStartRef = useRef(0)
+  const liveRef = useRef(false)
 
   // Single funnel for state changes, so the outward "is it listening"
   // signal can't drift from what the button itself is showing.
   function applyState(next: RecordState) {
     setState(next)
-    onRecordingChange?.(next === "recording")
+    // "recording" is announced by the VAD loop once the mic is actually live.
+    if (next !== "recording") onRecordingChange?.(false)
   }
 
   function stopVadLoop() {
@@ -92,6 +102,11 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
       setMicBands(bins)
       const now = performance.now()
 
+      if (!liveRef.current && (rms > LIVE_SIGNAL || now - recordingStartRef.current > LIVE_TIMEOUT_MS)) {
+        liveRef.current = true
+        onRecordingChange?.(true)
+      }
+
       if (rms > SILENCE_THRESHOLD) {
         hasSpokenRef.current = true
         silenceStartRef.current = null
@@ -117,10 +132,11 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
   const startRecording = useCallback(async () => {
     if (state !== "idle" || disabled) return
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = await openMic()
       const recorder = new MediaRecorder(stream)
       chunksRef.current = []
       hasSpokenRef.current = false
+      liveRef.current = false
       silenceStartRef.current = null
       recordingStartRef.current = performance.now()
 
