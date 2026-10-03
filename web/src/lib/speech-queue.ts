@@ -24,11 +24,14 @@ interface Handlers {
   /** `completed` is false when the queue was stopped (barge-in). */
   onEnd: (completed: boolean) => void
   onAuthError: () => void
+  /** Each sentence as it starts to be heard (or is skipped), in order, so
+   *  the chat can show exactly what has been said so far. */
+  onSay?: (sentence: string) => void
 }
 
 export class SpeechQueue {
   private buffer = ""
-  private clips: Promise<Blob | null>[] = []
+  private clips: { text: string; blob: Promise<Blob | null> }[] = []
   private closed = false
   private stopped = false
   private started = false
@@ -84,13 +87,14 @@ export class SpeechQueue {
   private enqueue(text: string) {
     const sentence = text.trim()
     if (!sentence) return
-    this.clips.push(
-      speak(sentence, this.token).catch((err) => {
+    this.clips.push({
+      text: sentence,
+      blob: speak(sentence, this.token).catch((err) => {
         if (err instanceof JarvisAuthError) this.handlers.onAuthError()
         // A sentence that fails to synthesise is skipped, not fatal.
         return null
-      })
-    )
+      }),
+    })
     this.poke()
   }
 
@@ -107,10 +111,17 @@ export class SpeechQueue {
         await new Promise<void>((resolve) => (this.wake = resolve))
         continue
       }
-      const blob = await this.clips[index]
+      const clip = this.clips[index]
+      const blob = await clip.blob
       index += 1
-      if (!blob || this.stopped) continue
-      await this.play(blob)
+      if (this.stopped) continue
+      // Unspoken (synthesis failed) still counts as said, so the chat
+      // never stalls on a sentence that will not come.
+      if (!blob) {
+        this.handlers.onSay?.(clip.text)
+        continue
+      }
+      await this.play(blob, clip.text)
     }
     if (!this.stopped) {
       if (this.started) {
@@ -123,7 +134,7 @@ export class SpeechQueue {
     }
   }
 
-  private play(blob: Blob): Promise<void> {
+  private play(blob: Blob, text: string): Promise<void> {
     return new Promise((resolve) => {
       const url = URL.createObjectURL(blob)
       const audio = this.element ?? new Audio()
@@ -134,11 +145,22 @@ export class SpeechQueue {
         if (this.playing === audio) this.playing = null
         resolve()
       }
+      // Said once, whichever way the clip goes: heard, failed, or blocked.
+      let said = false
+      const say = () => {
+        if (said) return
+        said = true
+        this.handlers.onSay?.(text)
+      }
       audio.onended = done
-      audio.onerror = done
+      audio.onerror = () => {
+        say()
+        done()
+      }
       audio
         .play()
         .then(() => {
+          say()
           if (!this.started) {
             this.started = true
             // Registering makes the core's barge-in (and any other reply's
@@ -148,7 +170,10 @@ export class SpeechQueue {
           }
           if (!this.element) startAudioAnalysis(audio)
         })
-        .catch(done)
+        .catch(() => {
+          say()
+          done()
+        })
       // A stop() mid-clip pauses the element, which does not fire ended.
       const check = setInterval(() => {
         if (this.stopped) {

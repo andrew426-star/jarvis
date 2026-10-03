@@ -494,9 +494,17 @@ function Shell({
       }
       setMessages((prev) => prev.map((m) => (m.id === replyId ? change(m) : m)))
     }
+    // The bubble shows what he has said so far, a sentence at a time as
+    // each is heard. Cut off (barge-in) or finished, it shows all of it.
+    let interrupted = false
+    const sayAll = (m: ChatMessageData) => (m.said !== undefined && m.spoken ? { ...m, said: m.spoken } : m)
     const voice = new SpeechQueue(token, {
+      onSay: (sentence) =>
+        updateReply((m) => ({ ...m, said: m.said ? `${m.said} ${sentence}` : sentence })),
       onStart: () => setSpeaking(true),
       onEnd: (completed) => {
+        if (!completed) interrupted = true
+        if (replyShown) updateReply(sayAll)
         setSpeaking(false)
         // After a spoken exchange the mic reopens for the answer, unless
         // the speech was cut off by a barge-in (which opens it itself).
@@ -514,7 +522,10 @@ function Shell({
         (event) => {
           if (event.type === "text") updateReply((m) => ({ ...m, content: m.content + event.delta }))
           else if (event.type === "reset") updateReply((m) => ({ ...m, content: "" }))
-          else if (event.type === "spoken") voice.push(event.delta)
+          else if (event.type === "spoken") {
+            voice.push(event.delta)
+            updateReply((m) => ({ ...m, spoken: (m.spoken ?? "") + event.delta, said: m.said ?? "" }))
+          }
           else if (event.type === "tool") {
             // Acted on the moment each tool finishes, not at the end: a
             // panel or workshop change lands while he is still talking.
@@ -551,13 +562,19 @@ function Shell({
       }
       // The finished reply replaces what streamed in: the server's final
       // text is the authoritative one (tags stripped, whitespace settled).
-      updateReply((m) => ({
-        ...m,
-        content: result.response,
-        spoken: result.spoken,
-        toolsUsed: result.tools_used,
-        streaming: false,
-      }))
+      updateReply((m) => {
+        const finished = {
+          ...m,
+          content: result.response,
+          spoken: result.spoken,
+          toolsUsed: result.tools_used,
+          streaming: false,
+          // No voice line: the screen text is the reply, as before. Cut off
+          // already: nothing more will be heard, so show the rest.
+          said: result.spoken?.trim() ? (interrupted ? result.spoken : (m.said ?? "")) : undefined,
+        }
+        return finished
+      })
 
       // Render's free tier sleeps after 15 minutes. A multi-second first
       // call is the instance waking up, not Jarvis thinking slowly, and
@@ -572,7 +589,7 @@ function Shell({
       }
     } catch (err) {
       voice.stop()
-      if (replyShown) updateReply((m) => ({ ...m, streaming: false }))
+      if (replyShown) updateReply((m) => sayAll({ ...m, streaming: false }))
       if (err instanceof JarvisAuthError) {
         pushLog("ERR", "Session rejected")
         notify("warning", "Session expired", "Sign in again to continue.")
@@ -758,7 +775,7 @@ function Shell({
         onSnooze={snooze}
         onClose={toggleCamera}
         onCoreToggle={handleReactorToggle}
-        caption={lastReply ? { id: lastReply.id, text: lastReply.content } : null}
+        caption={lastReply ? { id: lastReply.id, text: lastReply.said ?? lastReply.content } : null}
       />
       <HandCursors />
 
