@@ -606,6 +606,9 @@ function Shell({
   }
 
   const serious = mode === "serious"
+  // Captioned in the camera window, so a reply can be read without
+  // looking away from the board.
+  const lastReply = messages.findLast((message) => message.role === "assistant")
 
   return (
     <div className="hud-grid">
@@ -754,6 +757,8 @@ function Shell({
         onSetWatch={(level) => void setWatch(level)}
         onSnooze={snooze}
         onClose={toggleCamera}
+        onCoreToggle={handleReactorToggle}
+        caption={lastReply ? { id: lastReply.id, text: lastReply.content } : null}
       />
       <HandCursors />
 

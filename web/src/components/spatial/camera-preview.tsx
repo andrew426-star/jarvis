@@ -1,12 +1,23 @@
 "use client"
 
-import { useEffect, useRef } from "react"
-import { BellOffIcon, EyeIcon, HandIcon, ScanEyeIcon, XIcon } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import {
+  BellOffIcon,
+  EyeIcon,
+  FlipHorizontalIcon,
+  HandIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+  ScanEyeIcon,
+  XIcon,
+} from "lucide-react"
 
+import { CoreCipher } from "@/components/hud/core-cipher"
 import { attachVideo } from "@/lib/camera"
 import { subscribeHands } from "@/lib/hand-tracking"
 import type { WatchLevel } from "@/lib/jarvis-client"
 import { useSpatial } from "@/lib/spatial-store"
+import { useJarvis } from "@/lib/store"
 
 // Pairs of landmark indices that make up the hand skeleton.
 const BONES: [number, number][] = [
@@ -25,6 +36,69 @@ const WATCH_LEVELS: { level: WatchLevel; label: string; title: string }[] = [
 
 const HANDS_LABEL = { off: "HANDS", loading: "LOADING", tracking: "HANDS ON", error: "HANDS ERR" }
 
+// Top bar 48px, bottom bar 56px: the window lives between them.
+const TOP = 48
+const BOTTOM = 56
+const GUTTER = 12
+const MIN_WIDTH = 240
+const DEFAULT_WIDTH = 400
+// The core joins the video once there is room for it beside the picture.
+const CORE_MIN_WIDTH = 320
+const CAPTION_MS = 10_000
+
+const LAYOUT_KEY = "jarvis_camera_window"
+
+interface Layout {
+  x: number
+  y: number
+  width: number
+  /** Raw (unmirrored) picture: a whiteboard's writing reads the right way round. */
+  flipped: boolean
+}
+
+function loadLayout(): Partial<Layout> {
+  try {
+    return JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "{}") as Partial<Layout>
+  } catch {
+    return {}
+  }
+}
+
+function saveLayout(layout: Layout) {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout))
+  } catch {
+    // Storage blocked: the window simply starts in the corner next time.
+  }
+}
+
+/** Kept inside the space between the bars, whatever the window size. */
+function clamp(layout: Layout, height: number): Layout {
+  const width = Math.min(Math.max(MIN_WIDTH, layout.width), window.innerWidth - GUTTER * 2)
+  const maxY = window.innerHeight - BOTTOM - GUTTER - height
+  return {
+    ...layout,
+    width,
+    x: Math.min(Math.max(GUTTER, layout.x), window.innerWidth - width - GUTTER),
+    y: Math.max(TOP + GUTTER, Math.min(layout.y, maxY)),
+  }
+}
+
+function initialLayout(): Layout {
+  const saved = loadLayout()
+  const width = saved.width ?? DEFAULT_WIDTH
+  const estimate = (width * 9) / 16 + 80
+  return clamp(
+    {
+      x: saved.x ?? GUTTER,
+      y: saved.y ?? window.innerHeight - BOTTOM - GUTTER - estimate,
+      width,
+      flipped: saved.flipped ?? false,
+    },
+    estimate
+  )
+}
+
 interface CameraPreviewProps {
   lookDisabled: boolean
   onLook: () => void
@@ -32,11 +106,21 @@ interface CameraPreviewProps {
   onSetWatch: (level: WatchLevel | null) => void
   onSnooze: () => void
   onClose: () => void
+  /** Talk to Jarvis (or cut him off), from the core in the corner. */
+  onCoreToggle: () => void
+  /** His latest reply, captioned over the picture while it is fresh. */
+  caption: { id: string; text: string } | null
 }
 
-// The camera's own window, bottom-left above the command bar. It is also
-// the privacy indicator: whenever the camera is on, this is on screen
-// with a live dot, and closing it turns the camera off.
+// The camera's own window. It is also the privacy indicator: whenever the
+// camera is on, this is on screen with a live dot, and closing it turns
+// the camera off.
+//
+// It is built to be worked through, not glanced at: drag it by its
+// header, resize it from the corner, or FOCUS it to fill the console
+// between the bars. Jarvis's core sits in the picture's corner, live, so
+// his state (listening, thinking, speaking) is in view without looking
+// away, and his replies run as captions along the bottom.
 export function CameraPreview({
   lookDisabled,
   onLook,
@@ -44,11 +128,35 @@ export function CameraPreview({
   onSetWatch,
   onSnooze,
   onClose,
+  onCoreToggle,
+  caption,
 }: CameraPreviewProps) {
   const cameraOn = useSpatial((state) => state.cameraOn)
   const watching = useSpatial((state) => state.watching)
   const handsStatus = useSpatial((state) => state.handsStatus)
+  const status = useJarvis((state) => state.status)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const sectionRef = useRef<HTMLElement>(null)
+
+  // Where it was left, else bottom-left above the command bar, where it
+  // has always been. The console only renders in the browser, but the
+  // guard keeps a prerender from touching window.
+  const [layout, setLayout] = useState<Layout | null>(() => (typeof window === "undefined" ? null : initialLayout()))
+  const [focused, setFocused] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  const flippedRef = useRef(false)
+  useEffect(() => {
+    flippedRef.current = layout?.flipped ?? false
+  }, [layout?.flipped])
+
+  // A smaller browser window must not strand it off screen.
+  useEffect(() => {
+    if (!cameraOn) return
+    const onResize = () =>
+      setLayout((current) => (current ? clamp(current, sectionRef.current?.offsetHeight ?? 0) : current))
+    window.addEventListener("resize", onResize)
+    return () => window.removeEventListener("resize", onResize)
+  }, [cameraOn])
 
   // Skeleton overlay, drawn straight from tracking results rather than
   // through React state, which would re-render this at camera rate.
@@ -69,9 +177,13 @@ export function CameraPreview({
       context.strokeStyle = accent
       context.fillStyle = accent
       context.lineWidth = 1.5
+      const mirrored = !flippedRef.current
       for (const pointer of pointers) {
-        // Mirrored to line up with the mirrored video underneath.
-        const at = (i: number) => [(1 - pointer.landmarks[i].x) * width, pointer.landmarks[i].y * height]
+        // Lined up with the video underneath, mirrored or not.
+        const at = (i: number) => {
+          const x = pointer.landmarks[i].x
+          return [(mirrored ? 1 - x : x) * width, pointer.landmarks[i].y * height]
+        }
         context.globalAlpha = 0.85
         for (const [a, b] of BONES) {
           const [ax, ay] = at(a)
@@ -91,56 +203,218 @@ export function CameraPreview({
     })
   }, [cameraOn])
 
-  if (!cameraOn) return null
+  // A caption shows while the reply is fresh, and goes once it has been
+  // still for a while.
+  // Keyed on the text too, so a reply still streaming in stays up.
+  const captionText = caption?.text ?? ""
+  const captionKey = `${caption?.id ?? ""}:${captionText.length}`
+  const [expiredCaption, setExpiredCaption] = useState<string | null>(null)
+  const captionShown = Boolean(captionText) && expiredCaption !== captionKey
+  useEffect(() => {
+    if (!captionText) return
+    const timer = setTimeout(() => setExpiredCaption(captionKey), CAPTION_MS)
+    return () => clearTimeout(timer)
+  }, [captionKey, captionText])
+
+  if (!cameraOn || !layout) return null
+
+  function update(next: Layout) {
+    const fitted = clamp(next, sectionRef.current?.offsetHeight ?? 0)
+    setLayout(fitted)
+    return fitted
+  }
+
+  // Pointer capture keeps the drag going when the pointer outruns the
+  // header, and the final position is saved once, on release.
+  function startDrag(event: React.PointerEvent) {
+    if (focused || (event.target as HTMLElement).closest("button")) return
+    const start = { x: event.clientX, y: event.clientY, layout: layout! }
+    const target = event.currentTarget as HTMLElement
+    target.setPointerCapture(event.pointerId)
+    setDragging(true)
+    let last = start.layout
+    const move = (e: PointerEvent) => {
+      last = update({ ...start.layout, x: start.layout.x + e.clientX - start.x, y: start.layout.y + e.clientY - start.y })
+    }
+    const end = () => {
+      target.removeEventListener("pointermove", move)
+      target.removeEventListener("pointerup", end)
+      target.removeEventListener("pointercancel", end)
+      setDragging(false)
+      saveLayout(last)
+    }
+    target.addEventListener("pointermove", move)
+    target.addEventListener("pointerup", end)
+    target.addEventListener("pointercancel", end)
+  }
+
+  function startResize(event: React.PointerEvent) {
+    event.stopPropagation()
+    const start = { x: event.clientX, layout: layout! }
+    const target = event.currentTarget as HTMLElement
+    target.setPointerCapture(event.pointerId)
+    setDragging(true)
+    let last = start.layout
+    const move = (e: PointerEvent) => {
+      last = update({ ...start.layout, width: start.layout.width + e.clientX - start.x })
+    }
+    const end = () => {
+      target.removeEventListener("pointermove", move)
+      target.removeEventListener("pointerup", end)
+      target.removeEventListener("pointercancel", end)
+      setDragging(false)
+      saveLayout(last)
+    }
+    target.addEventListener("pointermove", move)
+    target.addEventListener("pointerup", end)
+    target.addEventListener("pointercancel", end)
+  }
+
+  function flip() {
+    saveLayout(update({ ...layout!, flipped: !layout!.flipped }))
+  }
+
+  const width = focused ? window.innerWidth - GUTTER * 2 : layout.width
+  const showCore = width >= CORE_MIN_WIDTH
+  const coreSize = focused ? 150 : Math.round(Math.min(120, Math.max(64, width * 0.2)))
+  const showCaption = captionShown && captionText && width >= CORE_MIN_WIDTH
 
   return (
     <section
+      ref={sectionRef}
       className="card glow-std fixed flex flex-col overflow-hidden"
       aria-label="Camera"
       style={{
-        left: 12,
-        bottom: 56 + 12,
-        width: 248,
+        ...(focused
+          ? { left: GUTTER, right: GUTTER, top: TOP + GUTTER, bottom: BOTTOM + GUTTER }
+          : { left: layout.x, top: layout.y, width: layout.width }),
         // Above the workshop (35), so hands can be switched on from inside it.
         zIndex: 40,
-        background: "rgba(5, 7, 14, 0.9)",
+        background: "rgba(5, 7, 14, 0.92)",
         borderColor: "rgba(var(--accent-rgb), 0.45)",
+        transition: dragging ? "none" : "left 200ms ease, top 200ms ease, width 200ms ease",
+        userSelect: dragging ? "none" : undefined,
       }}
     >
       <header
-        className="flex items-center justify-between"
-        style={{ padding: "4px var(--sp-2)", borderBottom: "1px solid rgba(var(--accent-rgb), 0.2)" }}
+        className="flex shrink-0 items-center justify-between"
+        onPointerDown={startDrag}
+        onDoubleClick={(event) => {
+          if (!(event.target as HTMLElement).closest("button")) setFocused((f) => !f)
+        }}
+        style={{
+          padding: "4px var(--sp-2)",
+          borderBottom: "1px solid rgba(var(--accent-rgb), 0.2)",
+          cursor: focused ? "default" : dragging ? "grabbing" : "grab",
+          touchAction: "none",
+        }}
+        title={focused ? undefined : "Drag to move · double-click to focus"}
       >
         <span className="t-label flex items-center" style={{ gap: 6, color: "var(--text-primary)" }}>
           <span className="live-dot" aria-hidden />
           {watching ? "WATCHING" : "CAM LIVE"}
         </span>
-        <button
-          type="button"
-          className="btn"
-          onClick={onClose}
-          aria-label="Turn camera off"
-          title="Turn camera off"
-          style={{ width: 22, height: 22, padding: 0 }}
-        >
-          <XIcon size={12} />
-        </button>
+        <div className="flex items-center" style={{ gap: 4 }}>
+          <button
+            type="button"
+            className="btn"
+            onClick={flip}
+            data-active={layout.flipped}
+            aria-pressed={layout.flipped}
+            aria-label="Flip the picture"
+            title={layout.flipped ? "Mirror the picture (selfie view)" : "Unmirror the picture (reads writing the right way round)"}
+            style={{ width: 22, height: 22, padding: 0 }}
+          >
+            <FlipHorizontalIcon size={12} />
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => setFocused((f) => !f)}
+            data-active={focused}
+            aria-pressed={focused}
+            aria-label={focused ? "Back to a window" : "Focus the camera"}
+            title={focused ? "Back to a window" : "Focus: fill the console"}
+            style={{ width: 22, height: 22, padding: 0 }}
+          >
+            {focused ? <Minimize2Icon size={12} /> : <Maximize2Icon size={12} />}
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={onClose}
+            aria-label="Turn camera off"
+            title="Turn camera off"
+            style={{ width: 22, height: 22, padding: 0 }}
+          >
+            <XIcon size={12} />
+          </button>
+        </div>
       </header>
 
-      <div className="relative" style={{ aspectRatio: "16 / 9", background: "#000" }}>
+      <div
+        className={`relative ${focused ? "min-h-0 flex-1" : ""}`}
+        style={{ aspectRatio: focused ? undefined : "16 / 9", background: "#000" }}
+      >
         <video
           ref={attachVideo}
           autoPlay
           playsInline
           muted
-          className="absolute inset-0 h-full w-full object-cover"
-          // A selfie view: moving your hand right moves it right on screen.
-          style={{ transform: "scaleX(-1)" }}
+          className={`absolute inset-0 h-full w-full ${focused ? "object-contain" : "object-cover"}`}
+          // Mirrored by default, a selfie view: moving your hand right moves
+          // it right on screen. Flipped, it is the raw picture, which is
+          // how a whiteboard's writing reads.
+          style={{ transform: layout.flipped ? undefined : "scaleX(-1)" }}
         />
         <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+
+        {showCaption && (
+          <div
+            className="pointer-events-none absolute"
+            style={{
+              left: GUTTER,
+              right: showCore ? coreSize + GUTTER : GUTTER,
+              bottom: GUTTER,
+              display: "flex",
+              justifyContent: "center",
+            }}
+            aria-live="polite"
+          >
+            <p
+              style={{
+                margin: 0,
+                padding: "6px 12px",
+                maxWidth: 760,
+                background: "rgba(2, 3, 6, 0.72)",
+                borderLeft: "2px solid var(--accent)",
+                borderRadius: "var(--radius)",
+                color: "var(--text-primary)",
+                fontSize: focused ? 15 : 12.5,
+                lineHeight: 1.45,
+                display: "-webkit-box",
+                WebkitLineClamp: focused ? 4 : 3,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
+            >
+              {captionText}
+            </p>
+          </div>
+        )}
+
+        {showCore && (
+          <div
+            className="absolute"
+            style={{ right: 4, bottom: 4, width: coreSize, height: coreSize }}
+            title="Talk to Jarvis"
+          >
+            <CoreCipher status={status} onToggle={onCoreToggle} ringsRevealed={3} />
+          </div>
+        )}
       </div>
 
-      <div className="flex items-center" style={{ gap: "var(--sp-2)", padding: "var(--sp-2)" }}>
+      <div className="flex shrink-0 items-center" style={{ gap: "var(--sp-2)", padding: "var(--sp-2)" }}>
         <button
           type="button"
           className="btn flex flex-1 items-center justify-center"
@@ -178,7 +452,7 @@ export function CameraPreview({
 
       {watching && (
         <div
-          className="flex items-center"
+          className="flex shrink-0 items-center"
           style={{ gap: "var(--sp-1)", padding: "0 var(--sp-2) var(--sp-2)" }}
           role="group"
           aria-label="How readily Jarvis speaks up"
@@ -208,6 +482,25 @@ export function CameraPreview({
             <BellOffIcon size={12} />
           </button>
         </div>
+      )}
+
+      {!focused && (
+        <div
+          onPointerDown={startResize}
+          className="absolute"
+          style={{
+            right: 0,
+            bottom: 0,
+            width: 16,
+            height: 16,
+            cursor: "nwse-resize",
+            touchAction: "none",
+            background:
+              "linear-gradient(135deg, transparent 50%, rgba(var(--accent-rgb), 0.6) 50%, rgba(var(--accent-rgb), 0.6) 60%, transparent 60%, transparent 70%, rgba(var(--accent-rgb), 0.6) 70%, rgba(var(--accent-rgb), 0.6) 80%, transparent 80%)",
+          }}
+          aria-label="Resize the camera window"
+          title="Drag to resize"
+        />
       )}
     </section>
   )
