@@ -16,17 +16,22 @@ import { JarvisApiError, observeBoard, type WatchLevel } from "@/lib/jarvis-clie
 export type { WatchLevel }
 
 const TICK_MS = 1500
-// Thumbnail size: enough to see a new line of writing, small enough that
-// lighting noise and compression shimmer average out.
-const THUMB_W = 64
-const THUMB_H = 36
+// Thumbnail size. 64x36 averaged a line of marker writing away to nothing,
+// so new work on the board almost never registered and he almost never
+// looked; at 128x72 a written line is a few dozen pixels.
+const THUMB_W = 128
+const THUMB_H = 72
 // A pixel "changed" when it moved more than this many grey levels...
-const PIXEL_DELTA = 22
+const PIXEL_DELTA = 16
 // ...and a frame changed when more than this share of pixels did.
-const MOTION_SHARE = 0.015 // tick to tick: someone is moving
-const CHANGE_SHARE = 0.01 // since the last look: there is something new
-const SETTLE_MS = 4000
+const MOTION_SHARE = 0.02 // tick to tick: someone is moving
+const CHANGE_SHARE = 0.003 // since the last look: something new (~28 pixels)
+const SETTLE_MS = 3000
 const MIN_LOOK_GAP_MS = 20_000
+// Whatever the thumbnails say, a settled board is looked at this often:
+// change detection can miss faint or small writing, and a look that finds
+// nothing new costs one quiet call.
+const PERIODIC_LOOK_MS = 90_000
 // No more than this many looks an hour, whatever the board does.
 const MAX_LOOKS_PER_HOUR = 90
 const STUCK_MS = 5 * 60_000
@@ -34,9 +39,9 @@ const BACKOFF_MS = 2 * 60_000
 
 // The least time between two remarks, by level.
 const COOLDOWN_MS: Record<WatchLevel, number> = {
-  quiet: 5 * 60_000,
-  normal: 3 * 60_000,
-  coach: 2 * 60_000,
+  quiet: 4 * 60_000,
+  normal: 75_000,
+  coach: 60_000,
 }
 
 export interface WatchHost {
@@ -46,6 +51,8 @@ export interface WatchHost {
   canSpeak: () => boolean
   onRemark: (message: string) => void
   onError: (message: string) => void
+  /** A look is out (true) or back (false, with what he made of it). */
+  onLook?: (looking: boolean, result?: { spoke: boolean; notes: string }) => void
 }
 
 interface Watch {
@@ -125,6 +132,8 @@ async function look(current: Watch, sample: Float32Array, now: number) {
   current.inFlight = true
   current.lastLookAt = now
   current.looks.push(now)
+  current.host.onLook?.(true)
+  let outcome: { spoke: boolean; notes: string } | undefined
   try {
     const result = await observeBoard(current.host.token, {
       session_id: current.host.sessionId,
@@ -137,6 +146,7 @@ async function look(current: Watch, sample: Float32Array, now: number) {
     if (watch !== current) return
     current.baseline = sample
     current.notes = result.notes
+    outcome = { spoke: false, notes: result.notes }
     if (!result.speak || !result.message) return
     const at = Date.now()
     // Checked again on the way out: he may have started talking, or
@@ -145,6 +155,7 @@ async function look(current: Watch, sample: Float32Array, now: number) {
     if (!current.host.canSpeak()) return
     current.lastRemarkAt = at
     current.remarks = [...current.remarks, result.message].slice(-5)
+    outcome.spoke = true
     current.host.onRemark(result.message)
   } catch (err) {
     if (watch !== current) return
@@ -152,6 +163,7 @@ async function look(current: Watch, sample: Float32Array, now: number) {
     current.host.onError(err instanceof JarvisApiError ? err.message : "The watch look failed.")
   } finally {
     current.inFlight = false
+    if (watch === current) current.host.onLook?.(false, outcome)
   }
 }
 
@@ -186,7 +198,8 @@ function tick() {
   const stuck =
     current.level === "coach" && !changed && !current.stuckAsked && now - current.lastChangeAt >= STUCK_MS
   if (stuck) current.stuckAsked = true
-  if (changed || stuck) void look(current, sample, now)
+  const due = now - current.lastLookAt >= PERIODIC_LOOK_MS
+  if (changed || stuck || due) void look(current, sample, now)
 }
 
 export function startWatch(host: WatchHost, level: WatchLevel) {

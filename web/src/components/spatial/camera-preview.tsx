@@ -133,6 +133,7 @@ export function CameraPreview({
 }: CameraPreviewProps) {
   const cameraOn = useSpatial((state) => state.cameraOn)
   const watching = useSpatial((state) => state.watching)
+  const watchLooking = useSpatial((state) => state.watchLooking)
   const handsStatus = useSpatial((state) => state.handsStatus)
   const status = useJarvis((state) => state.status)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -312,7 +313,7 @@ export function CameraPreview({
       >
         <span className="t-label flex items-center" style={{ gap: 6, color: "var(--text-primary)" }}>
           <span className="live-dot" aria-hidden />
-          {watching ? "WATCHING" : "CAM LIVE"}
+          {watching ? (watchLooking ? "READING THE BOARD…" : `WATCHING · ${watching.toUpperCase()}`) : "CAM LIVE"}
         </span>
         <div className="flex items-center" style={{ gap: 4 }}>
           <button

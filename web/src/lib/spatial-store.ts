@@ -30,6 +30,8 @@ interface SpatialState {
   cameraOn: boolean
   /** Watch mode's level while Jarvis is following the whiteboard. */
   watching: WatchLevel | null
+  /** A watch look is out right now: the camera header says so. */
+  watchLooking: boolean
   handsStatus: HandsStatus
   holograms: Hologram[]
   /** Ids held by a hand or the mouse right now. */
@@ -42,6 +44,7 @@ interface SpatialState {
   setWorkshopOpen: (open: boolean) => void
   setCameraOn: (on: boolean) => void
   setWatching: (level: WatchLevel | null) => void
+  setWatchLooking: (looking: boolean) => void
   setHandsStatus: (status: HandsStatus) => void
   addHologram: (input: Pick<Hologram, "kind" | "title" | "body" | "image">) => void
   moveHologram: (id: string, dx: number, dy: number) => void
@@ -86,6 +89,7 @@ function topZ(holograms: Hologram[]): number {
 export const useSpatial = create<SpatialState>((set, get) => ({
   cameraOn: false,
   watching: null,
+  watchLooking: false,
   handsStatus: "off",
   holograms: load(),
   grabbed: [],
@@ -94,7 +98,8 @@ export const useSpatial = create<SpatialState>((set, get) => ({
 
   setWorkshopOpen: (workshopOpen) => set({ workshopOpen }),
   setCameraOn: (cameraOn) => set({ cameraOn }),
-  setWatching: (watching) => set({ watching }),
+  setWatching: (watching) => set({ watching, watchLooking: false }),
+  setWatchLooking: (watchLooking) => set({ watchLooking }),
   setHandsStatus: (handsStatus) => set({ handsStatus }),
 
   addHologram: (input) => {
