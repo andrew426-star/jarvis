@@ -1,6 +1,7 @@
 from app.tools.calculator import calculator
 from app.tools.company_financials import company_financials
 from app.tools.database_agent import database_agent
+from app.tools.browser import BROWSER_SCHEMA, browser
 from app.tools.files import FILES_SCHEMA, files
 from app.tools.github import github
 from app.tools.google_titan import google_titan
@@ -609,6 +610,7 @@ TOOL_SCHEMAS = [
         },
     },
     FILES_SCHEMA,
+    BROWSER_SCHEMA,
 ]
 
 DISPATCH = {
@@ -632,4 +634,5 @@ DISPATCH = {
     "spotify": spotify,
     "zoho_mail": zoho_mail,
     "files": files,
+    "browser": browser,
 }

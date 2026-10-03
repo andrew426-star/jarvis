@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>J.A.R.V.I.S.</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <span class="name">J.A.R.V.I.S.</span>
+      <span class="status"><span class="dot" id="dot"></span><span id="state">…</span></span>
+    </header>
+
+    <section id="unpaired" hidden>
+      <p>Open your Jarvis console in this tab, signed in, then pair. Jarvis will be able to read the pages you're on (never banking, email or health sites) and speak up when he can help.</p>
+      <button id="pair" class="primary">PAIR WITH THIS CONSOLE</button>
+      <p id="pair-error" class="error" hidden></p>
+    </section>
+
+    <section id="paired" hidden>
+      <div class="row">
+        <label for="follow">Follow along</label>
+        <input type="checkbox" id="follow" role="switch" />
+      </div>
+      <div class="row" id="level-row">
+        <span>Speaks up</span>
+        <div class="seg" id="level">
+          <button data-level="quiet" title="Only clear mistakes">QUIET</button>
+          <button data-level="normal" title="Offers help, flags problems">NORMAL</button>
+          <button data-level="coach" title="Also nudges when you're stuck">COACH</button>
+        </div>
+      </div>
+      <div class="row">
+        <label for="voice">Voice</label>
+        <input type="checkbox" id="voice" role="switch" />
+      </div>
+
+      <div class="block">
+        <div class="label">PRIVACY</div>
+        <div id="pause-row" class="buttons">
+          <button data-pause="15">PAUSE 15 MIN</button>
+          <button data-pause="60">1 HOUR</button>
+          <button data-pause="forever">UNTIL I RESUME</button>
+        </div>
+        <div id="paused-row" class="buttons" hidden>
+          <span id="paused-text"></span>
+          <button id="resume" class="primary">RESUME</button>
+        </div>
+        <div class="site" id="site"></div>
+        <div class="cats" id="cats"></div>
+      </div>
+
+      <div class="footer">
+        <span id="server" class="muted"></span>
+        <button id="unpair" class="link">Unpair</button>
+      </div>
+    </section>
+
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>

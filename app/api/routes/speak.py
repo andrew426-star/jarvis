@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
 
-from app.core.auth import require_access_token
+from app.core.auth import require_browser_or_full
 from app.core.config import get_settings
 from app.integrations.fish_audio import text_to_speech
 from app.schemas.speak import SpeakRequest
@@ -11,7 +11,7 @@ router = APIRouter()
 # Sync (not async) on purpose — matches invoke.py: the httpx call here is
 # synchronous, so a plain `def` route lets FastAPI run it in its
 # threadpool rather than blocking the event loop.
-@router.post("/speak", dependencies=[Depends(require_access_token)])
+@router.post("/speak", dependencies=[Depends(require_browser_or_full)])
 def speak(request: SpeakRequest) -> Response:
     settings = get_settings()
     voice_id = request.voice_id or settings.fish_audio_voice_id

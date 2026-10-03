@@ -40,24 +40,18 @@ def is_allowed(email: str | None) -> bool:
     return bool(allowed) and email.strip().lower() in allowed
 
 
-def issue_session(email: str) -> str:
-    """Signed `payload.signature`, the same hand-rolled HMAC shape as
-    google_oauth.py's OAuth state — deliberately not a JWT library, since
-    this is one issuer verifying its own tokens with one symmetric key.
-    """
+def _issue(body: dict) -> str:
     secret = get_settings().jarvis_session_secret
     if not secret:
         raise RuntimeError("JARVIS_SESSION_SECRET is not set.")
-    body = {"email": email, "exp": int(time.time()) + SESSION_MAX_AGE_SECONDS}
     payload = _b64e(json.dumps(body, separators=(",", ":")).encode())
     return f"{payload}.{_sign(payload, secret)}"
 
 
-def verify_session(token: str) -> str | None:
-    """Returns the signed-in email, or None if the token is malformed,
-    forged, or expired. Signature is checked before the payload is parsed
-    so untrusted bytes never reach json.loads.
-    """
+def _verify(token: str) -> dict | None:
+    """The token's body if it is genuine and unexpired, else None. Signature
+    is checked before the payload is parsed so untrusted bytes never reach
+    json.loads."""
     secret = get_settings().jarvis_session_secret
     if not secret:
         return None
@@ -76,6 +70,47 @@ def verify_session(token: str) -> str | None:
         return None
     exp = body.get("exp")
     if not isinstance(exp, int) or exp < int(time.time()):
+        return None
+    return body
+
+
+def issue_session(email: str) -> str:
+    """Signed `payload.signature`, the same hand-rolled HMAC shape as
+    google_oauth.py's OAuth state — deliberately not a JWT library, since
+    this is one issuer verifying its own tokens with one symmetric key.
+    """
+    return _issue({"email": email, "exp": int(time.time()) + SESSION_MAX_AGE_SECONDS})
+
+
+def verify_session(token: str) -> str | None:
+    """Returns the signed-in email, or None if the token is malformed,
+    forged, expired, or a scoped token (a browser extension's) rather than
+    a full session.
+    """
+    body = _verify(token)
+    if body is None or body.get("scope"):
+        return None
+    email = body.get("email")
+    return email if isinstance(email, str) else None
+
+
+# The browser extension's credential (extension/, app/services/
+# browser_link.py). Scoped: it opens the browser link and Jarvis's voice
+# and chat, nothing else, so a leaked copy cannot read mail or files. It
+# carries a generation number; unpairing bumps the generation, which
+# revokes every token issued before it.
+BROWSER_MAX_AGE_SECONDS = 180 * 24 * 60 * 60
+
+
+def issue_browser_token(email: str, generation: int) -> str:
+    return _issue(
+        {"email": email, "scope": "browser", "gen": generation, "exp": int(time.time()) + BROWSER_MAX_AGE_SECONDS}
+    )
+
+
+def verify_browser_token(token: str, generation: int) -> str | None:
+    body = _verify(token)
+    if body is None or body.get("scope") != "browser" or body.get("gen") != generation:
         return None
     email = body.get("email")
     return email if isinstance(email, str) else None

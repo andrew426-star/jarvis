@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "J.A.R.V.I.S.",
+  "version": "1.0.0",
+  "description": "Lets Jarvis follow along in your browser: read the page you're on, and speak up when he can help.",
+  "minimum_chrome_version": "116",
+  "incognito": "not_allowed",
+  "permissions": ["storage", "tabs", "scripting", "offscreen", "alarms", "idle"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "J.A.R.V.I.S.",
+    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png" }
+  },
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "commands": {
+    "open-bubble": {
+      "suggested_key": { "default": "Alt+J" },
+      "description": "Ask Jarvis about this page"
+    }
+  }
+}

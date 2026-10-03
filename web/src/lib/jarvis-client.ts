@@ -272,6 +272,26 @@ export async function renderView(image: string, prompt: string | undefined, toke
   return res.json()
 }
 
+// --- The browser extension's link (extension/, app/api/routes/browser.py) ---
+
+export interface BrowserStatus {
+  connected: boolean
+  paused: boolean
+  last_seen: number | null
+  page: { title: string; url: string } | null
+  tabs: number
+}
+
+export async function getBrowserStatus(token: string): Promise<BrowserStatus> {
+  const res = await jarvisFetch("/browser/status", token, { method: "GET" })
+  return res.json()
+}
+
+/** Revokes every extension pairing and drops the live link. */
+export async function unpairBrowser(token: string): Promise<void> {
+  await jarvisFetch("/browser/unpair", token, { method: "POST" })
+}
+
 // --- Linked folders (lib/linked-folders.ts, app/api/routes/files.py) ---
 
 /** path -> modified_at of Jarvis's copy of a linked folder. */

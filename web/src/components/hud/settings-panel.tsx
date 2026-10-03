@@ -6,6 +6,7 @@ import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react"
 
 import { apiOrigin, type ConnectionStatus } from "@/lib/jarvis-client"
 import { useJarvis } from "@/lib/store"
+import { BrowserSettings } from "@/components/hud/browser-settings"
 import { FilesSettings } from "@/components/hud/files-settings"
 import { VoiceSettings } from "@/components/hud/voice-settings"
 
@@ -273,6 +274,7 @@ export function SettingsPanel({ token, sessionId, onSignOut }: SettingsPanelProp
     },
     { key: "voice", title: "Voice", render: () => <VoiceSettings token={token} /> },
     { key: "files", title: "Files", render: () => <FilesSettings token={token} /> },
+    { key: "browser", title: "Browser", render: () => <BrowserSettings token={token} /> },
     { key: "diagnostics", title: "Diagnostics", render: () => <Diagnostics /> },
     { key: "appearance", title: "Appearance", render: () => <Appearance /> },
   ]

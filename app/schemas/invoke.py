@@ -26,7 +26,7 @@ class InvokeRequest(BaseModel):
     # used from VS Code and shells during programming work; "mobile" is the
     # phone view of the console, spoken like the console but with nothing
     # on screen for Jarvis to operate.
-    channel: Literal["console", "terminal", "mobile"] = "console"
+    channel: Literal["console", "terminal", "mobile", "browser"] = "console"
     # A webcam frame, base64 without the data: prefix, attached by the
     # console while its camera is on. Used for this turn only and never
     # stored. ~8MB of base64 is far above the console's downscaled JPEGs

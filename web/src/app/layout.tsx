@@ -37,6 +37,11 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   icons: { icon: "/icon-192.png", apple: "/apple-touch-icon.png" },
   appleWebApp: { capable: true, title: "Jarvis", statusBarStyle: "black-translucent" },
+  // How the browser extension (extension/) recognises this as the console
+  // it can pair with.
+  // jarvis-api is set only under `next dev`, where the API is on another
+  // port; in production the console's own origin serves it.
+  other: { "jarvis-console": "1", "jarvis-api": process.env.NEXT_PUBLIC_JARVIS_API_URL ?? "" },
 };
 
 // viewport-fit=cover lets the phone view reach under the notch and home

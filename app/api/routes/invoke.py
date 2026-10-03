@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 
-from app.core.auth import require_access_token
+from app.core.auth import require_access_token, require_browser_or_full
 from app.core.config import get_settings
 from app.memory.session_buffer import count_turns
 from app.schemas.invoke import InvokeRequest, InvokeResponse, SessionContext
@@ -49,7 +49,8 @@ def session_context(session_id: str = Query(min_length=1, max_length=128)) -> Se
 # (see stream_invoke) so the console can show and speak the reply while it
 # is still being written. A plain def generator: Starlette iterates it in
 # its threadpool, like the sync /invoke route.
-@router.post("/invoke/stream", dependencies=[Depends(require_access_token)])
+# Also open to the browser extension: its page bubble talks to Jarvis here.
+@router.post("/invoke/stream", dependencies=[Depends(require_browser_or_full)])
 def invoke_stream(request: InvokeRequest) -> StreamingResponse:
     def events():
         try:

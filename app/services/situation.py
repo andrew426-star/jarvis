@@ -176,6 +176,12 @@ def _schedule_line(now: datetime) -> str | None:
     )
 
 
+def schedule_line() -> str | None:
+    """Just his calendar for the next few hours, for notes that want the
+    schedule without the rest of the moment (app/services/browser_watch.py)."""
+    return _schedule_line(datetime.now(LOCAL_TZ))
+
+
 def _recent_openers(turns: list[dict]) -> list[str]:
     openers = []
     for turn in turns:

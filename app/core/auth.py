@@ -7,7 +7,8 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import get_settings
-from app.core.session import is_allowed, verify_session
+from app.core.redis_client import get_redis_client
+from app.core.session import is_allowed, verify_browser_token, verify_session
 from app.core.supabase_client import get_supabase_client
 
 _bearer = HTTPBearer(auto_error=False)
@@ -32,18 +33,63 @@ def require_access_token(
     so "open by accident" must not be reachable.
     """
     provided = credentials.credentials if credentials else None
-    if not provided:
+    if not provided or not has_full_access(provided):
         raise _unauthorized()
 
+
+def has_full_access(provided: str) -> bool:
     session_email = verify_session(provided)
     if session_email and is_allowed(session_email):
-        return
-
+        return True
     expected = get_settings().jarvis_access_token
-    if expected and hmac.compare_digest(provided, expected):
-        return
+    return bool(expected and hmac.compare_digest(provided, expected))
 
-    raise _unauthorized()
+
+# --- The browser extension's scoped token (app/core/session.py) ----------
+#
+# Its generation lives in Redis so unpairing (bumping it) revokes every
+# extension token at once, across restarts. Read through a short cache:
+# the extension calls /speak once per spoken sentence.
+
+_GEN_KEY = "jarvis:browser:gen"
+_GEN_TTL = 60.0
+_generation: tuple[float, int | None] = (0.0, None)
+
+
+def browser_generation() -> int:
+    global _generation
+    fetched_at, value = _generation
+    if value is not None and time.time() - fetched_at < _GEN_TTL:
+        return value
+    try:
+        value = int(get_redis_client().get(_GEN_KEY) or 0)
+    except Exception:  # noqa: BLE001 — unreadable: keep the last known value, else fail closed
+        logger.warning("browser generation unavailable", exc_info=True)
+        return value if value is not None else -1
+    _generation = (time.time(), value)
+    return value
+
+
+def bump_browser_generation() -> int:
+    global _generation
+    value = int(get_redis_client().incr(_GEN_KEY))
+    _generation = (time.time(), value)
+    return value
+
+
+def browser_token_email(provided: str) -> str | None:
+    email = verify_browser_token(provided, browser_generation())
+    return email if email and is_allowed(email) else None
+
+
+def require_browser_or_full(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> None:
+    """For the routes the extension needs (Jarvis's voice and chat): full
+    access, or a current browser token."""
+    provided = credentials.credentials if credentials else None
+    if not provided or not (has_full_access(provided) or browser_token_email(provided)):
+        raise _unauthorized()
 
 
 # The routine trigger token's SHA-256, read from Supabase and cached. The

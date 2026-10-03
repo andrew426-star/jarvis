@@ -20,6 +20,7 @@ from app.core.local_time import now_for_prompt
 from app.memory.interaction_log import fetch_recent_turns, write_interaction
 from app.memory.semantic_recall import get_relevant_context, record_interaction
 from app.memory.session_buffer import append_turn, count_turns, get_recent_turns
+from app.services.browser_link import context_line as browser_context_line
 from app.services.situation import situation_note
 from app.tools.camera import CAMERA_LOOK_SCHEMA, CAMERA_ON_NOTE, make_camera_look
 from app.tools.console_control import (
@@ -60,6 +61,7 @@ _TOOL_STATUS = {
     "portfolio": "Checking the portfolio",
     "spotify": "Talking to Spotify",
     "files": "Reading your files",
+    "browser": "Looking at your browser",
     "showcase": "Preparing the display",
 }
 
@@ -68,7 +70,7 @@ _TOOL_STATUS = {
 TOOL_RESULT_CHAR_CAP = 4000
 # Except where the content IS the point: a source file cut at 4000
 # characters cannot be reviewed.
-_TOOL_CAPS = {"files": 24_000}
+_TOOL_CAPS = {"files": 24_000, "browser": 24_000}
 
 # Separate, independent pool from FastAPI/Starlette's own threadpool (which
 # is what actually runs this sync route across concurrent requests) — this
@@ -188,7 +190,9 @@ SYSTEM_PROMPT = (
     "(read-only access to folders he has linked from his PC, such as his CSC 1013 Python "
     "projects - list, read, search; when he mentions his code, a lab or an assignment, read it "
     "rather than asking him to paste it, and if nothing is linked, tell him to link the folder "
-    "in Settings > Files). If asked to "
+    "in Settings > Files), and browser (his web browser through the J.A.R.V.I.S. extension, "
+    "read-only - the page in front of him, his selection, what he is typing, his open tabs; when "
+    "he says 'this page' or asks about what he is reading or writing in the browser, look). If asked to "
     "do something outside what these can actually do, say so plainly rather than pretending. "
     "Keep replies tight and conversational, not a wall of text — this persona is a voice, not "
     "an excuse for padding.\n\n"
@@ -437,6 +441,14 @@ TERMINAL_MODE = (
 )
 
 
+BROWSER_MODE = (
+    "CHANNEL: BROWSER BUBBLE. Andrew is talking to you from the small J.A.R.V.I.S. bubble on the web "
+    "page he is working in (the BROWSER line says which). The bubble is small: answer first, in a few "
+    "short lines. The SCREEN AND VOICE rules above still apply. When the question is about the page, "
+    "read it with the browser tool rather than guessing. The console's panels, workshop and camera are "
+    "not in view here."
+)
+
 MOBILE_MODE = (
     "CHANNEL: PHONE. Andrew is talking to you from his phone, often on the move. The screen is "
     "narrow, so keep the on-screen reply short: the answer first, then a few short lines, a short "
@@ -503,6 +515,12 @@ def stream_invoke(
         system.append(TERMINAL_MODE)
     elif channel == "mobile":
         system.append(MOBILE_MODE)
+    elif channel == "browser":
+        system.append(BROWSER_MODE)
+    # Where he is in his browser, when the extension is connected.
+    browser_line = browser_context_line()
+    if browser_line and channel != "terminal":
+        system.append(browser_line)
 
     declarations = _DECLARATIONS
     handlers = DISPATCH
