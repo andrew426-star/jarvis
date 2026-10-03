@@ -16,6 +16,7 @@ import { LeftPanel } from "@/components/hud/left-panel"
 import { RightPanel } from "@/components/hud/right-panel"
 import { SettingsPanel } from "@/components/hud/settings-panel"
 import { StatusRing } from "@/components/hud/status-ring"
+import { ShowcaseWindow } from "@/components/showcase/showcase-window"
 import { CameraPreview } from "@/components/spatial/camera-preview"
 import { HandCursors } from "@/components/spatial/hand-cursors"
 import { HologramLayer } from "@/components/spatial/hologram-layer"
@@ -53,6 +54,7 @@ import { emitCore } from "@/lib/core-events"
 import { startHands, stopHands } from "@/lib/hand-tracking"
 import { stopNarration } from "@/lib/narration"
 import { sfx, unlockAudio } from "@/lib/sfx"
+import { useShowcase, type ShowcaseItem } from "@/lib/showcase-store"
 import { SpeechQueue } from "@/lib/speech-queue"
 import { useSpatial } from "@/lib/spatial-store"
 import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store"
@@ -308,6 +310,12 @@ function Shell({
           void runConsoleActions(control.actions as ConsoleAction[], { setCamera, setHands, setWatch, snoozeWatch: snooze, closeConsole })
         }
         if (entry.name === "workshop") runWorkshopActions(control.actions as WorkshopAction[])
+      }
+      // Something Jarvis put on screen: it opens in the showcase window.
+      const shown = entry.result as { ok?: boolean; showcase?: Omit<ShowcaseItem, "id" | "time"> } | null
+      if (entry.name === "showcase" && shown?.ok && shown.showcase) {
+        useJarvis.getState().setActiveTab(null)
+        useShowcase.getState().add({ ...shown.showcase, time: clockTime() })
       }
       if (entry.name === "market_analysis") setLiveMarketSnapshot(entry.result as MarketSnapshot)
       if (entry.name === "market_history") setLiveMarketHistory(entry.result as MarketHistory)
@@ -737,6 +745,7 @@ function Shell({
       </DataWindow>
 
       <HologramLayer />
+      <ShowcaseWindow />
       <Workshop token={token} />
       <CameraPreview
         lookDisabled={pending}

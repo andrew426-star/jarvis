@@ -21,6 +21,7 @@ CONSOLE_ACTIONS = [
     "watch_on",
     "watch_off",
     "watch_snooze",
+    "close_showcase",
     "set_mode",
     "mute",
     "unmute",
@@ -82,7 +83,7 @@ CONSOLE_SCHEMA = {
         "description": (
             "Operate Andrew's J.A.R.V.I.S. console in his browser: open or close the data "
             "panels (markets, intel, assets), open or close the 3D workshop, turn the camera "
-            "or hand tracking on or off, start or stop watching his whiteboard (watch_on brings "
+            "or hand tracking on or off, close the showcase window (close_showcase), start or stop watching his whiteboard (watch_on brings "
             "the camera up; target sets how readily you speak up: quiet | normal | coach; watch_snooze keeps you quiet "
             "for 15 minutes without stopping), switch between normal and serious mode, mute or "
             "unmute audio, open or close settings, clear the pinned holograms, or close the "

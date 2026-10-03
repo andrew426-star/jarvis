@@ -2,6 +2,7 @@
 
 import type { WatchLevel } from "@/lib/jarvis-client"
 import { sfx } from "@/lib/sfx"
+import { showcaseState, useShowcase } from "@/lib/showcase-store"
 import { useSpatial } from "@/lib/spatial-store"
 import { useJarvis, type TabKey } from "@/lib/store"
 import type { GeneratedModel } from "@/lib/workshop/models"
@@ -153,6 +154,9 @@ export async function runConsoleActions(actions: ConsoleAction[], host: ConsoleH
       case "watch_off":
         await host.setWatch(null)
         break
+      case "close_showcase":
+        useShowcase.getState().close()
+        break
       case "watch_snooze":
         host.snoozeWatch()
         break
@@ -197,6 +201,7 @@ export function consoleState() {
     camera_on: spatial.cameraOn,
     hands_on: spatial.handsStatus === "tracking",
     watching: spatial.watching,
+    showcase: showcaseState(),
     muted: sfx.isMuted(),
     last_scad_error: lastScadError,
   }

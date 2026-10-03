@@ -802,3 +802,10 @@ button {
   width: 46px;
   height: 46px;
 }
+
+/* Showcase window: a long equation scrolls sideways rather than
+   overflowing the window. */
+.showcase-math {
+  overflow-x: auto;
+  overflow-y: hidden;
+}

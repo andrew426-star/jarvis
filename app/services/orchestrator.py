@@ -31,6 +31,7 @@ from app.tools.console_control import (
     workshop,
 )
 from app.tools.schemas import DISPATCH, TOOL_SCHEMAS
+from app.tools.showcase import SHOWCASE_NOTE, SHOWCASE_SCHEMA, make_showcase, state_line
 
 MAX_ITERATIONS = 6
 
@@ -58,6 +59,7 @@ _TOOL_STATUS = {
     "news_feed": "Reading the news",
     "portfolio": "Checking the portfolio",
     "spotify": "Talking to Spotify",
+    "showcase": "Preparing the display",
 }
 
 # Per-result size guard on what goes back to the model. The full result
@@ -241,7 +243,7 @@ def _declaration(schema: dict) -> types.FunctionDeclaration:
 # the prompt's "plan multi-step requests first" sent it there.
 _DECLARATIONS = [_declaration(schema) for schema in TOOL_SCHEMAS if schema["function"]["name"] != "think"]
 _CAMERA_DECLARATION = _declaration(CAMERA_LOOK_SCHEMA)
-_CONSOLE_DECLARATIONS = [_declaration(CONSOLE_SCHEMA), _declaration(WORKSHOP_SCHEMA)]
+_CONSOLE_DECLARATIONS = [_declaration(CONSOLE_SCHEMA), _declaration(WORKSHOP_SCHEMA), _declaration(SHOWCASE_SCHEMA)]
 
 
 def _execute_tool_call(call: types.FunctionCall, handlers: dict = DISPATCH) -> tuple[str, dict, dict, int]:
@@ -283,6 +285,17 @@ def _persist(**turn) -> None:
         turn["created_at"],
         model=turn["model"],
     )
+
+
+def _model_view(result: dict) -> dict:
+    """A tool result as the model and the logs see it. What a showcase put on
+    screen is for the console alone: an image's base64, or a file the model
+    wrote itself (and which the call's args already record), would only
+    crowd the model's context and bloat the stored trace."""
+    showing = result.get("showcase") if isinstance(result, dict) else None
+    if isinstance(showing, dict):
+        return {**result, "showcase": {k: v for k, v in showing.items() if k not in ("image_data", "content")}}
+    return result
 
 
 def _capped(result: dict) -> dict:
@@ -489,11 +502,20 @@ def stream_invoke(
     # no console to drive.
     if channel == "console":
         declarations = [*_DECLARATIONS, *_CONSOLE_DECLARATIONS]
-        handlers = {**DISPATCH, "console": console, "workshop": workshop}
+        handlers = {
+            **DISPATCH,
+            "console": console,
+            "workshop": workshop,
+            "showcase": make_showcase(image, image_type),
+        }
         system.append(CONSOLE_CONTROL_NOTE)
+        system.append(SHOWCASE_NOTE)
         live_state = state_note(console_state)
         if live_state:
             system.append(live_state)
+        showing = state_line(console_state)
+        if showing:
+            system.append(showing)
     camera_look = None
     # The terminal has no camera, so a frame there could only be a bug.
     if image and channel == "console":
@@ -677,9 +699,12 @@ def stream_invoke(
                 name, args, result, ms = call.name or "", {}, {"ok": False, "error": str(exc)}, 0
 
             tools_used.append(name)
+            # The console gets the whole result; the model, the logs and
+            # the done event get it without console-only payloads.
+            yield {"type": "tool", "name": name, "result": result}
+            result = _model_view(result)
             tool_call_trace.append({"name": name, "args": args, "result": result, "ms": ms})
             timings.append({"step": "tool", "name": name, "ms": ms})
-            yield {"type": "tool", "name": name, "result": result}
             executed.append((name, args, result))
             parts.append(
                 types.Part(function_response=types.FunctionResponse(id=call.id, name=name, response=_capped(result)))

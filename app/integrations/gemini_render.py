@@ -27,13 +27,41 @@ DEFAULT_DIRECTION = (
 
 def render_image(image_b64: str, mime: str, direction: str | None) -> dict:
     """Returns {image (base64), mime, model, note} for the rendered view."""
-    settings = get_settings()
-    models = [m.strip() for m in settings.gemini_image_models.split(",") if m.strip()]
-    response, model = generate(
+    return _image(
         [
             types.Part.from_bytes(data=base64.b64decode(image_b64), mime_type=mime),
             RENDER_BRIEF.format(direction=(direction or DEFAULT_DIRECTION).strip()[:600]),
-        ],
+        ]
+    )
+
+
+# For the showcase window (app/tools/showcase.py): a picture from a
+# description, or from the camera frame when it should follow the board.
+IMAGE_BRIEF = (
+    "Create the image described below. Clean and legible: if it is a diagram, graph or figure, "
+    "draw it crisply on a plain background with clear labels spelled exactly as given.{reference}"
+    "\n\nDescription: {prompt}"
+)
+REFERENCE_NOTE = (
+    " The attached photo is the user's whiteboard or desk, taken just now; use what is on it as "
+    "the source, and redraw it rather than photographing it again."
+)
+
+
+def generate_image(prompt: str, reference_b64: str | None = None, reference_mime: str = "image/jpeg") -> dict:
+    """Returns {image (base64), mime, model, note}."""
+    contents: list = []
+    if reference_b64:
+        contents.append(types.Part.from_bytes(data=base64.b64decode(reference_b64), mime_type=reference_mime))
+    contents.append(IMAGE_BRIEF.format(prompt=prompt, reference=REFERENCE_NOTE if reference_b64 else ""))
+    return _image(contents)
+
+
+def _image(contents: list) -> dict:
+    settings = get_settings()
+    models = [m.strip() for m in settings.gemini_image_models.split(",") if m.strip()]
+    response, model = generate(
+        contents,
         types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
         models=models,
     )
