@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DownloadIcon, PinIcon, XIcon } from "lucide-react"
 import katex from "katex"
@@ -150,11 +150,124 @@ const KIND_LABEL: Record<ShowcaseItem["kind"], string> = {
   image: "IMAGE",
 }
 
+// Where he has put the window. Null is the default: centred under the top
+// bar. Dragged by its header and resized from its corner, it stays where
+// it was left - across items and reloads - until a double-click on the
+// header puts it back.
+const BOX_KEY = "jarvis_showcase_window"
+const TOP = 48
+const BOTTOM = 56
+const GUTTER = 8
+const MIN_WIDTH = 300
+const MIN_HEIGHT = 160
+
+interface Box {
+  x: number
+  y: number
+  width: number
+  /** Null: as tall as its content, up to the space available. */
+  height: number | null
+}
+
+function loadBox(): Box | null {
+  try {
+    const raw = localStorage.getItem(BOX_KEY)
+    return raw ? clampBox(JSON.parse(raw) as Box) : null
+  } catch {
+    return null
+  }
+}
+
+function saveBox(box: Box | null) {
+  try {
+    if (box) localStorage.setItem(BOX_KEY, JSON.stringify(box))
+    else localStorage.removeItem(BOX_KEY)
+  } catch {
+    // Storage blocked: it stays put for this session.
+  }
+}
+
+function clampBox(box: Box): Box {
+  const width = Math.min(Math.max(MIN_WIDTH, box.width), window.innerWidth - GUTTER * 2)
+  const maxHeight = window.innerHeight - TOP - BOTTOM - GUTTER * 2
+  const height = box.height === null ? null : Math.min(Math.max(MIN_HEIGHT, box.height), maxHeight)
+  return {
+    width,
+    height,
+    x: Math.min(Math.max(GUTTER, box.x), window.innerWidth - width - GUTTER),
+    // The header always stays reachable, between the bars.
+    y: Math.min(Math.max(TOP + GUTTER, box.y), window.innerHeight - BOTTOM - GUTTER - (height ?? 80)),
+  }
+}
+
 export function ShowcaseWindow() {
   const items = useShowcase((state) => state.items)
   const activeId = useShowcase((state) => state.activeId)
   const { show, close } = useShowcase.getState()
   const [copied, setCopied] = useState(false)
+  const [box, setBox] = useState<Box | null>(() => (typeof window === "undefined" ? null : loadBox()))
+  const [dragging, setDragging] = useState(false)
+  const sectionRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    const onResize = () => setBox((current) => (current ? clampBox(current) : current))
+    window.addEventListener("resize", onResize)
+    return () => window.removeEventListener("resize", onResize)
+  }, [])
+
+  /** Where the window is now, measured, so the first drag starts from the
+   *  centred default without a jump. */
+  function currentBox(): Box | null {
+    if (box) return box
+    const rect = sectionRef.current?.getBoundingClientRect()
+    return rect ? { x: rect.left, y: rect.top, width: rect.width, height: null } : null
+  }
+
+  // Pointer capture keeps the gesture alive when the pointer outruns the
+  // header or the grip; the result is saved once, on release.
+  function track(event: React.PointerEvent, move: (start: Box, dx: number, dy: number) => Box) {
+    const start = currentBox()
+    if (!start) return
+    const target = event.currentTarget as HTMLElement
+    target.setPointerCapture(event.pointerId)
+    const origin = { x: event.clientX, y: event.clientY }
+    let last = start
+    setDragging(true)
+    const onMove = (e: PointerEvent) => {
+      last = clampBox(move(start, e.clientX - origin.x, e.clientY - origin.y))
+      setBox(last)
+    }
+    const onEnd = () => {
+      target.removeEventListener("pointermove", onMove)
+      target.removeEventListener("pointerup", onEnd)
+      target.removeEventListener("pointercancel", onEnd)
+      setDragging(false)
+      saveBox(last)
+    }
+    target.addEventListener("pointermove", onMove)
+    target.addEventListener("pointerup", onEnd)
+    target.addEventListener("pointercancel", onEnd)
+  }
+
+  function startDrag(event: React.PointerEvent) {
+    if ((event.target as HTMLElement).closest("button")) return
+    track(event, (start, dx, dy) => ({ ...start, x: start.x + dx, y: start.y + dy }))
+  }
+
+  function startResize(event: React.PointerEvent) {
+    event.stopPropagation()
+    const measured = sectionRef.current?.getBoundingClientRect().height ?? 300
+    track(event, (start, dx, dy) => ({
+      ...start,
+      width: start.width + dx,
+      height: (start.height ?? measured) + dy,
+    }))
+  }
+
+  function recentre() {
+    setBox(null)
+    saveBox(null)
+  }
 
   const index = items.findIndex((item) => item.id === activeId)
   const item = index >= 0 ? items[index] : null
@@ -197,15 +310,28 @@ export function ShowcaseWindow() {
       {item && (
         <motion.section
           key="showcase"
+          ref={sectionRef}
           role="dialog"
           aria-label={item.title}
           className="card glow-std fixed flex flex-col"
           style={{
-            top: 48 + 24,
-            left: "50%",
-            x: "-50%",
-            width: "min(760px, calc(100vw - 32px))",
-            maxHeight: "calc(100vh - 48px - 56px - 48px)",
+            ...(box
+              ? {
+                  left: box.x,
+                  top: box.y,
+                  x: 0,
+                  width: box.width,
+                  height: box.height ?? undefined,
+                  maxHeight: `calc(100vh - ${box.y}px - ${BOTTOM + GUTTER}px)`,
+                }
+              : {
+                  top: 48 + 24,
+                  left: "50%",
+                  x: "-50%",
+                  width: "min(760px, calc(100vw - 32px))",
+                  maxHeight: "calc(100vh - 48px - 56px - 48px)",
+                }),
+            userSelect: dragging ? "none" : undefined,
             zIndex: 45,
             background: "rgba(5, 7, 14, 0.95)",
             borderColor: "rgba(var(--accent-rgb), 0.5)",
@@ -217,10 +343,17 @@ export function ShowcaseWindow() {
         >
           <header
             className="relative flex shrink-0 items-center justify-between overflow-hidden"
+            onPointerDown={startDrag}
+            onDoubleClick={(event) => {
+              if (!(event.target as HTMLElement).closest("button")) recentre()
+            }}
+            title="Drag to move · double-click to recentre"
             style={{
               padding: "var(--sp-2) var(--sp-3)",
               gap: "var(--sp-2)",
               borderBottom: "1px solid rgba(var(--accent-rgb), 0.2)",
+              cursor: dragging ? "grabbing" : "grab",
+              touchAction: "none",
             }}
           >
             <div className="bar-sweep" />
@@ -301,6 +434,23 @@ export function ShowcaseWindow() {
               </p>
             )}
           </div>
+
+          <div
+            onPointerDown={startResize}
+            className="absolute"
+            style={{
+              right: 0,
+              bottom: 0,
+              width: 16,
+              height: 16,
+              cursor: "nwse-resize",
+              touchAction: "none",
+              background:
+                "linear-gradient(135deg, transparent 50%, rgba(var(--accent-rgb), 0.6) 50%, rgba(var(--accent-rgb), 0.6) 60%, transparent 60%, transparent 70%, rgba(var(--accent-rgb), 0.6) 70%, rgba(var(--accent-rgb), 0.6) 80%, transparent 80%)",
+            }}
+            aria-label="Resize the window"
+            title="Drag to resize"
+          />
         </motion.section>
       )}
     </AnimatePresence>
