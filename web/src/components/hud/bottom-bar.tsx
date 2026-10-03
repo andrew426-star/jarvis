@@ -272,7 +272,7 @@ export function BottomBar({
           type="file"
           multiple
           hidden
-          accept="image/*,.pdf,.txt,.md,.csv,.tsv,.json,.yaml,.yml,.xml,.html,.js,.ts,.tsx,.py,.c,.cpp,.h,.ino,.java,.go,.rs,.sql,.log"
+          accept="image/*,.heic,.heif,.pdf,.txt,.md,.csv,.tsv,.json,.yaml,.yml,.xml,.html,.js,.ts,.tsx,.py,.c,.cpp,.h,.ino,.java,.go,.rs,.sql,.log"
           onChange={(event) => {
             void attach(Array.from(event.target.files ?? []))
             event.target.value = ""

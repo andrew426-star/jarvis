@@ -22,6 +22,7 @@ export const MAX_ATTACHMENTS = 8
 const MAX_TOTAL_BYTES = 12 * 1024 * 1024
 const MAX_TEXT_BYTES = 800 * 1024
 const MAX_PDF_BYTES = 10 * 1024 * 1024
+const MAX_RAW_IMAGE_BYTES = 10 * 1024 * 1024
 // Photos from a phone are far larger than the model needs to read a label
 // or a parts list; the long edge is brought down to this.
 const MAX_IMAGE_EDGE = 2000
@@ -67,8 +68,25 @@ function drawn(image: HTMLImageElement, edge: number, quality: number): string {
 
 export async function readAttachment(file: File): Promise<Attachment> {
   const mime = file.type || ""
-  if (IMAGE_TYPES.includes(mime) || /\.(heic|heif)$/i.test(file.name)) {
-    const image = await loadImage(file)
+  const heic = /^image\/hei[cf]$/.test(mime) || /\.(heic|heif)$/i.test(file.name)
+  if (IMAGE_TYPES.includes(mime) || heic) {
+    let image: HTMLImageElement
+    try {
+      image = await loadImage(file)
+    } catch (err) {
+      // iPhone photos: Safari can open HEIC, but Chrome and Edge on Windows
+      // cannot, so there is no shrinking it or drawing a thumbnail here.
+      // Gemini reads HEIC itself, so it goes as it is, shown as a name chip.
+      if (!heic) throw err
+      if (file.size > MAX_RAW_IMAGE_BYTES) throw new AttachmentError(`${file.name} is over 10 MB.`)
+      const heif = /\.heif$/i.test(file.name) || mime === "image/heif"
+      return {
+        name: file.name,
+        mime: heif ? "image/heif" : "image/heic",
+        data: toBase64(await file.arrayBuffer()),
+        bytes: file.size,
+      }
+    }
     const full = drawn(image, MAX_IMAGE_EDGE, 0.88)
     const data = full.slice(full.indexOf(",") + 1)
     return {
