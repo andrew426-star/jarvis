@@ -65,15 +65,22 @@ async function jarvisFetch(path: string, token: string, init: RequestInit): Prom
     })
   } catch {
     throw new JarvisNetworkError()
-  } finally {
-    // Straight into the store rather than a separate telemetry
-    // module: one owner for every number the HUD displays.
-    useJarvis.getState().setLatency(performance.now() - startedAt)
   }
+  // Only a request that got an answer is a latency reading. Straight into
+  // the store rather than a separate telemetry module: one owner for
+  // every number the HUD displays. (This was in a finally, so a failed
+  // request logged its time-to-failure and flashed LINK up first.)
+  useJarvis.getState().setLatency(performance.now() - startedAt)
 
   if (res.status === 401) throw new JarvisAuthError()
   if (!res.ok) throw new JarvisApiError(await extractErrorDetail(res))
   return res
+}
+
+/** The heartbeat (lib/use-heartbeat.ts): the cheapest round trip there is,
+ *  so LAT measures the link and not some endpoint's own work. */
+export async function ping(token: string): Promise<void> {
+  await jarvisFetch("/health", token, { method: "GET", cache: "no-store" })
 }
 
 export async function verifyToken(token: string): Promise<void> {

@@ -26,7 +26,6 @@ import {
   JarvisApiError,
   JarvisAuthError,
   JarvisNetworkError,
-  getSessionContext,
   googleLoginUrl,
   invokeStream,
 } from "@/lib/jarvis-client"
@@ -37,6 +36,7 @@ import { clockTime, useJarvis, type AgentStatus } from "@/lib/store"
 import { centralTime } from "@/lib/time"
 import { useBoot } from "@/lib/use-boot"
 import { useClock } from "@/lib/use-clock"
+import { useHeartbeat } from "@/lib/use-heartbeat"
 import { setView } from "@/lib/view"
 
 // The phone view of the console: the desktop's core, voice bars, grid,
@@ -310,14 +310,8 @@ function MobileChat({
 
   useEffect(() => writeStorage(SPEECH_KEY, speech), [speech])
 
-  // The CTX readout, from the backend's own count for this session.
-  useEffect(() => {
-    getSessionContext(sessionId, token)
-      .then((context) => {
-        if (context.turns !== null) setContext(context.turns, context.window)
-      })
-      .catch(() => {})
-  }, [sessionId, token, setContext])
+  // LINK, LAT and CTX kept live while the app is on screen.
+  useHeartbeat(token, sessionId, onSignOut)
 
   // Follow the conversation down as it grows.
   useEffect(() => {

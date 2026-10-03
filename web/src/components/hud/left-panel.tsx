@@ -203,9 +203,10 @@ function PortfolioCard({ token, onAuthError }: { token: string; onAuthError: () 
     }
 
     void load()
-    // Five minutes. Positions do not move fast enough to justify more,
-    // and every call keeps a free Render instance awake.
-    const id = window.setInterval(load, 5 * 60 * 1000)
+    // Thirty seconds, so equity and P/L move with the market instead of
+    // only on a reload. The heartbeat keeps the instance awake while the
+    // console is open anyway, so this no longer costs a wake-up.
+    const id = window.setInterval(load, 30 * 1000)
     return () => {
       cancelled = true
       window.clearInterval(id)

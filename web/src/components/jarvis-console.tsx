@@ -30,7 +30,6 @@ import {
   JarvisApiError,
   JarvisAuthError,
   JarvisNetworkError,
-  getSessionContext,
   getStatus,
   invokeStream,
   type MarketHistory,
@@ -57,6 +56,7 @@ import { SpeechQueue } from "@/lib/speech-queue"
 import { useSpatial } from "@/lib/spatial-store"
 import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store"
 import { useBoot } from "@/lib/use-boot"
+import { useHeartbeat } from "@/lib/use-heartbeat"
 import { resolveAuth, subscribeAuth } from "@/lib/auth-state"
 import { clearSession, clearStoredToken } from "@/lib/storage"
 
@@ -262,23 +262,10 @@ function Shell({
     }
   }, [])
 
-  // How much Jarvis remembers of this session, read from the backend on
-  // load. The chat on screen starts empty after a reload, but the session
-  // and its memory carry on, so counting messages here would read 0 while
-  // he still remembers the last several exchanges.
-  useEffect(() => {
-    let cancelled = false
-    getSessionContext(sessionId, token)
-      .then((context) => {
-        if (!cancelled && context.turns !== null) setContext(context.turns, context.window)
-      })
-      .catch(() => {
-        // Leaves the gauge where it is; the next reply corrects it.
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [sessionId, token, setContext])
+  // LINK, LAT and CTX kept live while the console is on screen, including
+  // how much Jarvis remembers of this session: the chat on screen starts
+  // empty after a reload, but the session and its memory carry on.
+  useHeartbeat(token, sessionId, onAuthError)
 
   // Close the console: everything that runs stops, and the shell shows a
   // standby screen (a browser tab cannot close itself unless a script
