@@ -2,6 +2,8 @@
 
 import { create } from "zustand"
 
+import type { WatchLevel } from "@/lib/jarvis-client"
+
 // State for the camera, hand tracking and the holograms they act on. Kept
 // out of lib/store.ts: that store drives the HUD's instruments, and none
 // of this should re-render them when a hologram moves at 30fps.
@@ -26,6 +28,8 @@ export interface Hologram {
 
 interface SpatialState {
   cameraOn: boolean
+  /** Watch mode's level while Jarvis is following the whiteboard. */
+  watching: WatchLevel | null
   handsStatus: HandsStatus
   holograms: Hologram[]
   /** Ids held by a hand or the mouse right now. */
@@ -37,6 +41,7 @@ interface SpatialState {
 
   setWorkshopOpen: (open: boolean) => void
   setCameraOn: (on: boolean) => void
+  setWatching: (level: WatchLevel | null) => void
   setHandsStatus: (status: HandsStatus) => void
   addHologram: (input: Pick<Hologram, "kind" | "title" | "body" | "image">) => void
   moveHologram: (id: string, dx: number, dy: number) => void
@@ -80,6 +85,7 @@ function topZ(holograms: Hologram[]): number {
 
 export const useSpatial = create<SpatialState>((set, get) => ({
   cameraOn: false,
+  watching: null,
   handsStatus: "off",
   holograms: load(),
   grabbed: [],
@@ -88,6 +94,7 @@ export const useSpatial = create<SpatialState>((set, get) => ({
 
   setWorkshopOpen: (workshopOpen) => set({ workshopOpen }),
   setCameraOn: (cameraOn) => set({ cameraOn }),
+  setWatching: (watching) => set({ watching }),
   setHandsStatus: (handsStatus) => set({ handsStatus }),
 
   addHologram: (input) => {

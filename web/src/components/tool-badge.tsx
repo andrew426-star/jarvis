@@ -21,6 +21,7 @@ const TOOL_LABELS: Record<string, string> = {
   camera_look: "Vision",
   console: "Console",
   workshop: "Workshop",
+  watch: "Watching",
 }
 
 // Same language as every other interactive-looking element: transparent

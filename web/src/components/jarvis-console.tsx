@@ -37,6 +37,7 @@ import {
   type NewsResult,
   type PortfolioResult,
   type ToolResult,
+  type WatchLevel,
 } from "@/lib/jarvis-client"
 import type { Attachment } from "@/lib/attachments"
 import { audioAmplitude } from "@/lib/audio-amplitude"
@@ -57,8 +58,14 @@ import { useSpatial } from "@/lib/spatial-store"
 import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store"
 import { useBoot } from "@/lib/use-boot"
 import { useHeartbeat } from "@/lib/use-heartbeat"
+import { snoozeWatch, startWatch, stopWatch } from "@/lib/watch"
 import { resolveAuth, subscribeAuth } from "@/lib/auth-state"
 import { clearSession, clearStoredToken } from "@/lib/storage"
+
+// "Not now", "quiet", "hush, Jarvis": while he is watching, a short line
+// like this snoozes him rather than going out as a message.
+const SNOOZE_PHRASE = /^\s*(not now|quiet|hush|shh+|later|pipe down|zip it|give me a (minute|moment|sec(ond)?))[\s,.!]*(jarvis|j)?[\s.!]*$/i
+const SNOOZE_MS = 15 * 60_000
 
 const TOOL_PANEL_MAP: Record<string, TabKey> = {
   market_analysis: "markets",
@@ -256,9 +263,11 @@ function Shell({
   // this the light would stay on behind the login screen.
   useEffect(() => {
     return () => {
+      stopWatch()
       stopHands()
       stopCamera()
       useSpatial.getState().setCameraOn(false)
+      useSpatial.getState().setWatching(null)
     }
   }, [])
 
@@ -271,6 +280,7 @@ function Shell({
   // standby screen (a browser tab cannot close itself unless a script
   // opened it, so window.close() is only a best effort).
   function closeConsole() {
+    void setWatch(null)
     stopHands()
     stopCamera()
     useSpatial.getState().setCameraOn(false)
@@ -295,7 +305,7 @@ function Shell({
       const control = entry.result as { ok?: boolean; actions?: unknown[] } | null
       if (control?.ok && Array.isArray(control.actions)) {
         if (entry.name === "console") {
-          void runConsoleActions(control.actions as ConsoleAction[], { setCamera, setHands, closeConsole })
+          void runConsoleActions(control.actions as ConsoleAction[], { setCamera, setHands, setWatch, snoozeWatch: snooze, closeConsole })
         }
         if (entry.name === "workshop") runWorkshopActions(control.actions as WorkshopAction[])
       }
@@ -333,6 +343,7 @@ function Shell({
     const spatial = useSpatial.getState()
     if (on === spatial.cameraOn) return
     if (!on) {
+      await setWatch(null)
       stopHands()
       stopCamera()
       spatial.setCameraOn(false)
@@ -354,6 +365,59 @@ function Shell({
       )
       pushLog("WARN", denied ? "Camera permission denied" : "Camera unavailable")
     }
+  }
+
+  // Watch mode (lib/watch.ts): Jarvis following the whiteboard and
+  // speaking up on his own. It needs the camera, so it brings it up.
+  async function setWatch(level: WatchLevel | null) {
+    const spatial = useSpatial.getState()
+    if (level === spatial.watching) return
+    if (!level) {
+      stopWatch()
+      spatial.setWatching(null)
+      pushLog("NONE", "Watch off")
+      return
+    }
+    if (!spatial.cameraOn) await setCamera(true)
+    if (!useSpatial.getState().cameraOn) return
+    startWatch(
+      {
+        token,
+        sessionId,
+        canSpeak: () => useJarvis.getState().status === "idle",
+        onRemark: remark,
+        onError: (message) => pushLog("WARN", `Watch: ${message}`),
+      },
+      level
+    )
+    const first = !spatial.watching
+    spatial.setWatching(level)
+    pushLog("OK", `Watching the board (${level})`)
+    if (first) notify("info", "Watching the board", "Jarvis will speak up when he spots something worth saying.")
+  }
+
+  // An unprompted remark: a soft chime, then into the chat and spoken.
+  function remark(message: string) {
+    sfx.confirm()
+    emitCore({ kind: "reply" })
+    pushLog("OK", "Watch: Jarvis spoke up")
+    setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), role: "assistant", content: message, time: clockTime(), toolsUsed: ["watch"] },
+    ])
+    const voice = new SpeechQueue(token, {
+      onStart: () => setSpeaking(true),
+      onEnd: () => setSpeaking(false),
+      onAuthError,
+    })
+    voice.finish(message)
+  }
+
+  function snooze() {
+    snoozeWatch(SNOOZE_MS)
+    stopNarration()
+    pushLog("NONE", "Watch snoozed for 15 minutes")
+    notify("info", "Very good", "Jarvis will keep quiet for 15 minutes.")
   }
 
   async function toggleHands() {
@@ -382,6 +446,10 @@ function Shell({
   }
 
   async function handleSend(text: string, viaVoice: boolean, look = false, attachments: Attachment[] = []) {
+    if (useSpatial.getState().watching && !attachments.length && SNOOZE_PHRASE.test(text)) {
+      snooze()
+      return
+    }
     // While the camera is on every message carries a frame, and Jarvis
     // decides whether the question needs it; the frame only goes on to
     // the vision model if he does, or if Look was pressed.
@@ -674,6 +742,8 @@ function Shell({
         lookDisabled={pending}
         onLook={() => handleSend("What do you see?", false, true)}
         onToggleHands={toggleHands}
+        onSetWatch={(level) => void setWatch(level)}
+        onSnooze={snooze}
         onClose={toggleCamera}
       />
       <HandCursors />

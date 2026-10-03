@@ -272,6 +272,37 @@ export async function renderView(image: string, prompt: string | undefined, toke
   return res.json()
 }
 
+export type WatchLevel = "quiet" | "normal" | "coach"
+
+export interface ObserveResult {
+  /** Already held to the level's bar on the server. */
+  speak: boolean
+  message: string
+  confidence: number
+  /** Jarvis's running notes on the session, sent back with the next look. */
+  notes: string
+}
+
+/** Watch mode's look at the whiteboard (lib/watch.ts). */
+export async function observeBoard(
+  token: string,
+  body: {
+    session_id: string
+    image: string
+    level: WatchLevel
+    notes: string
+    recent_remarks: string[]
+    still_seconds: number
+  }
+): Promise<ObserveResult> {
+  const res = await jarvisFetch("/watch/observe", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, image_type: "image/jpeg" }),
+  })
+  return res.json()
+}
+
 export async function speak(text: string, token: string, voiceId?: string): Promise<Blob> {
   const res = await jarvisFetch("/speak", token, {
     method: "POST",

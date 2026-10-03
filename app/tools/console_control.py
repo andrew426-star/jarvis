@@ -18,6 +18,9 @@ CONSOLE_ACTIONS = [
     "camera_off",
     "hands_on",
     "hands_off",
+    "watch_on",
+    "watch_off",
+    "watch_snooze",
     "set_mode",
     "mute",
     "unmute",
@@ -27,6 +30,7 @@ CONSOLE_ACTIONS = [
     "close_console",
 ]
 PANELS = {"markets", "intel", "assets"}
+WATCH_LEVELS = {"quiet", "normal", "coach"}
 MODES = {"normal", "serious"}
 
 CATALOGUE = ["reactor", "helmet", "gauntlet", "element", "tower", "missile"]
@@ -78,7 +82,9 @@ CONSOLE_SCHEMA = {
         "description": (
             "Operate Andrew's J.A.R.V.I.S. console in his browser: open or close the data "
             "panels (markets, intel, assets), open or close the 3D workshop, turn the camera "
-            "or hand tracking on or off, switch between normal and serious mode, mute or "
+            "or hand tracking on or off, start or stop watching his whiteboard (watch_on brings "
+            "the camera up; target sets how readily you speak up: quiet | normal | coach; watch_snooze keeps you quiet "
+            "for 15 minutes without stopping), switch between normal and serious mode, mute or "
             "unmute audio, open or close settings, clear the pinned holograms, or close the "
             "console entirely (close_console: stops the camera and audio and puts the console "
             "in standby). Actions run in order the moment your reply arrives. You have full "
@@ -96,7 +102,10 @@ CONSOLE_SCHEMA = {
                             "action": {"type": "string", "enum": CONSOLE_ACTIONS},
                             "target": {
                                 "type": "string",
-                                "description": "open_panel: markets | intel | assets. set_mode: normal | serious.",
+                                "description": (
+                                    "open_panel: markets | intel | assets. set_mode: normal | serious. "
+                                    "watch_on: quiet | normal | coach (default normal)."
+                                ),
                             },
                         },
                         "required": ["action"],
@@ -248,6 +257,8 @@ def console(args: dict) -> dict:
         if action == "set_mode" and target not in MODES:
             problems.append("set_mode needs normal or serious")
             continue
+        if action == "watch_on" and target and target not in WATCH_LEVELS:
+            target = "normal"
         actions.append({"action": action, "target": target} if target else {"action": action})
     if not actions:
         return {"ok": False, "error": "; ".join(problems) or "No actions given."}
@@ -346,7 +357,12 @@ def state_note(state: dict | None) -> str | None:
         f"workshop items: {names}; "
         f"camera {'on' if state.get('camera_on') else 'off'}; "
         f"hand tracking {'on' if state.get('hands_on') else 'off'}; "
-        f"audio {'muted' if state.get('muted') else 'on'}."
+        + (
+            f"WATCHING his whiteboard ({state.get('watching')}): you speak up on your own when it helps; "
+            if state.get("watching")
+            else "not watching the whiteboard; "
+        )
+        + f"audio {'muted' if state.get('muted') else 'on'}."
         + (
             f" LAST OPENSCAD COMPILE FAILED for \"{(state.get('last_scad_error') or {}).get('name')}\": "
             f"{(state.get('last_scad_error') or {}).get('error', '')[:800]}"

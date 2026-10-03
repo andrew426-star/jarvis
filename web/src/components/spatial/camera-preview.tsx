@@ -1,10 +1,11 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { EyeIcon, HandIcon, XIcon } from "lucide-react"
+import { BellOffIcon, EyeIcon, HandIcon, ScanEyeIcon, XIcon } from "lucide-react"
 
 import { attachVideo } from "@/lib/camera"
 import { subscribeHands } from "@/lib/hand-tracking"
+import type { WatchLevel } from "@/lib/jarvis-client"
 import { useSpatial } from "@/lib/spatial-store"
 
 // Pairs of landmark indices that make up the hand skeleton.
@@ -16,20 +17,36 @@ const BONES: [number, number][] = [
   [13, 17], [0, 17], [17, 18], [18, 19], [19, 20],
 ]
 
+const WATCH_LEVELS: { level: WatchLevel; label: string; title: string }[] = [
+  { level: "quiet", label: "QUIET", title: "Only clear mistakes" },
+  { level: "normal", label: "NORMAL", title: "Mistakes and useful nudges" },
+  { level: "coach", label: "COACH", title: "Plus a hint when you seem stuck" },
+]
+
 const HANDS_LABEL = { off: "HANDS", loading: "LOADING", tracking: "HANDS ON", error: "HANDS ERR" }
 
 interface CameraPreviewProps {
   lookDisabled: boolean
   onLook: () => void
   onToggleHands: () => void
+  onSetWatch: (level: WatchLevel | null) => void
+  onSnooze: () => void
   onClose: () => void
 }
 
 // The camera's own window, bottom-left above the command bar. It is also
 // the privacy indicator: whenever the camera is on, this is on screen
 // with a live dot, and closing it turns the camera off.
-export function CameraPreview({ lookDisabled, onLook, onToggleHands, onClose }: CameraPreviewProps) {
+export function CameraPreview({
+  lookDisabled,
+  onLook,
+  onToggleHands,
+  onSetWatch,
+  onSnooze,
+  onClose,
+}: CameraPreviewProps) {
   const cameraOn = useSpatial((state) => state.cameraOn)
+  const watching = useSpatial((state) => state.watching)
   const handsStatus = useSpatial((state) => state.handsStatus)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -96,7 +113,7 @@ export function CameraPreview({ lookDisabled, onLook, onToggleHands, onClose }: 
       >
         <span className="t-label flex items-center" style={{ gap: 6, color: "var(--text-primary)" }}>
           <span className="live-dot" aria-hidden />
-          CAM LIVE
+          {watching ? "WATCHING" : "CAM LIVE"}
         </span>
         <button
           type="button"
@@ -146,7 +163,52 @@ export function CameraPreview({ lookDisabled, onLook, onToggleHands, onClose }: 
         >
           <HandIcon size={13} /> {HANDS_LABEL[handsStatus]}
         </button>
+        <button
+          type="button"
+          className="btn flex flex-1 items-center justify-center"
+          onClick={() => onSetWatch(watching ? null : "normal")}
+          data-active={Boolean(watching)}
+          aria-pressed={Boolean(watching)}
+          style={{ gap: 6, padding: "4px 8px" }}
+          title="Let Jarvis follow your whiteboard and speak up when it helps"
+        >
+          <ScanEyeIcon size={13} /> WATCH
+        </button>
       </div>
+
+      {watching && (
+        <div
+          className="flex items-center"
+          style={{ gap: "var(--sp-1)", padding: "0 var(--sp-2) var(--sp-2)" }}
+          role="group"
+          aria-label="How readily Jarvis speaks up"
+        >
+          {WATCH_LEVELS.map(({ level, label, title }) => (
+            <button
+              key={level}
+              type="button"
+              className="btn flex-1"
+              onClick={() => onSetWatch(level)}
+              data-active={watching === level}
+              aria-pressed={watching === level}
+              style={{ padding: "2px 4px", fontSize: 10 }}
+              title={title}
+            >
+              {label}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="btn flex items-center justify-center"
+            onClick={onSnooze}
+            aria-label="Quiet for 15 minutes"
+            title="Quiet for 15 minutes"
+            style={{ width: 24, height: 22, padding: 0 }}
+          >
+            <BellOffIcon size={12} />
+          </button>
+        </div>
+      )}
     </section>
   )
 }

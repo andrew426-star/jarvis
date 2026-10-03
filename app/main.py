@@ -15,6 +15,7 @@ from app.api.routes.speak import router as speak_router
 from app.api.routes.status import router as status_router
 from app.api.routes.transcribe import router as transcribe_router
 from app.api.routes.verify import router as verify_router
+from app.api.routes.watch import router as watch_router
 from app.api.routes.zoho_auth import router as zoho_auth_router
 from app.core.config import get_settings
 
@@ -44,6 +45,7 @@ app.include_router(google_login_router)
 app.include_router(spotify_auth_router)
 app.include_router(speak_router)
 app.include_router(verify_router)
+app.include_router(watch_router)
 app.include_router(panels_router)
 app.include_router(status_router)
 app.include_router(transcribe_router)

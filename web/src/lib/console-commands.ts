@@ -1,5 +1,6 @@
 "use client"
 
+import type { WatchLevel } from "@/lib/jarvis-client"
 import { sfx } from "@/lib/sfx"
 import { useSpatial } from "@/lib/spatial-store"
 import { useJarvis, type TabKey } from "@/lib/store"
@@ -50,6 +51,8 @@ export function reportScadResult(name: string, error: string | null) {
 export interface ConsoleHost {
   setCamera: (on: boolean) => Promise<void>
   setHands: (on: boolean) => Promise<void>
+  setWatch: (level: WatchLevel | null) => Promise<void>
+  snoozeWatch: () => void
   closeConsole: () => void
 }
 
@@ -144,6 +147,15 @@ export async function runConsoleActions(actions: ConsoleAction[], host: ConsoleH
       case "hands_off":
         await host.setHands(false)
         break
+      case "watch_on":
+        await host.setWatch(target === "quiet" || target === "coach" ? target : "normal")
+        break
+      case "watch_off":
+        await host.setWatch(null)
+        break
+      case "watch_snooze":
+        host.snoozeWatch()
+        break
       case "set_mode":
         // Through the toggle, so his switch gets the same glitch and sound
         // as a click.
@@ -184,6 +196,7 @@ export function consoleState() {
     workshop_items: spatial.workshopOpen && workshop ? workshop.items() : [],
     camera_on: spatial.cameraOn,
     hands_on: spatial.handsStatus === "tracking",
+    watching: spatial.watching,
     muted: sfx.isMuted(),
     last_scad_error: lastScadError,
   }
