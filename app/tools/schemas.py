@@ -15,7 +15,7 @@ from app.tools.kiv_tasks import kiv_tasks
 from app.tools.speech_coach import speech_coach
 from app.tools.launch_tracker import launch_tracker
 from app.tools.market_analysis import market_analysis
-from app.tools.market_history import market_history
+from app.tools.market_history import MARKET_HISTORY_SCHEMA, market_history
 from app.tools.news_feed import news_feed
 from app.tools.notes import NOTES_SCHEMA, notes
 from app.tools.portfolio import portfolio
@@ -96,28 +96,7 @@ TOOL_SCHEMAS = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "market_history",
-            "description": (
-                "Get historical daily price bars (open/high/low/close/volume) for a single "
-                "stock or ETF symbol, via Alpaca — use for 'show me a chart of X' or 'how has X "
-                "moved this month' type questions. Equities/ETFs only, not crypto."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "symbol": {"type": "string", "description": "A single ticker symbol, e.g. 'AAPL'."},
-                    "days": {
-                        "type": "integer",
-                        "description": "How many days of history to look back. Default 30.",
-                    },
-                },
-                "required": ["symbol"],
-            },
-        },
-    },
+    MARKET_HISTORY_SCHEMA,
     {
         "type": "function",
         "function": {

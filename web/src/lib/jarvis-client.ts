@@ -399,7 +399,8 @@ export interface MarketSnapshot {
 }
 
 export interface Candle {
-  date: string
+  /** Bar start, ISO UTC. */
+  t: string
   open: number
   high: number
   low: number
@@ -407,10 +408,30 @@ export interface Candle {
   volume: number
 }
 
+/** app/tools/market_history.py RANGES. */
+export type MarketRange = "1H" | "1D" | "1W" | "1M" | "1Y" | "YTD"
+
+/** One of Jarvis's explanations, pinned to the bar nearest its moment. */
+export interface ChartAnnotation {
+  t: string
+  price: number
+  title: string
+  note: string
+  source: string | null
+}
+
 export interface MarketHistory {
   ok: boolean
   symbol: string
+  range?: MarketRange
+  asset_class?: "stock" | "crypto" | "fx"
+  /** Bar size: 1Min, 5Min, 30Min, 1Hour, 1Day. */
+  timeframe?: string
   candles?: Candle[]
+  /** What change is measured against: the previous close for 1D, else the range's open. */
+  reference?: number
+  delayed_note?: string | null
+  annotations?: ChartAnnotation[]
   error?: string
 }
 
@@ -495,9 +516,9 @@ export async function getMarketSnapshot(token: string): Promise<MarketSnapshot> 
 export async function getMarketHistory(
   symbol: string,
   token: string,
-  days = 30
+  range: MarketRange = "1D"
 ): Promise<MarketHistory> {
-  const params = new URLSearchParams({ symbol, days: String(days) })
+  const params = new URLSearchParams({ symbol, range })
   const res = await jarvisFetch(`/panels/market/history?${params}`, token, { method: "GET" })
   return res.json()
 }

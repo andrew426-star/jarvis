@@ -20,8 +20,8 @@ def panel_market() -> dict:
 
 
 @router.get("/market/history")
-def panel_market_history(symbol: str, days: int = 30) -> dict:
-    return market_history({"symbol": symbol, "days": days})
+def panel_market_history(symbol: str, range: str = "1M") -> dict:  # noqa: A002 — the query parameter's name
+    return market_history({"symbol": symbol, "range": range})
 
 
 @router.get("/news")

@@ -795,6 +795,7 @@ function Shell({
             onAuthError={onAuthError}
             liveSnapshot={liveMarketSnapshot}
             liveHistory={liveMarketHistory}
+            onAsk={(question) => void handleSend(question, false)}
           />
         </div>
         <div className={activeTab === "intel" ? "" : "hidden"}>

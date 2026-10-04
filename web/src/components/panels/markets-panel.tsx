@@ -1,15 +1,16 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { TrendingDownIcon, TrendingUpIcon } from "lucide-react"
 
 import {
   JarvisAuthError,
   getMarketHistory,
   getMarketSnapshot,
+  type ChartAnnotation,
   type MarketHistory,
+  type MarketRange,
   type MarketQuote,
   type MarketSnapshot,
 } from "@/lib/jarvis-client"
@@ -28,26 +29,25 @@ import {
   usd,
   useChangeFlash,
 } from "./hud-kit"
+import { MarketChart } from "./market-chart"
 
 interface MarketsPanelProps {
   token: string
   onAuthError: () => void
   liveSnapshot?: MarketSnapshot
   liveHistory?: MarketHistory
+  /** Ask Jarvis something from the panel ("why does it look like this here?"). */
+  onAsk?: (question: string) => void
 }
 
-const PERIODS = [
-  { days: 7, label: "7D" },
-  { days: 30, label: "30D" },
-  { days: 90, label: "90D" },
-] as const
+const RANGES: MarketRange[] = ["1H", "1D", "1W", "1M", "1Y", "YTD"]
 
 // Change bars are scaled against this move; anything bigger pins the bar.
 const FULL_SCALE_PCT = 5
 
 type Sourced<T> = { data: T; source: "fetch" | "live"; at: Date | null }
 
-export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: MarketsPanelProps) {
+export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory, onAsk }: MarketsPanelProps) {
   // A live tool result from a chat turn seeds the panel when it opens and
   // replaces what's shown whenever a new one arrives. The background fetch
   // on mount only fills in if nothing live got there first, so a slow
@@ -59,7 +59,12 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
   const [symbolInput, setSymbolInput] = useState(liveHistory?.symbol ?? "")
   const [loadingSnapshot, setLoadingSnapshot] = useState(true)
   const [loadingHistory, setLoadingHistory] = useState(false)
-  const [days, setDays] = useState<number>(30)
+  const [range, setRange] = useState<MarketRange>(liveHistory?.range ?? "1D")
+  // Jarvis's explanations, kept per symbol so they stay when the range
+  // changes (the chart pins each to its nearest bar on whatever is shown).
+  const [notes, setNotes] = useState<Record<string, ChartAnnotation[]>>(() =>
+    liveHistory?.annotations?.length ? { [liveHistory.symbol]: liveHistory.annotations } : {}
+  )
 
   // "Adjusting state when a prop changes", done during render as React
   // recommends rather than in an effect.
@@ -74,6 +79,9 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
     if (liveHistory) {
       setHistory(liveHistory)
       setSymbolInput(liveHistory.symbol)
+      if (liveHistory.range) setRange(liveHistory.range)
+      const pinned = liveHistory.annotations
+      if (pinned?.length) setNotes((prev) => ({ ...prev, [liveHistory.symbol]: pinned }))
     }
   }
 
@@ -94,7 +102,7 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
     }
   }
 
-  async function loadHistory(symbol: string, period = days) {
+  async function loadHistory(symbol: string, period: MarketRange = range) {
     const clean = symbol.trim().toUpperCase()
     if (!clean) return
     setSymbolInput(clean)
@@ -121,7 +129,7 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
         // name, unless a chat turn already put a chart here.
         const first = result.ok ? result.quotes[0]?.symbol : undefined
         if (first) {
-          getMarketHistory(first, token, 30)
+          getMarketHistory(first, token, "1D")
             .then((h) => {
               setHistory((prev) => prev ?? h)
               setSymbolInput((prev) => prev || first)
@@ -189,19 +197,20 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
         delay={0.08}
         action={
           <div className="flex shrink-0" style={{ gap: "var(--sp-1)" }}>
-            {PERIODS.map((p) => (
+            {RANGES.map((r) => (
               <button
-                key={p.days}
+                key={r}
                 type="button"
                 className="btn"
-                data-active={days === p.days}
+                data-active={range === r}
                 style={{ height: 24, padding: "0 var(--sp-2)" }}
+                disabled={loadingHistory}
                 onClick={() => {
-                  setDays(p.days)
-                  if (history?.symbol) loadHistory(history.symbol, p.days)
+                  setRange(r)
+                  if (history?.symbol) loadHistory(history.symbol, r)
                 }}
               >
-                {p.label}
+                {r}
               </button>
             ))}
           </div>
@@ -218,7 +227,7 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
           <input
             value={symbolInput}
             onChange={(event) => setSymbolInput(event.target.value)}
-            placeholder="SYMBOL, e.g. AAPL"
+            placeholder="AAPL, BTC, EUR/USD"
             className="t-label min-w-0 flex-1"
             style={{
               height: 28,
@@ -246,7 +255,12 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory }: 
         )}
         {loadingHistory && !history?.candles ? <ScanRows rows={1} height={200} /> : null}
         {history?.ok && history.candles && history.candles.length > 0 && (
-          <HistoryChart history={history} loading={loadingHistory} />
+          <MarketChart
+            history={history}
+            annotations={notes[history.symbol] ?? []}
+            loading={loadingHistory}
+            onAsk={onAsk}
+          />
         )}
         {!history && !loadingHistory && (
           <p className="t-body" style={{ color: "var(--text-secondary)" }}>
@@ -346,93 +360,3 @@ function QuoteTile({
   )
 }
 
-function HistoryChart({ history, loading }: { history: MarketHistory; loading: boolean }) {
-  const candles = useMemo(() => history.candles ?? [], [history.candles])
-  const stats = useMemo(() => {
-    const first = candles[0]?.close ?? 0
-    const last = candles[candles.length - 1]?.close ?? 0
-    return {
-      last,
-      change: first ? ((last - first) / first) * 100 : 0,
-      high: Math.max(...candles.map((c) => c.high)),
-      low: Math.min(...candles.map((c) => c.low)),
-    }
-  }, [candles])
-  const color = stats.change >= 0 ? "var(--success)" : "var(--error)"
-  const gradientId = `hist-${history.symbol.replace(/[^A-Za-z0-9]/g, "")}`
-
-  return (
-    <div className="flex flex-col" style={{ gap: "var(--sp-2)", opacity: loading ? 0.5 : 1 }}>
-      <div className="flex flex-wrap items-baseline justify-between" style={{ gap: "var(--sp-2)" }}>
-        <div className="flex items-baseline" style={{ gap: "var(--sp-2)" }}>
-          <span className="t-header text-glow" style={{ color: "var(--accent)" }}>
-            {history.symbol}
-          </span>
-          <AnimatedValue value={stats.last} format={(n) => usd(n)} className="t-value" style={{ fontSize: 18 }} />
-          <span className="t-label" style={{ color }}>
-            {signedPct(stats.change)}
-          </span>
-        </div>
-        <span className="t-label" style={{ color: "var(--text-secondary)" }}>
-          H {usd(stats.high)} · L {usd(stats.low)}
-        </span>
-      </div>
-      <motion.div
-        key={`${history.symbol}-${candles.length}`}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.4 }}
-      >
-        <div className="h-[220px] @4xl:h-[380px]">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={candles} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-            <defs>
-              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={color} stopOpacity={0.35} />
-                <stop offset="100%" stopColor={color} stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="2 4" stroke="rgba(var(--accent-rgb), 0.08)" vertical={false} />
-            <XAxis
-              dataKey="date"
-              tick={{ fontSize: 10, fill: "var(--text-secondary)", fontFamily: "var(--font-jetbrains)" }}
-              tickLine={false}
-              axisLine={{ stroke: "rgba(var(--accent-rgb), 0.15)" }}
-              minTickGap={32}
-            />
-            <YAxis
-              domain={["auto", "auto"]}
-              tick={{ fontSize: 10, fill: "var(--text-secondary)", fontFamily: "var(--font-jetbrains)" }}
-              tickLine={false}
-              axisLine={false}
-              width={48}
-            />
-            <Tooltip
-              cursor={{ stroke: "rgba(var(--accent-rgb), 0.4)", strokeDasharray: "2 2" }}
-              contentStyle={{
-                background: "rgba(5, 5, 10, 0.95)",
-                border: "1px solid rgba(var(--accent-rgb), 0.4)",
-                borderRadius: 2,
-                fontFamily: "var(--font-jetbrains)",
-                fontSize: 11,
-              }}
-              labelStyle={{ color: "var(--text-secondary)" }}
-              formatter={(value) => [usd(Number(value)), "Close"]}
-            />
-            <Area
-              type="monotone"
-              dataKey="close"
-              stroke={color}
-              fill={`url(#${gradientId})`}
-              strokeWidth={1.75}
-              animationDuration={900}
-              animationEasing="ease-out"
-              activeDot={{ r: 3, stroke: color, fill: "var(--bg-base)" }}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-        </div>
-      </motion.div>
-    </div>
-  )
-}

@@ -306,6 +306,9 @@ def _model_view(result: dict) -> dict:
     screen is for the console alone: an image's base64, or a file the model
     wrote itself (and which the call's args already record), would only
     crowd the model's context and bloat the stored trace."""
+    # A chart's bars are for the panel; the model reads the summary beside them.
+    if isinstance(result, dict) and "candles" in result:
+        result = {k: v for k, v in result.items() if k != "candles"}
     showing = result.get("showcase") if isinstance(result, dict) else None
     if isinstance(showing, dict):
         return {**result, "showcase": {k: v for k, v in showing.items() if k not in ("image_data", "content")}}
