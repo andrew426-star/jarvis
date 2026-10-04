@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react"
 import {
   BellOffIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   EyeIcon,
   FlipHorizontalIcon,
   HandIcon,
@@ -47,6 +49,15 @@ const CORE_MIN_WIDTH = 320
 const CAPTION_MS = 10_000
 
 const LAYOUT_KEY = "jarvis_camera_window"
+
+// In the workshop the window docks into the corner under the library (which
+// leaves room for it) at the library's width, without the core or captions,
+// so the stage stays clear. It can fold down to its header there.
+const DOCK_WIDTH = 244
+const DOCK_GUTTER = 12
+const DOCK_FOLDED_KEY = "jarvis_camera_docked_folded"
+
+const MODE_LABEL = { hands: "HANDS", degraded: "HANDS LOST", pointer: "MOUSE" }
 
 interface Layout {
   x: number
@@ -135,6 +146,9 @@ export function CameraPreview({
   const watching = useSpatial((state) => state.watching)
   const watchLooking = useSpatial((state) => state.watchLooking)
   const handsStatus = useSpatial((state) => state.handsStatus)
+  const inputMode = useSpatial((state) => state.inputMode)
+  const handConfidence = useSpatial((state) => state.handConfidence)
+  const workshopOpen = useSpatial((state) => state.workshopOpen)
   const status = useJarvis((state) => state.status)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const sectionRef = useRef<HTMLElement>(null)
@@ -145,6 +159,14 @@ export function CameraPreview({
   const [layout, setLayout] = useState<Layout | null>(() => (typeof window === "undefined" ? null : initialLayout()))
   const [focused, setFocused] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const [folded, setFolded] = useState(() => {
+    try {
+      return typeof window !== "undefined" && localStorage.getItem(DOCK_FOLDED_KEY) === "1"
+    } catch {
+      return false
+    }
+  })
+  const docked = workshopOpen && !focused
   const flippedRef = useRef(false)
   useEffect(() => {
     flippedRef.current = layout?.flipped ?? false
@@ -180,12 +202,14 @@ export function CameraPreview({
       context.lineWidth = 1.5
       const mirrored = !flippedRef.current
       for (const pointer of pointers) {
+        // A hand the tracker does not trust is drawn faint: seen, not acting.
+        const strength = pointer.active ? 1 : 0.35
         // Lined up with the video underneath, mirrored or not.
         const at = (i: number) => {
           const x = pointer.landmarks[i].x
           return [(mirrored ? 1 - x : x) * width, pointer.landmarks[i].y * height]
         }
-        context.globalAlpha = 0.85
+        context.globalAlpha = 0.85 * strength
         for (const [a, b] of BONES) {
           const [ax, ay] = at(a)
           const [bx, by] = at(b)
@@ -228,7 +252,7 @@ export function CameraPreview({
   // Pointer capture keeps the drag going when the pointer outruns the
   // header, and the final position is saved once, on release.
   function startDrag(event: React.PointerEvent) {
-    if (focused || (event.target as HTMLElement).closest("button")) return
+    if (focused || docked || (event.target as HTMLElement).closest("button")) return
     const start = { x: event.clientX, y: event.clientY, layout: layout! }
     const target = event.currentTarget as HTMLElement
     target.setPointerCapture(event.pointerId)
@@ -275,10 +299,20 @@ export function CameraPreview({
     saveLayout(update({ ...layout!, flipped: !layout!.flipped }))
   }
 
-  const width = focused ? window.innerWidth - GUTTER * 2 : layout.width
-  const showCore = width >= CORE_MIN_WIDTH
+  function fold(next: boolean) {
+    setFolded(next)
+    try {
+      localStorage.setItem(DOCK_FOLDED_KEY, next ? "1" : "0")
+    } catch {
+      // Remembered for this session only.
+    }
+  }
+
+  const width = focused ? window.innerWidth - GUTTER * 2 : docked ? DOCK_WIDTH : layout.width
+  const showCore = !docked && width >= CORE_MIN_WIDTH
   const coreSize = focused ? 150 : Math.round(Math.min(120, Math.max(64, width * 0.2)))
-  const showCaption = captionShown && captionText && width >= CORE_MIN_WIDTH
+  const showCaption = !docked && captionShown && captionText && width >= CORE_MIN_WIDTH
+  const showBody = !(docked && folded)
 
   return (
     <section
@@ -288,7 +322,9 @@ export function CameraPreview({
       style={{
         ...(focused
           ? { left: GUTTER, right: GUTTER, top: TOP + GUTTER, bottom: BOTTOM + GUTTER }
-          : { left: layout.x, top: layout.y, width: layout.width }),
+          : docked
+            ? { left: DOCK_GUTTER, bottom: DOCK_GUTTER, width: DOCK_WIDTH, opacity: 0.92 }
+            : { left: layout.x, top: layout.y, width: layout.width }),
         // Above the workshop (35), so hands can be switched on from inside it.
         zIndex: 40,
         background: "rgba(5, 7, 14, 0.92)",
@@ -306,16 +342,28 @@ export function CameraPreview({
         style={{
           padding: "4px var(--sp-2)",
           borderBottom: "1px solid rgba(var(--accent-rgb), 0.2)",
-          cursor: focused ? "default" : dragging ? "grabbing" : "grab",
+          cursor: focused || docked ? "default" : dragging ? "grabbing" : "grab",
           touchAction: "none",
         }}
-        title={focused ? undefined : "Drag to move · double-click to focus"}
+        title={focused ? undefined : docked ? "Double-click to focus" : "Drag to move · double-click to focus"}
       >
         <span className="t-label flex items-center" style={{ gap: 6, color: "var(--text-primary)" }}>
           <span className="live-dot" aria-hidden />
           {watching ? (watchLooking ? "READING THE BOARD…" : `WATCHING · ${watching.toUpperCase()}`) : "CAM LIVE"}
         </span>
         <div className="flex items-center" style={{ gap: 4 }}>
+          {docked && (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => fold(!folded)}
+              aria-label={folded ? "Show the picture" : "Fold the camera down"}
+              title={folded ? "Show the picture" : "Fold down to this bar"}
+              style={{ width: 22, height: 22, padding: 0 }}
+            >
+              {folded ? <ChevronUpIcon size={12} /> : <ChevronDownIcon size={12} />}
+            </button>
+          )}
           <button
             type="button"
             className="btn"
@@ -355,7 +403,9 @@ export function CameraPreview({
 
       <div
         className={`relative ${focused ? "min-h-0 flex-1" : ""}`}
-        style={{ aspectRatio: focused ? undefined : "16 / 9", background: "#000" }}
+        // Folded, the picture is hidden rather than removed: the video
+        // element must stay mounted for tracking and looks to keep working.
+        style={{ aspectRatio: focused ? undefined : "16 / 9", background: "#000", display: showBody ? undefined : "none" }}
       >
         <video
           ref={attachVideo}
@@ -369,6 +419,24 @@ export function CameraPreview({
           style={{ transform: layout.flipped ? undefined : "scaleX(-1)" }}
         />
         <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+
+        {handsStatus === "tracking" && (
+          <span
+            className="t-label pointer-events-none absolute"
+            style={{
+              top: 6,
+              left: 6,
+              padding: "2px 6px",
+              background: "rgba(2, 3, 6, 0.72)",
+              borderRadius: "var(--radius)",
+              color: inputMode === "hands" ? "var(--accent)" : inputMode === "degraded" ? "var(--warning)" : "var(--text-secondary)",
+            }}
+            title="Who is driving: your hands, or the mouse while they are out of view or unsure"
+          >
+            {MODE_LABEL[inputMode]}
+            {inputMode !== "pointer" || handConfidence > 0 ? ` · ${Math.round(handConfidence * 100)}%` : ""}
+          </span>
+        )}
 
         {showCaption && (
           <div
@@ -415,7 +483,10 @@ export function CameraPreview({
         )}
       </div>
 
-      <div className="flex shrink-0 items-center" style={{ gap: "var(--sp-2)", padding: "var(--sp-2)" }}>
+      <div
+        className="flex shrink-0 items-center"
+        style={{ gap: "var(--sp-2)", padding: "var(--sp-2)", display: showBody ? undefined : "none" }}
+      >
         <button
           type="button"
           className="btn flex flex-1 items-center justify-center"
@@ -451,7 +522,7 @@ export function CameraPreview({
         </button>
       </div>
 
-      {watching && (
+      {watching && !docked && (
         <div
           className="flex shrink-0 items-center"
           style={{ gap: "var(--sp-1)", padding: "0 var(--sp-2) var(--sp-2)" }}
@@ -485,7 +556,7 @@ export function CameraPreview({
         </div>
       )}
 
-      {!focused && (
+      {!focused && !docked && (
         <div
           onPointerDown={startResize}
           className="absolute"

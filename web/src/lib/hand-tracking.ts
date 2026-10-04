@@ -3,12 +3,18 @@
 import type { HandLandmarker, NormalizedLandmark } from "@mediapipe/tasks-vision"
 
 import { getVideo } from "@/lib/camera"
+import { fromMediaPipe, pinchRatio, type HandPose, type TrackedHand } from "@/lib/hand-model"
 import { sfx } from "@/lib/sfx"
-import { useSpatial } from "@/lib/spatial-store"
+import { useSpatial, type InputMode } from "@/lib/spatial-store"
 
 // Hand tracking runs entirely in the browser (MediaPipe's hand landmarker
 // on WebAssembly/WebGL): camera frames for it never leave the machine.
 // Only a look (lib/camera.ts captureFrame) sends a frame anywhere.
+//
+// Each frame: landmarks -> an XR-shaped TrackedHand (lib/hand-model.ts) ->
+// smoothing (One Euro, then a deadzone leash) -> a confidence check that
+// decides who is driving (hands, or the mouse while they are lost) ->
+// gestures. The mouse works throughout; the hands only act while trusted.
 //
 // Pinned to the installed package version so the WASM runtime and the JS
 // that drives it can never drift apart.
@@ -16,18 +22,22 @@ const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/
 const MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 
-// Landmark indices, from MediaPipe's hand model.
-const WRIST = 0
-const THUMB_TIP = 4
-const INDEX_TIP = 8
-const MIDDLE_MCP = 9
-
 // Pinch distance is measured relative to the hand's own size (wrist to
 // middle knuckle), so it works the same close to the camera and far from
 // it. Two thresholds, not one: a pinch held right at a single threshold
 // would flicker between grabbed and dropped every frame.
 const PINCH_ON = 0.3
 const PINCH_OFF = 0.45
+
+// Fist and peace sign, by finger curl (0 straight, 1 curled), each with
+// its own way in and a looser way out for the same reason.
+const FIST_INDEX_ON = 0.75
+const FIST_REST_ON = 0.7
+const FIST_OFF = 0.5
+const PEACE_STRAIGHT = 0.35
+const PEACE_CURLED = 0.6
+/** A peace sign held this long, and still, is one gesture. */
+const PEACE_HOLD_MS = 500
 
 // The camera's edges are hard to reach with a hand that is also in
 // frame, so the middle 70% of the image maps onto the whole screen.
@@ -42,6 +52,35 @@ const TAP_MAX_TRAVEL = 36
 // after a pinch starts, hand motion does not move what was grabbed.
 const PINCH_SETTLE_MS = 120
 
+// --- deadzone (the leash) -------------------------------------------------
+// After the One Euro filter the cursor still shimmers a few pixels when the
+// hand is held still, which is exactly when a CAD placement needs it to sit
+// dead. So a still cursor is on a leash: it only moves when the hand pulls
+// further than LEASH_PX from it, and then follows at that distance - no
+// jump, and anything smaller is ignored. Once the hand is really moving
+// (faster than MOVE_ON) the leash shortens to nothing so there is no lag;
+// it comes back once the hand has been slower than MOVE_OFF for STILL_MS.
+const LEASH_PX = 8
+const MOVE_ON = 160
+const MOVE_OFF = 60
+const STILL_MS = 140
+/** How fast the leash length follows its target, per second. */
+const LEASH_RATE = 14
+
+// --- confidence and the fallback ------------------------------------------
+// A hand below CONF_LOW stops acting at once (frozen, not dropped). If none
+// comes back above it within GRACE_MS, the mouse takes over: whatever the
+// hands held is set down where it was. Hands take back over only once one
+// has been above CONF_HIGH for RECOVER_MS - a gap between the two
+// thresholds, so a hand hovering at the edge of confidence cannot flap
+// the mode back and forth.
+const CONF_LOW = 0.45
+const CONF_HIGH = 0.7
+const GRACE_MS = 450
+const RECOVER_MS = 350
+/** One frame's jump this big (share of the screen) is a tracking glitch. */
+const GLITCH_JUMP = 0.25
+
 export interface HandPointer {
   id: string
   /** Viewport pixels, smoothed. */
@@ -55,7 +94,19 @@ export interface HandPointer {
   /** Apparent hand size in the image (wrist to middle knuckle, smoothed).
    *  Grows as the hand nears the webcam, so it stands in for depth. */
   size: number
+  /** Smoothed 0-1. Below the threshold the hand is shown but does nothing. */
+  confidence: number
+  /** It acts right now: confident, and the hands are driving. */
+  active: boolean
+  pose: HandPose
+  /** The XR-shaped hand, for anything that wants joints by name. */
+  hand: TrackedHand
 }
+
+/** A gesture beyond pinching, for the workshop to map to an action. */
+export type HandGesture =
+  | { type: "peace"; id: string; x: number; y: number }
+  | { type: "fist"; phase: "start" | "move" | "end"; id: string; x: number; y: number }
 
 type Listener = (pointers: HandPointer[]) => void
 
@@ -66,6 +117,8 @@ export interface SpatialHandler {
   move: (id: string, x: number, y: number, size?: number) => void
   up: (id: string, x: number, y: number, tap: boolean) => void
   hover: (x: number | null, y: number | null) => void
+  /** Fist and peace sign. A fist "start" returning false is not followed up. */
+  gesture?: (gesture: HandGesture) => boolean | void
 }
 
 let spatialHandler: SpatialHandler | null = null
@@ -112,13 +165,69 @@ class OneEuro {
   }
 }
 
+/** The spatial and temporal deadzone described at LEASH_PX. */
+class Leash {
+  private x: number | null = null
+  private y = 0
+  private lastX = 0
+  private lastY = 0
+  private lastTime = 0
+  private length = LEASH_PX
+  private moving = false
+  private slowSince = 0
+
+  filter(px: number, py: number, time: number): { x: number; y: number; speed: number } {
+    if (this.x === null) {
+      this.x = this.lastX = px
+      this.y = this.lastY = py
+      this.lastTime = time
+      return { x: px, y: py, speed: 0 }
+    }
+    const dt = Math.max((time - this.lastTime) / 1000, 1 / 120)
+    const speed = Math.hypot(px - this.lastX, py - this.lastY) / dt
+    this.lastX = px
+    this.lastY = py
+    this.lastTime = time
+
+    if (speed > MOVE_ON) {
+      this.moving = true
+      this.slowSince = 0
+    } else if (this.moving && speed < MOVE_OFF) {
+      this.slowSince ||= time
+      if (time - this.slowSince > STILL_MS) this.moving = false
+    } else {
+      this.slowSince = 0
+    }
+    const target = this.moving ? 0 : LEASH_PX
+    this.length += (target - this.length) * Math.min(1, dt * LEASH_RATE)
+
+    const dx = px - this.x
+    const dy = py - this.y
+    const gap = Math.hypot(dx, dy)
+    if (gap > this.length) {
+      const pull = (gap - this.length) / gap
+      this.x += dx * pull
+      this.y += dy * pull
+    }
+    return { x: this.x, y: this.y, speed }
+  }
+}
+
 // --- per-hand gesture state ----------------------------------------------
 interface HandState {
   fx: OneEuro
   fy: OneEuro
   fs: OneEuro
+  leash: Leash
   size: number
+  confidence: number
   pinching: boolean
+  fist: boolean
+  /** The workshop took this fist (a rotate or orbit is under way). */
+  fistClaimed: boolean
+  peaceSince: number
+  /** Fired for this peace sign; re-armed when the pose changes. */
+  peaceFired: boolean
   /** Hologram this hand is holding, if any. */
   holding: string | null
   /** This pinch belongs to the spatial handler (the workshop). */
@@ -126,6 +235,9 @@ interface HandState {
   id: string
   lastX: number
   lastY: number
+  /** Unsmoothed aim point last frame, to spot tracking glitches. */
+  rawX: number
+  rawY: number
   /** Where and when the current pinch started, for air-tap detection. */
   downX: number
   downY: number
@@ -138,6 +250,8 @@ interface HandState {
   downSize: number
   downTarget: HTMLElement | null
   seenAt: number
+  /** Last time this hand was confident enough to act. */
+  trustedAt: number
 }
 
 // Two hands on one hologram: scale follows the distance between them.
@@ -156,22 +270,23 @@ let twoHand: TwoHandScale | null = null
 let pointers: HandPointer[] = []
 const listeners = new Set<Listener>()
 
+let mode: InputMode = "pointer"
+let degradedSince = 0
+let recoverSince = 0
+let hoverSent = false
+
 export function subscribeHands(listener: Listener): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
 }
 
-export function toViewport(landmark: NormalizedLandmark) {
+export function toViewport(landmark: { x: number; y: number }) {
   const span = 1 - ACTIVE_MARGIN * 2
   const nx = Math.min(1, Math.max(0, (landmark.x - ACTIVE_MARGIN) / span))
   const ny = Math.min(1, Math.max(0, (landmark.y - ACTIVE_MARGIN) / span))
   // x is flipped because the camera sees Andrew's right hand on the
   // image's left; unflipped, the cursor would move opposite the hand.
   return { x: (1 - nx) * window.innerWidth, y: ny * window.innerHeight }
-}
-
-function distance(a: NormalizedLandmark, b: NormalizedLandmark) {
-  return Math.hypot(a.x - b.x, a.y - b.y)
 }
 
 // What is under a hand cursor. The cursor canvas and other overlays are
@@ -219,12 +334,14 @@ function pinchStart(hand: HandState, x: number, y: number, now: number) {
   }
 }
 
-function pinchEnd(hand: HandState, x: number, y: number, now: number) {
+/** `dropped`: the hand was lost, so this is a set-down, never a tap. */
+function pinchEnd(hand: HandState, x: number, y: number, now: number, dropped = false) {
+  hand.pinching = false
   const spatial = useSpatial.getState()
   if (hand.spatial) {
     hand.spatial = false
     const travel = Math.hypot(x - hand.downX, y - hand.downY)
-    spatialHandler?.up(hand.id, x, y, now - hand.downAt < TAP_MAX_MS && travel < TAP_MAX_TRAVEL)
+    spatialHandler?.up(hand.id, x, y, !dropped && now - hand.downAt < TAP_MAX_MS && travel < TAP_MAX_TRAVEL)
     return
   }
   if (hand.holding) {
@@ -235,7 +352,7 @@ function pinchEnd(hand: HandState, x: number, y: number, now: number) {
     return
   }
   const travel = Math.hypot(x - hand.downX, y - hand.downY)
-  if (hand.downTarget && now - hand.downAt < TAP_MAX_MS && travel < TAP_MAX_TRAVEL) {
+  if (!dropped && hand.downTarget && now - hand.downAt < TAP_MAX_MS && travel < TAP_MAX_TRAVEL) {
     // click() alone does not focus a text field, so the command bar
     // would ignore a tap without this.
     if (hand.downTarget instanceof HTMLInputElement) hand.downTarget.focus()
@@ -245,83 +362,204 @@ function pinchEnd(hand: HandState, x: number, y: number, now: number) {
   hand.downTarget = null
 }
 
-function process(result: { landmarks: NormalizedLandmark[][]; handedness: { categoryName: string }[][] }) {
+function fistEnd(hand: HandState, dropped = false) {
+  if (hand.fistClaimed) spatialHandler?.gesture?.({ type: "fist", phase: "end", id: hand.id, x: hand.lastX, y: hand.lastY })
+  hand.fistClaimed = false
+  if (dropped) hand.fist = false
+}
+
+/** Let go of everything a hand is doing, where it is: it was lost. */
+function drop(hand: HandState, now: number) {
+  if (hand.pinching) pinchEnd(hand, hand.lastX, hand.lastY, now, true)
+  fistEnd(hand, true)
+}
+
+function newHand(id: string, now: number): HandState {
+  return {
+    fx: new OneEuro(),
+    fy: new OneEuro(),
+    // Size jitters more than position and matters less instantly, so
+    // it is smoothed harder.
+    fs: new OneEuro(0.6, 0.5),
+    leash: new Leash(),
+    size: 0,
+    confidence: 0,
+    pinching: false,
+    fist: false,
+    fistClaimed: false,
+    peaceSince: 0,
+    peaceFired: false,
+    holding: null,
+    spatial: false,
+    id,
+    lastX: 0,
+    lastY: 0,
+    rawX: Number.NaN,
+    rawY: 0,
+    downX: 0,
+    downY: 0,
+    downAt: 0,
+    heldX: 0,
+    heldY: 0,
+    downSize: 0,
+    downTarget: null,
+    seenAt: now,
+    trustedAt: 0,
+  }
+}
+
+/** The fallback state machine (see CONF_LOW). Returns the mode now. */
+function updateMode(best: number, now: number): InputMode {
+  const before = mode
+  if (mode === "hands") {
+    if (best < CONF_LOW) {
+      mode = "degraded"
+      degradedSince = now
+    }
+  } else if (mode === "degraded") {
+    if (best >= CONF_LOW) mode = "hands"
+    else if (now - degradedSince > GRACE_MS) mode = "pointer"
+  } else if (best >= CONF_HIGH) {
+    recoverSince ||= now
+    if (now - recoverSince > RECOVER_MS) mode = "hands"
+  } else {
+    recoverSince = 0
+  }
+  if (mode !== "pointer") recoverSince = 0
+  if (before !== "pointer" && mode === "pointer") {
+    // The mouse has it now: set down whatever the hands held, and stop
+    // steering hover so the mouse's own hover shows.
+    for (const hand of hands.values()) drop(hand, now)
+    twoHand = null
+  }
+  return mode
+}
+
+function process(result: { landmarks: NormalizedLandmark[][]; handedness: { categoryName: string; score: number }[][] }) {
   const now = performance.now()
   const spatial = useSpatial.getState()
   const next: HandPointer[] = []
+  const seen = new Set<string>()
 
-  result.landmarks.forEach((landmarks, index) => {
+  // Pass 1: smoothing and confidence for every hand in the frame.
+  const frame = result.landmarks.map((landmarks, index) => {
     // Handedness is a stable enough key for two hands. Two hands labelled
     // the same (it happens) fall back to their index.
     const label = result.handedness[index]?.[0]?.categoryName ?? "Hand"
-    const id = next.some((p) => p.id === label) ? `${label}-${index}` : label
+    const id = seen.has(label) ? `${label}-${index}` : label
+    seen.add(id)
 
-    let hand = hands.get(id)
-    if (!hand) {
-      hand = {
-        fx: new OneEuro(),
-        fy: new OneEuro(),
-        // Size jitters more than position and matters less instantly, so
-        // it is smoothed harder.
-        fs: new OneEuro(0.6, 0.5),
-        size: 0,
-        pinching: false,
-        holding: null,
-        spatial: false,
-        id,
-        lastX: 0,
-        lastY: 0,
-        downX: 0,
-        downY: 0,
-        downAt: 0,
-        heldX: 0,
-        heldY: 0,
-        downSize: 0,
-        downTarget: null,
-        seenAt: now,
-      }
-      hands.set(id, hand)
-    }
+    const hand = hands.get(id) ?? newHand(id, now)
+    hands.set(id, hand)
     hand.seenAt = now
 
-    const thumb = landmarks[THUMB_TIP]
-    const indexTip = landmarks[INDEX_TIP]
-    const handSize = Math.max(1e-4, distance(landmarks[WRIST], landmarks[MIDDLE_MCP]))
+    const tracked = fromMediaPipe(landmarks, result.handedness[index]?.[0])
+    const thumb = tracked.joints["thumb-tip"]
+    const indexTip = tracked.joints["index-finger-tip"]
+    const handSize = Math.max(1e-4, Math.hypot(
+      tracked.joints.wrist.x - tracked.joints["middle-finger-phalanx-proximal"].x,
+      tracked.joints.wrist.y - tracked.joints["middle-finger-phalanx-proximal"].y
+    ))
     hand.size = hand.fs.filter(handSize, now)
-    const pinchRatio = distance(thumb, indexTip) / handSize
 
     // Aim from the point between thumb and index tips: it barely moves
     // as the fingers close, so pinching does not knock the cursor off
     // the thing being pinched.
-    const raw = toViewport({ x: (thumb.x + indexTip.x) / 2, y: (thumb.y + indexTip.y) / 2, z: 0, visibility: 0 })
-    const x = hand.fx.filter(raw.x, now)
-    const y = hand.fy.filter(raw.y, now)
-
-    const wasPinching = hand.pinching
-    hand.pinching = wasPinching ? pinchRatio < PINCH_OFF : pinchRatio < PINCH_ON
-
-    // Steer the held cursor: size-normalised, and still while the pinch
-    // settles.
-    if (hand.pinching && wasPinching && now - hand.downAt > PINCH_SETTLE_MS) {
-      const scale = hand.downSize > 0 && hand.size > 0 ? hand.downSize / hand.size : 1
-      hand.heldX += (x - hand.lastX) * scale
-      hand.heldY += (y - hand.lastY) * scale
+    const raw = toViewport({ x: (thumb.x + indexTip.x) / 2, y: (thumb.y + indexTip.y) / 2 })
+    let confidence = tracked.confidence
+    if (!Number.isNaN(hand.rawX) && Math.hypot(raw.x - hand.rawX, raw.y - hand.rawY) > GLITCH_JUMP * window.innerWidth) {
+      confidence *= 0.3
     }
+    hand.rawX = raw.x
+    hand.rawY = raw.y
+    // Smoothed so a single bad frame dips it without crossing a threshold.
+    hand.confidence = hand.confidence ? hand.confidence * 0.6 + confidence * 0.4 : confidence
 
-    if (hand.pinching && !wasPinching) pinchStart(hand, x, y, now)
-    else if (!hand.pinching && wasPinching) pinchEnd(hand, x, y, now)
-    else if (hand.pinching && hand.spatial) spatialHandler?.move(id, hand.heldX, hand.heldY, hand.size)
-    else if (hand.pinching && hand.holding) {
-      if (twoHand?.id === hand.holding) {
-        const other = [...hands.values()].find((h) => h !== hand && h.holding === hand.holding)
-        if (other) {
-          const spread = Math.hypot(x - other.lastX, y - other.lastY)
-          spatial.scaleHologram(hand.holding, twoHand.startScale * (spread / twoHand.startDistance))
-        }
-      } else if (now - hand.downAt > PINCH_SETTLE_MS) {
+    const smooth = hand.leash.filter(hand.fx.filter(raw.x, now), hand.fy.filter(raw.y, now), now)
+    return { hand, tracked, landmarks, x: smooth.x, y: smooth.y, speed: smooth.speed }
+  })
+
+  const best = frame.reduce((max, f) => Math.max(max, f.hand.confidence), 0)
+  updateMode(best, now)
+
+  // Pass 2: gestures, for hands that are trusted while the hands drive.
+  for (const { hand, tracked, landmarks, x, y, speed } of frame) {
+    const id = hand.id
+    const active = mode === "hands" && hand.confidence >= CONF_LOW
+    if (active) hand.trustedAt = now
+    const ratio = pinchRatio(tracked)
+    const [indexCurl, middleCurl, ringCurl, pinkyCurl] = tracked.curl
+    const restCurl = (middleCurl + ringCurl + pinkyCurl) / 3
+
+    if (active) {
+      // Fist first: a closed hand brings the thumb near the index, which
+      // must not read as a pinch.
+      const wasFist = hand.fist
+      hand.fist = wasFist
+        ? tracked.grabStrength > FIST_OFF
+        : !hand.pinching && indexCurl > FIST_INDEX_ON && restCurl > FIST_REST_ON
+
+      const wasPinching = hand.pinching
+      hand.pinching = !hand.fist && (wasPinching ? ratio < PINCH_OFF : ratio < PINCH_ON)
+
+      // Steer the held cursor: size-normalised, and still while the pinch
+      // settles.
+      if (hand.pinching && wasPinching && now - hand.downAt > PINCH_SETTLE_MS) {
         const scale = hand.downSize > 0 && hand.size > 0 ? hand.downSize / hand.size : 1
-        spatial.moveHologram(hand.holding, (x - hand.lastX) * scale, (y - hand.lastY) * scale)
+        hand.heldX += (x - hand.lastX) * scale
+        hand.heldY += (y - hand.lastY) * scale
       }
+
+      if (hand.pinching && !wasPinching) pinchStart(hand, x, y, now)
+      else if (!hand.pinching && wasPinching) pinchEnd(hand, x, y, now)
+      else if (hand.pinching && hand.spatial) spatialHandler?.move(id, hand.heldX, hand.heldY, hand.size)
+      else if (hand.pinching && hand.holding) {
+        if (twoHand?.id === hand.holding) {
+          const other = [...hands.values()].find((h) => h !== hand && h.holding === hand.holding)
+          if (other) {
+            const spread = Math.hypot(x - other.lastX, y - other.lastY)
+            spatial.scaleHologram(hand.holding, twoHand.startScale * (spread / twoHand.startDistance))
+          }
+        } else if (now - hand.downAt > PINCH_SETTLE_MS) {
+          const scale = hand.downSize > 0 && hand.size > 0 ? hand.downSize / hand.size : 1
+          spatial.moveHologram(hand.holding, (x - hand.lastX) * scale, (y - hand.lastY) * scale)
+        }
+      }
+
+      // Fist drag: rotate or orbit, as the workshop maps it.
+      if (hand.fist && !wasFist) {
+        hand.fistClaimed = spatialHandler?.gesture?.({ type: "fist", phase: "start", id, x, y }) === true
+      } else if (hand.fist && hand.fistClaimed) {
+        spatialHandler?.gesture?.({ type: "fist", phase: "move", id, x, y })
+      } else if (!hand.fist && wasFist) {
+        fistEnd(hand)
+      }
+
+      // Peace sign held still: one discrete gesture.
+      const peace =
+        !hand.pinching &&
+        !hand.fist &&
+        indexCurl < PEACE_STRAIGHT &&
+        middleCurl < PEACE_STRAIGHT &&
+        ringCurl > PEACE_CURLED &&
+        pinkyCurl > PEACE_CURLED &&
+        ratio > PINCH_OFF
+      if (!peace) {
+        hand.peaceSince = 0
+        hand.peaceFired = false
+      } else if (speed > MOVE_ON) {
+        hand.peaceSince = now
+      } else {
+        hand.peaceSince ||= now
+        if (!hand.peaceFired && now - hand.peaceSince > PEACE_HOLD_MS) {
+          hand.peaceFired = true
+          spatialHandler?.gesture?.({ type: "peace", id, x, y })
+        }
+      }
+    } else if (now - hand.trustedAt > GRACE_MS && (hand.pinching || hand.fist)) {
+      // Untrusted for too long: let go. Until then a grip stays frozen
+      // where it was, so a flicker of bad tracking costs nothing.
+      drop(hand, now)
     }
 
     hand.lastX = x
@@ -331,24 +569,38 @@ function process(result: { landmarks: NormalizedLandmark[][]; handedness: { cate
       x,
       y,
       pinching: hand.pinching,
-      pinchAmount: Math.min(1, Math.max(0, (PINCH_OFF + 0.25 - pinchRatio) / (PINCH_OFF + 0.25 - PINCH_ON))),
+      pinchAmount: Math.min(1, Math.max(0, (PINCH_OFF + 0.25 - ratio) / (PINCH_OFF + 0.25 - PINCH_ON))),
       landmarks,
       size: hand.size,
+      confidence: hand.confidence,
+      active,
+      pose: hand.fist ? "fist" : hand.pinching ? "pinch" : hand.peaceSince ? "peace" : tracked.grabStrength < 0.25 ? "open" : "none",
+      hand: tracked,
     })
-  })
+  }
 
-  // A hand that left the frame lets go of whatever it held.
+  // A hand that left the frame lets go once the grace period is up.
   for (const [id, hand] of hands) {
-    if (now - hand.seenAt > 300) {
-      if (hand.pinching) pinchEnd(hand, hand.lastX, hand.lastY, now)
+    if (now - hand.seenAt > GRACE_MS) {
+      drop(hand, now)
       hands.delete(id)
     }
   }
 
-  const hover = next.find((p) => !p.pinching)
-  spatial.setHovered(hover ? hitTest(hover.x, hover.y).holoId : null)
-  spatialHandler?.hover(hover?.x ?? null, hover?.y ?? null)
+  // Hover belongs to the hands only while they drive; otherwise it is the
+  // mouse's, and a stream of hover(null) here would wipe it every frame.
+  const hover = mode === "hands" ? next.find((p) => p.active && !p.pinching) : undefined
+  if (hover) {
+    spatial.setHovered(hitTest(hover.x, hover.y).holoId)
+    spatialHandler?.hover(hover.x, hover.y)
+    hoverSent = true
+  } else if (hoverSent) {
+    spatial.setHovered(null)
+    spatialHandler?.hover(null, null)
+    hoverSent = false
+  }
 
+  spatial.setTracking(mode, Math.round(best * 20) / 20)
   pointers = next
   listeners.forEach((listener) => listener(pointers))
 }
@@ -382,6 +634,8 @@ export async function startHands(): Promise<void> {
       })
     }
     running = true
+    // The mouse drives until a hand shows up steady (see updateMode).
+    mode = "pointer"
     spatial.setHandsStatus("tracking")
     raf = requestAnimationFrame(loop)
   } catch (error) {
@@ -394,11 +648,14 @@ export function stopHands() {
   running = false
   cancelAnimationFrame(raf)
   const now = performance.now()
-  for (const hand of hands.values()) if (hand.pinching) pinchEnd(hand, hand.lastX, hand.lastY, now)
+  for (const hand of hands.values()) drop(hand, now)
   hands.clear()
   twoHand = null
   pointers = []
+  mode = "pointer"
+  hoverSent = false
   listeners.forEach((listener) => listener(pointers))
   useSpatial.getState().setHovered(null)
+  useSpatial.getState().setTracking("pointer", 0)
   useSpatial.getState().setHandsStatus("off")
 }

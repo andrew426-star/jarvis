@@ -2,7 +2,20 @@
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { CameraIcon, DownloadIcon, ImageIcon, Loader2Icon, RotateCcwIcon, ScanEyeIcon, SparklesIcon, Trash2Icon, XIcon } from "lucide-react"
+import {
+  BoxesIcon,
+  CameraIcon,
+  DownloadIcon,
+  HandIcon,
+  ImageIcon,
+  Loader2Icon,
+  MagnetIcon,
+  RotateCcwIcon,
+  ScanEyeIcon,
+  SparklesIcon,
+  Trash2Icon,
+  XIcon,
+} from "lucide-react"
 
 import { getVideo, startCamera, stopCamera } from "@/lib/camera"
 import { registerWorkshop, reportScadResult } from "@/lib/console-commands"
@@ -12,6 +25,8 @@ import { useSpatial } from "@/lib/spatial-store"
 import { renderView } from "@/lib/jarvis-client"
 import type { ItemMode, WorkshopScene } from "@/lib/workshop/scene"
 import { buildGenerated, type ItemSpec } from "@/lib/workshop/models"
+import { getGestures, KEYS, useGestures, type TapAction } from "@/lib/workshop/gestures"
+import { GestureSettings } from "@/components/workshop/gesture-settings"
 import { LibraryDock, type StageItem } from "@/components/workshop/library-dock"
 import { ScadError, compileScad, scadItem } from "@/lib/workshop/openscad"
 import { useJarvis } from "@/lib/store"
@@ -54,6 +69,15 @@ function download(files: { name: string; blob: Blob }[]) {
 const TAP_MS = 300
 const TAP_PX = 6
 
+const HINT: Record<string, string> = {
+  toggle_mode: "HOLO/SOLID",
+  explode: "EXPLODE",
+  snap: "SNAP",
+  reset_view: "RESET VIEW",
+  rotate_item: "TURN PART",
+  orbit: "ORBIT",
+}
+
 // The 3D workshop, full-screen over the console. Hands reach it through
 // setSpatialHandler (any pinch the DOM does not claim), the mouse through
 // the pointer handlers below; both land on the same WorkshopScene calls.
@@ -94,6 +118,7 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
   const labelRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<WorkshopScene | null>(null)
   const pressRef = useRef<{ at: number; x: number; y: number } | null>(null)
+  const rotatingRef = useRef(false)
   const [focus, setFocus] = useState<Focus>(null)
   const [ready, setReady] = useState(false)
   const [passthrough, setPassthrough] = useState(false)
@@ -103,12 +128,21 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
   const [stage, setStage] = useState<StageItem[]>([])
   const [rendering, setRendering] = useState(false)
   const [render, setRender] = useState<{ url: string; prompt: string; model: string } | null>(null)
+  const [exploded, setExploded] = useState(false)
+  const [snapOn, setSnapOn] = useState(false)
+  const [gesturesOpen, setGesturesOpen] = useState(false)
+  const inputMode = useSpatial((state) => state.inputMode)
+  const gestures = useGestures()
   // Jarvis's render and snapshot controls are registered once, with the
   // scene, but must reach the current functions (and their state), so they
   // go through this ref, refreshed every render.
-  const latest = useRef<{ takeSnapshot: () => Promise<void>; renderNow: (prompt?: string) => Promise<void> } | null>(null)
+  const latest = useRef<{
+    takeSnapshot: () => Promise<void>
+    renderNow: (prompt?: string) => Promise<void>
+    runAction: (action: TapAction, itemId?: string) => void
+  } | null>(null)
   useEffect(() => {
-    latest.current = { takeSnapshot, renderNow }
+    latest.current = { takeSnapshot, renderNow, runAction }
   })
   // Compile OpenSCAD and put the part on the stage, solid (it is a real
   // part); errors go to the log, a notification, and back to Jarvis.
@@ -191,6 +225,15 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
       const scene = new WorkshopScene(host, label, {
         onFocus: setFocus,
         onItems: setStage,
+        // A mouse click always toggles hologram/solid; a hand's quick pinch
+        // does whatever the gesture map says.
+        onTap: (itemId, pointer) => {
+          if (pointer.startsWith("mouse-")) return false
+          const action = getGestures().pinch_tap
+          if (action === "toggle_mode") return false
+          latest.current?.runAction(action, itemId)
+          return true
+        },
         // Generous: a hand cannot aim as finely as a mouse.
         binAt: (x, y) => {
           const rect = binRef.current?.getBoundingClientRect()
@@ -242,6 +285,23 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
         move: (id, x, y) => scene.move(id, x, y),
         up: (id, x, y, tap) => scene.up(id, x, y, tap),
         hover: (x, y) => scene.hover(x, y),
+        gesture: (gesture) => {
+          if (gesture.type === "peace") {
+            latest.current?.runAction(getGestures().peace)
+            return true
+          }
+          if (gesture.phase === "start") {
+            const action = getGestures().fist_drag
+            if (action === "rotate_item") return scene.beginRotate(gesture.id, gesture.x, gesture.y)
+            if (action === "orbit") {
+              scene.beginOrbit(gesture.id, gesture.x, gesture.y)
+              return true
+            }
+            return false
+          }
+          if (gesture.phase === "move") scene.move(gesture.id, gesture.x, gesture.y)
+          else scene.up(gesture.id, gesture.x, gesture.y, false)
+        },
       })
       setReady(true)
     })
@@ -300,20 +360,68 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
     setPassthrough(next)
   }
 
+  // Gesture actions, from a hand gesture (as mapped), a button or a key.
+  function runAction(action: TapAction, itemId?: string) {
+    const { notify } = useJarvis.getState()
+    const scene = sceneRef.current
+    if (!scene || action === "none") return
+    if (action === "toggle_mode") {
+      const id = itemId ?? focus?.id
+      if (id) scene.toggle(id)
+    } else if (action === "explode") {
+      const result = scene.setExploded()
+      setExploded(result.exploded)
+      if (result.exploded && !result.explodable) {
+        notify("info", "Nothing to explode", "OpenSCAD parts are one solid; built and catalogue models come apart.")
+      }
+      sfx.click()
+    } else if (action === "snap") {
+      setSnapOn(scene.setSnap())
+      sfx.click()
+    } else if (action === "reset_view") {
+      scene.resetView()
+    }
+  }
+
+  // E, G and R for the same actions, unless he is typing somewhere.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (event.ctrlKey || event.metaKey || event.altKey || target?.closest("input, textarea, select, [contenteditable='true']")) return
+      const key = event.key.toUpperCase()
+      if (key === KEYS.explode) latest.current?.runAction("explode")
+      else if (key === KEYS.snap) latest.current?.runAction("snap")
+      else if (key === KEYS.reset_view) latest.current?.runAction("reset_view")
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     event.currentTarget.setPointerCapture(event.pointerId)
+    const scene = sceneRef.current
+    const id = `mouse-${event.pointerId}`
+    // Right-drag or shift-drag turns the part under the pointer (or the
+    // selected one); over nothing, it orbits.
+    if (event.button === 2 || event.shiftKey) {
+      pressRef.current = null
+      if (scene && !scene.beginRotate(id, event.clientX, event.clientY)) scene.beginOrbit(id, event.clientX, event.clientY)
+      rotatingRef.current = true
+      return
+    }
     pressRef.current = { at: performance.now(), x: event.clientX, y: event.clientY }
-    sceneRef.current?.down(`mouse-${event.pointerId}`, event.clientX, event.clientY)
+    scene?.down(id, event.clientX, event.clientY)
   }
   function onPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
     const scene = sceneRef.current
     if (!scene) return
-    if (pressRef.current) scene.move(`mouse-${event.pointerId}`, event.clientX, event.clientY)
+    if (pressRef.current || rotatingRef.current) scene.move(`mouse-${event.pointerId}`, event.clientX, event.clientY)
     else scene.hover(event.clientX, event.clientY)
   }
   function onPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
     const press = pressRef.current
     pressRef.current = null
+    rotatingRef.current = false
     const tap =
       !!press &&
       performance.now() - press.at < TAP_MS &&
@@ -339,6 +447,17 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
           <span className="t-header shrink-0" style={{ color: "var(--accent)" }}>
             WORKSHOP
           </span>
+          {handsOn && (
+            <span
+              className="t-label shrink-0"
+              style={{
+                color: inputMode === "hands" ? "var(--accent)" : inputMode === "degraded" ? "var(--warning)" : "var(--text-secondary)",
+              }}
+              title="Your hands drive while they are in view and tracked well; the mouse takes over the moment they are not"
+            >
+              {inputMode === "hands" ? "◉ HANDS" : inputMode === "degraded" ? "◌ HANDS LOST" : "◎ MOUSE"}
+            </span>
+          )}
         </div>
         <div className="relative flex shrink-0 items-center" style={{ gap: "var(--sp-2)" }}>
           <button
@@ -383,6 +502,42 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
             title="Show the camera behind the workshop"
           >
             <ScanEyeIcon size={12} /> PASSTHROUGH
+          </button>
+          <button
+            type="button"
+            className="btn flex items-center"
+            style={{ gap: 6, padding: "4px 10px" }}
+            onClick={() => runAction("explode")}
+            data-active={exploded}
+            aria-pressed={exploded}
+            disabled={!ready}
+            title={`Exploded view: parts drawn apart (${KEYS.explode})`}
+          >
+            <BoxesIcon size={12} /> EXPLODE
+          </button>
+          <button
+            type="button"
+            className="btn flex items-center"
+            style={{ gap: 6, padding: "4px 10px" }}
+            onClick={() => runAction("snap")}
+            data-active={snapOn}
+            aria-pressed={snapOn}
+            disabled={!ready}
+            title={`Snapping: 25 mm grid, 15° turns, flush to neighbours (${KEYS.snap})`}
+          >
+            <MagnetIcon size={12} /> SNAP
+          </button>
+          <button
+            type="button"
+            className="btn"
+            style={{ width: 28, height: 28, padding: 0 }}
+            onClick={() => setGesturesOpen((o) => !o)}
+            data-active={gesturesOpen}
+            aria-pressed={gesturesOpen}
+            aria-label="Gesture mapping"
+            title="Choose what each hand gesture does"
+          >
+            <HandIcon className="mx-auto size-4" />
           </button>
           <button type="button" className="btn" style={{ padding: "4px 10px" }} onClick={() => sceneRef.current?.setAllModes("wire")}>
             HOLOGRAM
@@ -433,9 +588,12 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
           onPointerLeave={() => sceneRef.current?.hover(null, null)}
+          onContextMenu={(event) => event.preventDefault()}
           onWheel={(event) => sceneRef.current?.zoom(event.deltaY > 0 ? 1.08 : 1 / 1.08)}
           onDoubleClick={() => focus && sceneRef.current?.toggle(focus.id)}
         />
+
+        {gesturesOpen && <GestureSettings onClose={() => setGesturesOpen(false)} />}
 
         {/* Spec readout, positioned over the focused item by the scene. */}
         <div
@@ -519,9 +677,19 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
             ? trackingError
             : handsStatus === "loading"
               ? "BRINGING HANDS ONLINE..."
-              : handsOn
-                ? "PINCH ITEM: GRAB · TOWARD/AWAY FROM CAMERA: DEPTH · FLICK: SPIN · QUICK PINCH: HOLO/SOLID · BOTH HANDS: RESIZE · DROP ON BIN: DISCARD"
-                : "DRAG ITEM: MOVE · FLICK: SPIN · CLICK: HOLO/SOLID · DRAG SPACE: ORBIT · WHEEL: ZOOM · DROP ON BIN: DISCARD"}
+              : handsOn && inputMode === "hands"
+                ? [
+                    "PINCH ITEM: GRAB",
+                    "PINCH SPACE: ORBIT",
+                    gestures.pinch_tap !== "none" && `QUICK PINCH: ${HINT[gestures.pinch_tap]}`,
+                    gestures.fist_drag !== "none" && `FIST: ${HINT[gestures.fist_drag]}`,
+                    gestures.peace !== "none" && `✌ HOLD: ${HINT[gestures.peace]}`,
+                    "BOTH HANDS: RESIZE",
+                    "DROP ON BIN: DISCARD",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
+                : "DRAG: MOVE · RIGHT/SHIFT-DRAG: TURN PART · CLICK: HOLO/SOLID · WHEEL: ZOOM · E EXPLODE · G SNAP · R RESET VIEW"}
         </p>
       </div>
     </>

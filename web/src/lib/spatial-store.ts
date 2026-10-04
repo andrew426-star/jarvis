@@ -10,6 +10,12 @@ import type { WatchLevel } from "@/lib/jarvis-client"
 
 export type HandsStatus = "off" | "loading" | "tracking" | "error"
 
+/** Who is driving (lib/hand-tracking.ts). hands: a confident hand is in
+ *  view. degraded: it just dropped out; what it held stays held for a
+ *  moment in case it comes straight back. pointer: the mouse, until a hand
+ *  is back and steady. */
+export type InputMode = "hands" | "degraded" | "pointer"
+
 export interface Hologram {
   id: string
   /** "note" is a pinned reply, "vision" is what Jarvis saw through the camera. */
@@ -33,6 +39,9 @@ interface SpatialState {
   /** A watch look is out right now: the camera header says so. */
   watchLooking: boolean
   handsStatus: HandsStatus
+  inputMode: InputMode
+  /** Best hand's tracking confidence, 0-1, in steps of 0.05. */
+  handConfidence: number
   holograms: Hologram[]
   /** Ids held by a hand or the mouse right now. */
   grabbed: string[]
@@ -46,6 +55,7 @@ interface SpatialState {
   setWatching: (level: WatchLevel | null) => void
   setWatchLooking: (looking: boolean) => void
   setHandsStatus: (status: HandsStatus) => void
+  setTracking: (inputMode: InputMode, handConfidence: number) => void
   addHologram: (input: Pick<Hologram, "kind" | "title" | "body" | "image">) => void
   moveHologram: (id: string, dx: number, dy: number) => void
   scaleHologram: (id: string, scale: number) => void
@@ -91,6 +101,8 @@ export const useSpatial = create<SpatialState>((set, get) => ({
   watching: null,
   watchLooking: false,
   handsStatus: "off",
+  inputMode: "pointer",
+  handConfidence: 0,
   holograms: load(),
   grabbed: [],
   hovered: null,
@@ -101,6 +113,9 @@ export const useSpatial = create<SpatialState>((set, get) => ({
   setWatching: (watching) => set({ watching, watchLooking: false }),
   setWatchLooking: (watchLooking) => set({ watchLooking }),
   setHandsStatus: (handsStatus) => set({ handsStatus }),
+  setTracking: (inputMode, handConfidence) => {
+    if (get().inputMode !== inputMode || get().handConfidence !== handConfidence) set({ inputMode, handConfidence })
+  },
 
   addHologram: (input) => {
     const existing = get().holograms

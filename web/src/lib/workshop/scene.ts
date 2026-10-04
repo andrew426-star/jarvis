@@ -20,6 +20,12 @@ import { CATALOGUE, type BuiltItem, type ItemSpec } from "@/lib/workshop/models"
 //
 // Switching an item to materials is a scan: a clipping plane rises
 // through it, solid below, hologram above, with a bright ring at the cut.
+//
+// For CAD work on top of that: an exploded view (an item's parts drawn
+// apart along the line from its centre), rotating a part in place (a
+// rotated part stops its idle turn and stays as set), and snapping - to a
+// grid and 15-degree steps while moving, and flush against a neighbour's
+// face when set down close to it.
 
 export type ItemMode = "wire" | "solid"
 
@@ -47,6 +53,10 @@ interface Item {
   armed: boolean
   /** Clock time the discard began, while it breaks apart. */
   dying: number | null
+  /** Its parts and where each goes in the exploded view. */
+  parts: { node: THREE.Object3D; base: THREE.Vector3; offset: THREE.Vector3 }[]
+  /** Rotated by hand or mouse: no idle turn, it stays as set. */
+  posed: boolean
 }
 
 type Grip =
@@ -60,14 +70,29 @@ type Grip =
        *  where the pointer last met it. */
       height: number
       lastHit: THREE.Vector3 | null
+      /** Unsnapped position; the item shows it rounded to the grid. */
+      rawX: number
+      rawZ: number
     }
   | { kind: "orbit"; lastX: number; lastY: number }
+  | { kind: "rotate"; item: Item; lastX: number; lastY: number; yaw: number; tilt: number }
 
 const TARGET = new THREE.Vector3(0, 1.1, 0)
 const SLOTS: [number, number][] = [
   [0, 0], [-2.5, 0.3], [2.5, 0.3], [-1.3, -2.2], [1.3, -2.2], [-3.8, -1.8], [3.8, -1.8], [0, -3.6],
 ]
 const BASE_SPIN = 0.25
+
+const VIEW = { azimuth: 0.25, elevation: 0.55, radius: 8.5 }
+/** Snapping: grid step (1 unit = 100 mm, so 25 mm), angle step, and how
+ *  close a face must be set down to another to be pulled flush. */
+const SNAP_GRID = 0.25
+const SNAP_ANGLE = THREE.MathUtils.degToRad(15)
+const SNAP_FACE = 0.35
+/** Radians of rotation per pixel of drag. */
+const ROTATE_RATE = 0.01
+/** Exploded view: how far parts travel, as a share of the item's size. */
+const EXPLODE_SPREAD = 0.55
 
 // Hands in the scene. Apparent hand size in the camera image stands in for
 // depth: a hand moving toward the webcam (toward the screen) grows, and
@@ -101,6 +126,9 @@ export interface WorkshopCallbacks {
   onBin?: (state: "idle" | "armed" | "discarded") => void
   /** What is on the stage changed (added, removed, switched mode). */
   onItems?: (items: { id: string; name: string; mode: ItemMode }[]) => void
+  /** A tap on an item. Return true to take it; otherwise it toggles
+   *  hologram/solid. `pointer` is the hand or mouse id. */
+  onTap?: (itemId: string, pointer: string) => boolean
 }
 
 const DISCARD_SECONDS = 0.55
@@ -216,9 +244,12 @@ export class WorkshopScene {
   private raf = 0
   private observer: ResizeObserver
 
-  private azimuth = 0.25
-  private elevation = 0.55
-  private radius = 8.5
+  private azimuth = VIEW.azimuth
+  private elevation = VIEW.elevation
+  private radius = VIEW.radius
+  private exploded = false
+  private explodeT = 0
+  private snap = false
   private twoHand: { a: string; b: string; start: number; startValue: number; item: Item | null } | null = null
   private hovered: Item | null = null
   private accent = accentHex()
@@ -351,6 +382,8 @@ export class WorkshopScene {
       born: this.clock.elapsedTime,
       armed: false,
       dying: null,
+      parts: this.explodeParts(object),
+      posed: false,
     }
     this.items.push(item)
     this.focus(item)
@@ -536,6 +569,8 @@ export class WorkshopScene {
         vx: 0,
         height,
         lastHit: this.floorHit(x, y, height),
+        rawX: item.root.position.x,
+        rawZ: item.root.position.z,
       })
       this.focus(item)
     } else {
@@ -554,7 +589,13 @@ export class WorkshopScene {
       grip.lastY = y
       return
     }
-    if (grip.kind === "item") {
+    if (grip.kind === "rotate") {
+      grip.yaw += (x - grip.lastX) * ROTATE_RATE
+      grip.tilt = THREE.MathUtils.clamp(grip.tilt + (y - grip.lastY) * ROTATE_RATE, -Math.PI / 2, Math.PI / 2)
+      const step = (angle: number) => (this.snap ? Math.round(angle / SNAP_ANGLE) * SNAP_ANGLE : angle)
+      grip.item.model.rotation.y = step(grip.yaw)
+      grip.item.model.rotation.x = step(grip.tilt)
+    } else if (grip.kind === "item") {
       // Tabletop drag: a held item slides across a horizontal plane at its
       // own height, so pointer up the screen pushes it back and down pulls
       // it forward - hand or mouse alike. Depth used to come from the
@@ -563,14 +604,16 @@ export class WorkshopScene {
       // leaving the frame as it went.
       const hit = this.floorHit(x, y, grip.height)
       if (hit && grip.lastHit) {
-        const position = grip.item.root.position
-        position.x += hit.x - grip.lastHit.x
-        position.z += hit.z - grip.lastHit.z
-        const reach = Math.hypot(position.x, position.z)
+        grip.rawX += hit.x - grip.lastHit.x
+        grip.rawZ += hit.z - grip.lastHit.z
+        const reach = Math.hypot(grip.rawX, grip.rawZ)
         if (reach > STAGE_RADIUS) {
-          position.x *= STAGE_RADIUS / reach
-          position.z *= STAGE_RADIUS / reach
+          grip.rawX *= STAGE_RADIUS / reach
+          grip.rawZ *= STAGE_RADIUS / reach
         }
+        const position = grip.item.root.position
+        position.x = this.snap ? Math.round(grip.rawX / SNAP_GRID) * SNAP_GRID : grip.rawX
+        position.z = this.snap ? Math.round(grip.rawZ / SNAP_GRID) * SNAP_GRID : grip.rawZ
       }
       if (hit) grip.lastHit = hit
       const armed = !!this.callbacks.binAt?.(x, y)
@@ -597,13 +640,52 @@ export class WorkshopScene {
       return
     }
     if (tap) {
+      if (this.callbacks.onTap?.(grip.item.id, id)) return
       grip.item.mode = grip.item.mode === "wire" ? "solid" : "wire"
       this.focus(grip.item)
       this.emitItems()
+    } else if (this.snap) {
+      // Snapping places, it does not throw.
+      this.snapToNeighbours(grip.item)
     } else {
       // Thrown: the release speed becomes spin, then friction takes over.
       grip.item.spin += grip.vx * 0.06
     }
+  }
+
+  /** Start rotating the part under (x, y), or the selected one. False if
+   *  there is neither. */
+  beginRotate(id: string, x: number, y: number): boolean {
+    const item = this.pick(x, y) ?? this.focused
+    if (!item || item.dying !== null) return false
+    item.posed = true
+    item.spin = 0
+    this.grips.set(id, { kind: "rotate", item, lastX: x, lastY: y, yaw: item.model.rotation.y, tilt: item.model.rotation.x })
+    this.focus(item)
+    return true
+  }
+
+  /** Start orbiting the camera, whatever is under the pointer. */
+  beginOrbit(id: string, x: number, y: number) {
+    this.grips.set(id, { kind: "orbit", lastX: x, lastY: y })
+  }
+
+  /** Exploded view on or off (toggled when `on` is left out). Returns the
+   *  new state and how many items have parts to spread. */
+  setExploded(on = !this.exploded): { exploded: boolean; explodable: number } {
+    this.exploded = on
+    return { exploded: on, explodable: this.live().filter((item) => item.parts.length > 1).length }
+  }
+
+  setSnap(on = !this.snap): boolean {
+    this.snap = on
+    return on
+  }
+
+  resetView() {
+    this.azimuth = VIEW.azimuth
+    this.elevation = VIEW.elevation
+    this.radius = VIEW.radius
   }
 
   hover(x: number | null, y: number | null) {
@@ -613,12 +695,73 @@ export class WorkshopScene {
   private discard(item: Item) {
     item.armed = false
     item.dying = this.clock.elapsedTime
-    for (const [id, grip] of this.grips) if (grip.kind === "item" && grip.item === item) this.grips.delete(id)
+    for (const [id, grip] of this.grips) if (grip.kind !== "orbit" && grip.item === item) this.grips.delete(id)
     if (this.twoHand?.item === item) this.twoHand = null
     if (this.focused === item) this.focus(null)
     if (this.hovered === item) this.hovered = null
     this.callbacks.onBin?.("discarded")
     this.emitItems()
+  }
+
+  /** The parts an exploded view spreads: the children of the first level
+   *  of the model with more than one (catalogue models wrap everything in
+   *  one group), each pushed out along the line from the centre to it. */
+  private explodeParts(object: THREE.Object3D): Item["parts"] {
+    const isPart = (node: THREE.Object3D) =>
+      !(node as THREE.Light).isLight && !node.userData.holoLines && ((node as THREE.Mesh).isMesh || (node as THREE.Group).isGroup)
+    let level = object
+    for (let depth = 0; depth < 4; depth += 1) {
+      const children = level.children.filter(isPart)
+      if (children.length !== 1) break
+      level = children[0]
+    }
+    const children = level.children.filter(isPart)
+    if (children.length < 2) return []
+    object.updateMatrixWorld(true)
+    const whole = new THREE.Box3().setFromObject(level)
+    const size = whole.getSize(new THREE.Vector3()).length() || 1
+    const centre = level.worldToLocal(whole.getCenter(new THREE.Vector3()))
+    // Local units: the level may be scaled, so the spread is converted too.
+    const scale = level.getWorldScale(new THREE.Vector3()).x || 1
+    return children.map((node, index) => {
+      const middle = level.worldToLocal(new THREE.Box3().setFromObject(node).getCenter(new THREE.Vector3()))
+      const direction = middle.sub(centre)
+      // A part at the very centre goes straight up, staggered.
+      if (direction.lengthSq() < 1e-6) direction.set(0, 0.3 + index * 0.05, 0)
+      return {
+        node,
+        base: node.position.clone(),
+        offset: direction.normalize().multiplyScalar((size * EXPLODE_SPREAD) / scale),
+      }
+    })
+  }
+
+  /** Set down within SNAP_FACE of another item's side: pulled flush to it,
+   *  and lined up with it when nearly lined up already. */
+  private snapToNeighbours(item: Item) {
+    item.bounds.setFromObject(item.model)
+    const a = item.bounds
+    let best: { axis: "x" | "z"; shift: number; other: THREE.Box3 } | null = null
+    for (const other of this.live()) {
+      if (other === item) continue
+      const b = other.bounds
+      const overlapX = a.min.x < b.max.x && a.max.x > b.min.x
+      const overlapZ = a.min.z < b.max.z && a.max.z > b.min.z
+      const options: { axis: "x" | "z"; shift: number }[] = []
+      if (overlapZ) options.push({ axis: "x", shift: b.min.x - a.max.x }, { axis: "x", shift: b.max.x - a.min.x })
+      if (overlapX) options.push({ axis: "z", shift: b.min.z - a.max.z }, { axis: "z", shift: b.max.z - a.min.z })
+      for (const option of options) {
+        if (Math.abs(option.shift) < SNAP_FACE && (!best || Math.abs(option.shift) < Math.abs(best.shift))) {
+          best = { ...option, other: b }
+        }
+      }
+    }
+    if (!best) return
+    item.root.position[best.axis] += best.shift
+    // Flush on one axis; centred on the other if it nearly is.
+    const across = best.axis === "x" ? "z" : "x"
+    const gap = (best.other.min[across] + best.other.max[across]) / 2 - (a.min[across] + a.max[across]) / 2
+    if (Math.abs(gap) < SNAP_FACE) item.root.position[across] += gap
   }
 
   /** Draw the tracked hands inside the scene, or none. */
@@ -654,7 +797,8 @@ export class WorkshopScene {
         positions.setXYZ(i * 2 + 1, joints[b].x, joints[b].y, joints[b].z)
       })
       positions.needsUpdate = true
-      ;(rig.bones.material as THREE.LineBasicMaterial).opacity = pointer.pinching ? 1 : 0.7
+      // A hand the tracker does not trust right now is drawn faint: seen, not acting.
+      ;(rig.bones.material as THREE.LineBasicMaterial).opacity = (pointer.pinching ? 1 : 0.7) * (pointer.active ? 1 : 0.3)
     })
   }
 
@@ -946,7 +1090,7 @@ export class WorkshopScene {
 
       // Spin decays toward a slow idle turn; held items stop turning.
       if (held.has(item)) item.spin *= 0.8
-      else item.spin += (BASE_SPIN - item.spin) * Math.min(1, dt * 0.6)
+      else item.spin += ((item.posed || this.exploded ? 0 : BASE_SPIN) - item.spin) * Math.min(1, dt * 0.6)
       item.model.rotation.y += item.spin * dt
       item.model.position.y = (item.model.userData.baseY ??= item.model.position.y) + Math.sin(t * 1.3 + item.born) * 0.05
 
@@ -971,6 +1115,16 @@ export class WorkshopScene {
       const span = Math.max(max.x - min.x, max.z - min.z) / item.root.scale.x
       item.scanRing.scale.setScalar(span * 0.62)
       item.scanRing.position.y = (cut - item.root.position.y) / item.root.scale.y
+    }
+
+    // Exploded view, eased in and out.
+    const explodeTarget = this.exploded ? 1 : 0
+    if (this.explodeT !== explodeTarget) {
+      this.explodeT += (explodeTarget - this.explodeT) * Math.min(1, dt * 5)
+      if (Math.abs(this.explodeT - explodeTarget) < 0.002) this.explodeT = explodeTarget
+      for (const item of this.items) {
+        for (const part of item.parts) part.node.position.copy(part.base).addScaledVector(part.offset, this.explodeT)
+      }
     }
 
     // Camera orbit.
