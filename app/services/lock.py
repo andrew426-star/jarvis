@@ -30,8 +30,12 @@ DESCRIPTOR_LENGTH = 128
 
 
 class LockedOut(Exception):
-    def __init__(self, until: datetime):
+    """`started` is True when this attempt is the one that began the
+    lockout (worth telling Andrew about), False when it was already on."""
+
+    def __init__(self, until: datetime, started: bool = False):
         self.until = until
+        self.started = started
         super().__init__(f"Too many attempts. Locked until {until.astimezone(timezone.utc):%H:%M} UTC.")
 
 
@@ -106,7 +110,7 @@ def check_pin(pin: str) -> None:
     if not hmac.compare_digest(digest, row["pin_hash"]):
         left = _fail("pin", row)
         if not left:
-            raise LockedOut(_locked_until(_row().get("pin_locked_until")) or _now())
+            raise LockedOut(_locked_until(_row().get("pin_locked_until")) or _now(), started=True)
         raise Rejected(f"Wrong PIN. {left} {'try' if left == 1 else 'tries'} before a lockout.")
     _save(pin_failures=0, pin_locked_until=None)
 
@@ -162,7 +166,7 @@ def check_face(descriptors: list, liveness: dict) -> float:
     if median > FACE_MATCH_DISTANCE:
         left = _fail("face", row)
         if not left:
-            raise LockedOut(_locked_until(_row().get("face_locked_until")) or _now())
+            raise LockedOut(_locked_until(_row().get("face_locked_until")) or _now(), started=True)
         raise Rejected(f"Face not recognised. {left} {'try' if left == 1 else 'tries'} before a lockout.")
     _save(face_failures=0, face_locked_until=None)
     return median

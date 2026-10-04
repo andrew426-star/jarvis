@@ -26,6 +26,7 @@ from app.core.supabase_client import get_supabase_client
 logger = logging.getLogger(__name__)
 
 GOOGLE_NEWS = "https://news.google.com/rss/search"
+BING_NEWS = "https://www.bing.com/news/search"
 PER_CATEGORY = 6
 MAX_PER_SOURCE = 2
 WINDOW = "7d"
@@ -104,25 +105,34 @@ def _vetted_domain(url: str, domains: set[str]) -> str | None:
     return None
 
 
-def search(terms: str, domains: list[str], window: str = WINDOW, names: dict[str, str] | None = None) -> list[dict]:
-    """Google News search for `terms`, limited to `domains`. Never raises."""
-    if not domains:
-        return []
+def _published(text: str | None) -> datetime | None:
+    try:
+        return parsedate_to_datetime(text or "").astimezone(timezone.utc)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _fetch(url: str) -> tuple[ET.Element | None, str]:
+    """The feed's root, or None and why not (for the refresh's report)."""
+    try:
+        res = httpx.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0 (Jarvis Intel)"}, follow_redirects=True)
+    except Exception as exc:  # noqa: BLE001 — one failed search is one empty group
+        return None, type(exc).__name__
+    if not res.is_success:
+        return None, f"HTTP {res.status_code}"
+    try:
+        return ET.fromstring(res.content), "200"
+    except ET.ParseError:
+        return None, "not a feed"  # a consent or captcha page
+
+
+def _google(terms: str, domains: list[str], window: str, names: dict[str, str]) -> tuple[list[dict], str]:
     sites = " OR ".join(f"site:{d}" for d in domains)
     query = f"({terms}) ({sites}) when:{window}"
-    url = f"{GOOGLE_NEWS}?{urllib.parse.urlencode({'q': query, 'hl': 'en-US', 'gl': 'US', 'ceid': 'US:en'})}"
-    try:
-        res = httpx.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0 (Jarvis Intel)"})
-        if not res.is_success:
-            logger.warning("intel search %s: HTTP %s", terms[:40], res.status_code)
-            return []
-        root = ET.fromstring(res.content)
-    except Exception:  # noqa: BLE001 — one failed search is one empty group
-        logger.warning("intel search failed", exc_info=True)
-        return []
-
-    vetted = set(domains)
-    items = []
+    root, note = _fetch(f"{GOOGLE_NEWS}?{urllib.parse.urlencode({'q': query, 'hl': 'en-US', 'gl': 'US', 'ceid': 'US:en'})}")
+    if root is None:
+        return [], note
+    vetted, items = set(domains), []
     for item in root.iter("item"):
         source = item.find("source")
         source_name = (source.text or "").strip() if source is not None else ""
@@ -133,20 +143,70 @@ def search(terms: str, domains: list[str], window: str = WINDOW, names: dict[str
         suffix = f" - {source_name}"
         if source_name and title.endswith(suffix):
             title = title[: -len(suffix)].strip()
-        try:
-            published = parsedate_to_datetime(item.findtext("pubDate") or "").astimezone(timezone.utc)
-        except Exception:  # noqa: BLE001
-            published = None
         items.append(
             {
                 "title": title,
                 "url": (item.findtext("link") or "").strip(),
                 # The vetted list's name ("Bloomberg"), not Google's ("bloomberg.com").
-                "source": (names or {}).get(domain) or source_name or domain,
+                "source": names.get(domain) or source_name or domain,
                 "domain": domain,
-                "published_at": published,
+                "published_at": _published(item.findtext("pubDate")),
             }
         )
+    return items, note
+
+
+def _bing(terms: str, domains: list[str], names: dict[str, str]) -> tuple[list[dict], str]:
+    """Bing News search, the fallback. Its links carry the publisher's own
+    URL, so the domain is checked against that."""
+    sites = " OR ".join(f"site:{d}" for d in domains)
+    params = {"q": f"({terms}) ({sites})", "format": "rss", "qft": 'interval="8"'}  # 8: the past week
+    root, note = _fetch(f"{BING_NEWS}?{urllib.parse.urlencode(params)}")
+    if root is None:
+        return [], note
+    vetted, items = set(domains), []
+    for item in root.iter("item"):
+        link = (item.findtext("link") or "").strip()
+        url = urllib.parse.parse_qs(urllib.parse.urlparse(link).query).get("url", [link])[0]
+        domain = _vetted_domain(url, vetted)
+        if not domain:
+            continue
+        source_name = next((c.text or "" for c in item if c.tag.split("}")[-1] == "Source"), "").strip()
+        items.append(
+            {
+                "title": (item.findtext("title") or "").strip(),
+                "url": url,
+                "source": names.get(domain) or source_name or domain,
+                "domain": domain,
+                "published_at": _published(item.findtext("pubDate")),
+            }
+        )
+    return items, note
+
+
+def search(
+    terms: str,
+    domains: list[str],
+    window: str = WINDOW,
+    names: dict[str, str] | None = None,
+    notes: list[str] | None = None,
+) -> list[dict]:
+    """News search for `terms`, limited to `domains`: Google News first, Bing
+    News if Google fails or finds nothing. Never raises. What each provider
+    answered goes into `notes`, for the refresh's report and the log."""
+    if not domains:
+        return []
+    names = names or {}
+    items, google_note = _google(terms, domains, window, names)
+    if items:
+        if notes is not None:
+            notes.append(f"google {google_note} {len(items)}")
+        return items
+    items, bing_note = _bing(terms, domains, names)
+    note = f"google {google_note} 0, bing {bing_note} {len(items)}"
+    logger.info("intel search %r: %s", terms[:40], note)
+    if notes is not None:
+        notes.append(note)
     return items
 
 
@@ -197,17 +257,22 @@ def refresh_intel() -> dict:
 
     client = get_supabase_client()
     counts = {}
+    report: dict[str, dict[str, str]] = {}
     for category, (_label, terms, groups, pattern) in CATEGORIES.items():
         found: list[dict] = []
+        report[category] = {}
         for group in groups:
-            found.extend(search(terms, by_group.get(group, []), names=names))
-            time.sleep(0.5)  # polite to Google News between searches
+            notes: list[str] = []
+            found.extend(search(terms, by_group.get(group, []), names=names, notes=notes))
+            report[category][group] = "; ".join(notes)
+            time.sleep(0.5)  # polite to the news search between requests
         chosen = pick(found, pattern, groups_of)
         counts[category] = len(chosen)
         if not chosen:
             continue
         fetched = datetime.now(timezone.utc).isoformat()
-        client.table("intel_articles").delete().eq("category", category).execute()
+        # The new set goes in before the old comes out, so a reader never
+        # finds the category empty mid-refresh.
         client.table("intel_articles").insert(
             [
                 {
@@ -222,7 +287,11 @@ def refresh_intel() -> dict:
                 for c in chosen
             ]
         ).execute()
-    return {"ok": True, "articles": counts}
+        client.table("intel_articles").delete().eq("category", category).neq("fetched_at", fetched).execute()
+    logger.info("intel refresh: %s", counts)
+    # What each search answered, so an empty category can be told apart:
+    # a provider refusing (HTTP 429, "not a feed"), timing out, or no news.
+    return {"ok": True, "articles": counts, "searches": report}
 
 
 def _shape(row: dict) -> dict:
@@ -240,7 +309,7 @@ def stored_intel() -> dict:
         get_supabase_client()
         .table("intel_articles")
         .select("category,title,url,source,published_at,fetched_at")
-        .order("published_at", desc=True)
+        .order("published_at", desc=True, nullsfirst=False)
         .execute()
         .data
         or []

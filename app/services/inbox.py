@@ -113,7 +113,7 @@ def add_item(
                 "tool": tool,
                 "args": args,
                 "session_id": session_id,
-                "topic": topic if topic in ("rounds", "markets", "signals") else "rounds",
+                "topic": topic if topic in ("rounds", "markets", "signals", "security") else "rounds",
             }
         )
         .execute()

@@ -31,12 +31,16 @@ export function loadFaceScanner(onStep?: (step: string) => void): Promise<void> 
     onStep?.("LOADING FACE MESH")
     const vision = await import("@mediapipe/tasks-vision")
     const fileset = await vision.FilesetResolver.forVisionTasks(WASM_BASE)
-    landmarker = await vision.FaceLandmarker.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: LANDMARKER_MODEL, delegate: "GPU" },
-      runningMode: "VIDEO",
+    const options = (delegate: "GPU" | "CPU") => ({
+      baseOptions: { modelAssetPath: LANDMARKER_MODEL, delegate },
+      runningMode: "VIDEO" as const,
       numFaces: 2,
       outputFaceBlendshapes: true,
     })
+    // GPU where it works; some machines (no WebGL2, blocked drivers) need the CPU.
+    landmarker = await vision.FaceLandmarker.createFromOptions(fileset, options("GPU")).catch(() =>
+      vision.FaceLandmarker.createFromOptions(fileset, options("CPU"))
+    )
     onStep?.("LOADING RECOGNITION MODEL")
     // face-api picks its WebGL backend itself.
     const api = await import("@vladmandic/face-api")

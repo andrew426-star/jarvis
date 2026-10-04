@@ -41,6 +41,7 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "rounds", label: "ROUNDS" },
   { id: "markets", label: "MARKETS" },
   { id: "signals", label: "SIGNALS" },
+  { id: "security", label: "SECURITY" },
 ]
 
 export function InboxPanel({
