@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from app.core.local_time import LOCAL_TZ
@@ -31,6 +32,26 @@ ROUND_REQUEST = (
     "proposal for any action you would take for him, as the exact tool call. "
     "Already in his inbox, so do not file again: {pending}"
 )
+
+
+# The lite models sometimes write a call out as a tag in their reply
+# (`<propose title="..." tool="..." args_json='{...}'/>`) instead of making
+# it, then say it is filed. Those are filed here through the same handlers,
+# so the same checks and the same approval gate apply.
+_TAG = re.compile(r"<(propose|notify)\b((?:[^>\"']|\"[^\"]*\"|'[^']*')*)/?>", re.IGNORECASE)
+_ATTR = re.compile(r"(\w+)\s*=\s*(?:\"([^\"]*)\"|'([^']*)')")
+
+
+def file_written_calls(text: str, handlers: dict) -> int:
+    filed = 0
+    for name, attrs in _TAG.findall(text or ""):
+        args = {key: double if double or not single else single for key, double, single in _ATTR.findall(attrs)}
+        result = handlers[name.lower()](args)
+        if result.get("filed"):
+            filed += 1
+        else:
+            logger.info("written %s not filed: %s", name, result)
+    return filed
 
 
 def get_settings_row() -> dict:
@@ -79,6 +100,9 @@ def run_rounds(force: bool = False) -> dict:
         pending=json.dumps(pending, default=str) if pending else "nothing.",
     )
     result = run_invoke(request, session_id, channel="autonomy", tool_override=(schemas, handlers))
+    salvaged = file_written_calls(result.get("response", ""), handlers)
+    if salvaged:
+        logger.warning("rounds: filed %d call(s) the model wrote as text", salvaged)
     announce(filed)
     return {
         "ok": True,

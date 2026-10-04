@@ -465,7 +465,9 @@ ROUNDS_MODE = (
     "can read anything; you cannot change anything yourself. Use notify for what he should know "
     "and propose for an action you would take, written as the exact tool call, with why. Be "
     "discreet: interrupt him only for what matters today, never repeat what is already in his inbox, "
-    "and a round where everything is in order should file nothing at all. Your final reply is a "
+    "and a round where everything is in order should file nothing at all. propose and notify are "
+    "tools: call them. Writing <propose> or <notify> in your reply is not filing, and never say "
+    "something is filed unless the tool call returned filed. Your final reply is a "
     "short log of what you checked and what you filed; it is not shown to him unless he asks."
 )
 
