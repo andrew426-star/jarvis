@@ -80,7 +80,15 @@ export function InboxPanel({ token, onAuthError }: { token: string; onAuthError:
     try {
       const outcome = await runRoundsNow(token)
       const filed = outcome.filed?.length ?? 0
-      setNote(outcome.skipped ?? (filed ? `Round done: ${filed} filed.` : "Round done: nothing needed you."))
+      const unread = outcome.failed_reads ?? []
+      setNote(
+        outcome.skipped ??
+          (outcome.blind
+            ? `Round could not see enough: ${unread.join(", ")} failed to load. Try again shortly.`
+            : `${filed ? `Round done: ${filed} filed.` : "Round done: nothing needed you."}${
+                unread.length ? ` (Could not read ${unread.join(", ")}.)` : ""
+              }`)
+      )
       await useInbox.getState().refresh(token)
       setSettings(await getAutonomy(token))
     } catch (err) {

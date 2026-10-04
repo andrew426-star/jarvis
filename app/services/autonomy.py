@@ -104,9 +104,17 @@ def run_rounds(force: bool = False) -> dict:
     if salvaged:
         logger.warning("rounds: filed %d call(s) the model wrote as text", salvaged)
     announce(filed)
+    # A round that could not read is not a round where all was well: say
+    # which sources failed rather than "nothing needed you".
+    reads = [r for r in result.get("tool_results", []) if r["name"] not in ("propose", "notify")]
+    failed = sorted(
+        {r["name"] for r in reads if isinstance(r["result"], dict) and r["result"].get("ok") is False and not r["result"].get("held")}
+    )
     return {
         "ok": True,
         "filed": filed,
+        "failed_reads": failed,
+        "blind": bool(reads) and len(failed) * 2 > len({r["name"] for r in reads}),
         "log": result.get("response", ""),
         "tools_used": result.get("tools_used", []),
     }

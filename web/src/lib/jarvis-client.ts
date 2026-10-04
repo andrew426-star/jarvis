@@ -678,7 +678,16 @@ export async function setAutonomy(
 }
 
 /** A round now, whatever the hour: a full agent turn, so it takes a while. */
-export async function runRoundsNow(token: string): Promise<{ ok: boolean; filed?: InboxItem[]; log?: string; skipped?: string }> {
+export async function runRoundsNow(token: string): Promise<{
+  ok: boolean
+  filed?: InboxItem[]
+  log?: string
+  skipped?: string
+  /** Sources the round tried to read and could not. */
+  failed_reads?: string[]
+  /** Most sources failed: the round saw too little to judge. */
+  blind?: boolean
+}> {
   const res = await jarvisFetch("/autonomy/run", token, { method: "POST" })
   return await res.json()
 }
