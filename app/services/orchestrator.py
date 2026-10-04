@@ -64,6 +64,7 @@ _TOOL_STATUS = {
     "browser": "Looking at your browser",
     "showcase": "Preparing the display",
     "notes": "Opening your notes",
+    "history": "Checking the log",
 }
 
 # Per-result size guard on what goes back to the model. The full result
@@ -71,7 +72,7 @@ _TOOL_STATUS = {
 TOOL_RESULT_CHAR_CAP = 4000
 # Except where the content IS the point: a source file cut at 4000
 # characters cannot be reviewed.
-_TOOL_CAPS = {"files": 24_000, "browser": 24_000, "notes": 24_000}
+_TOOL_CAPS = {"files": 24_000, "browser": 24_000, "notes": 24_000, "history": 24_000}
 
 # Separate, independent pool from FastAPI/Starlette's own threadpool (which
 # is what actually runs this sync route across concurrent requests) — this

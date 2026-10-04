@@ -7,6 +7,7 @@ from app.tools.github import github
 from app.tools.google_titan import google_titan
 from app.tools.kivaro_pipeline import kivaro_pipeline
 from app.tools.habits import habits
+from app.tools.history import HISTORY_SCHEMA, history
 from app.tools.italian import italian
 from app.tools.kiv_tasks import kiv_tasks
 from app.tools.speech_coach import speech_coach
@@ -613,6 +614,7 @@ TOOL_SCHEMAS = [
     FILES_SCHEMA,
     BROWSER_SCHEMA,
     NOTES_SCHEMA,
+    HISTORY_SCHEMA,
 ]
 
 DISPATCH = {
@@ -638,4 +640,5 @@ DISPATCH = {
     "files": files,
     "browser": browser,
     "notes": notes,
+    "history": history,
 }
