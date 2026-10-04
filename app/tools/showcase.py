@@ -16,6 +16,8 @@ from app.tools.notes import save_note
 
 KINDS = ["equation", "text", "code", "file", "image"]
 MAX_CONTENT_CHARS = 60_000
+# How much of the window's text rides along in CONSOLE_STATE each message.
+MAX_STATE_CONTENT = 5000
 # Text files only: everything here is written by the model as text.
 FILE_TYPES = {
     "txt": "text/plain", "md": "text/markdown", "csv": "text/csv", "json": "application/json",
@@ -149,4 +151,13 @@ def state_line(state: dict | None) -> str | None:
     showing = (state or {}).get("showcase")
     if not isinstance(showing, dict):
         return None
-    return f"Showcase window open: \"{str(showing.get('title'))[:80]}\" ({showing.get('kind')})."
+    title = str(showing.get("title"))[:80]
+    # Consoles from before `open` was sent only ever sent the open window.
+    where = "Showcase window open" if showing.get("open", True) else "Last showcase window (closed now)"
+    line = f"{where}: \"{title}\" ({showing.get('kind')})."
+    content = str(showing.get("content") or "").strip()[:MAX_STATE_CONTENT]
+    if content:
+        # The questions he is answering usually live here and nowhere else:
+        # the reply that put them up said only "on screen".
+        line += f" Its exact contents:\n<<<\n{content}\n>>>"
+    return line

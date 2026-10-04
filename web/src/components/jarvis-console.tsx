@@ -55,7 +55,7 @@ import { emitCore } from "@/lib/core-events"
 import { startHands, stopHands } from "@/lib/hand-tracking"
 import { stopNarration } from "@/lib/narration"
 import { sfx, unlockAudio } from "@/lib/sfx"
-import { useShowcase, type ShowcaseItem } from "@/lib/showcase-store"
+import { onScreenText, useShowcase, type ShowcaseItem } from "@/lib/showcase-store"
 import { SpeechQueue } from "@/lib/speech-queue"
 import { useSpatial } from "@/lib/spatial-store"
 import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store"
@@ -416,12 +416,7 @@ function Shell({
         canSpeak: () => useJarvis.getState().status === "idle",
         onRemark: remark,
         // The window he is working from, often the questions on the board.
-        onScreen: () => {
-          const { items, activeId } = useShowcase.getState()
-          const item = items.find((i) => i.id === activeId) ?? items.at(-1)
-          if (!item || item.kind === "image") return ""
-          return `${item.title}\n${item.content ?? ""}`.slice(0, 5000)
-        },
+        onScreen: onScreenText,
         onError: (message) => {
           pushLog("WARN", `Watch: ${message}`)
           notify("warning", "Watch hit a snag", message)

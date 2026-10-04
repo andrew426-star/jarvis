@@ -22,7 +22,7 @@ from app.memory.semantic_recall import get_relevant_context, record_interaction
 from app.memory.session_buffer import append_turn, count_turns, get_recent_turns
 from app.services.browser_link import context_line as browser_context_line
 from app.services.situation import situation_note
-from app.tools.camera import CAMERA_LOOK_SCHEMA, CAMERA_ON_NOTE, make_camera_look
+from app.tools.camera import CAMERA_LOOK_SCHEMA, CAMERA_ON_NOTE, CHECK_WORK, CHECK_WORK_LOOK, make_camera_look
 from app.tools.console_control import (
     CONSOLE_CONTROL_NOTE,
     CONSOLE_SCHEMA,
@@ -588,10 +588,13 @@ def stream_invoke(
     # History keeps a note of what was attached, not the files themselves.
     if attachments:
         message = f"{message}\n[Attached: {', '.join(a['name'] for a in attachments)}]"
-    # Look pressed: describe the frame before the first call, so the answer
-    # is grounded in it even if the model would not have thought to ask.
-    if look and camera_look is not None:
-        args = {"question": message}
+    # Look pressed, or his work to be checked: describe the frame before
+    # the first call, so the answer is grounded in it even if the model
+    # would not have thought to ask. Checking work gets a transcription,
+    # not a summary, so every answer is there to mark.
+    checking = camera_look is not None and bool(CHECK_WORK.search(message))
+    if (look or checking) and camera_look is not None:
+        args = {"question": f"{CHECK_WORK_LOOK}\n(He asked: {message})" if checking else message}
         result = camera_look(args)
         tools_used.append("camera_look")
         tool_call_trace.append({"name": "camera_look", "args": args, "result": result})

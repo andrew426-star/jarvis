@@ -1,3 +1,4 @@
+import re
 from collections.abc import Callable
 
 from app.core.gemini import AllModelsExhausted, GeminiNotConfigured
@@ -36,7 +37,27 @@ CAMERA_ON_NOTE = (
     "camera_look. When a question is about what is in front of him, look rather than "
     "guess, then answer from what the look returned and say what you saw, confidently "
     "where it is clear and plainly where it is not. Never claim to see something the "
-    "look did not report."
+    "look did not report.\n"
+    "CHECKING HIS ANSWERS: his answers are whatever a camera_look in THIS reply read off "
+    "the board - never ones you expect him to have written. The questions are the ones you "
+    "set him, word for word, from the showcase window in CONSOLE_STATE or the conversation - "
+    "never new ones. Match by number. Where the look could not read an answer, say so for "
+    "that number instead of guessing; if you cannot find the questions, say that and ask."
+)
+
+# A message asking for his written work to be checked. The look is taken
+# before the model runs, so a model that would skip camera_look (lite ones
+# did, and graded answers it invented) still answers from the board.
+CHECK_WORK = re.compile(
+    r"\b(check|grade|mark|score|review|go over|correct)\b.*\b(answers?|work|board|responses?|solutions?|quiz)\b"
+    r"|\b(grade|mark) (this|that|it|me)\b|\bhow did i do\b|\bdid i get\b",
+    re.IGNORECASE,
+)
+CHECK_WORK_LOOK = (
+    "Transcribe exactly what is handwritten on the board or paper, item by item, keeping his "
+    "numbering. Copy each answer as written, mistakes included - do not correct, complete or "
+    "interpret it. Mark an item [unreadable] or [blocked] where you cannot read it, and list "
+    "numbers that seem to be missing."
 )
 
 

@@ -54,9 +54,24 @@ export const useShowcase = create<ShowcaseState>((set, get) => ({
   },
 }))
 
-/** The open window, as Jarvis sees it in CONSOLE_STATE. */
+/** The open window, or the last one shown if he closed it. Often the
+ * questions he is answering on the board, so its text travels with each
+ * message: without it Jarvis knew only the title, and "check my answers"
+ * had nothing to check against. */
 export function showcaseState() {
   const { items, activeId } = useShowcase.getState()
-  const active = items.find((item) => item.id === activeId)
-  return active ? { title: active.title, kind: active.kind } : null
+  const item = items.find((i) => i.id === activeId) ?? items.at(-1)
+  if (!item) return null
+  return {
+    title: item.title,
+    kind: item.kind,
+    open: item.id === activeId,
+    content: item.kind === "image" ? "" : (item.content ?? "").slice(0, 5000),
+  }
+}
+
+/** The same window as plain text, for watch's looks. */
+export function onScreenText() {
+  const state = showcaseState()
+  return state?.content ? `${state.title}\n${state.content}` : ""
 }
