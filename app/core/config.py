@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # "low" instead (app/core/gemini.py).
     gemini_thinking_level: str = "minimal"
     gemini_image_models: str = "gemini-3.1-flash-image,gemini-3.1-flash-lite-image,gemini-3-pro-image"
+    # A key from a project with billing on, for the image models alone. The
+    # free tier gives them no quota at all (every call is a 429 "check your
+    # plan and billing"), and billing the main key would start charging for
+    # every chat turn too. Unset: images use GEMINI_API_KEY.
+    gemini_image_api_key: str | None = None
 
     supabase_url: str
     supabase_service_role_key: str

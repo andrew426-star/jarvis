@@ -73,8 +73,11 @@ _slow_thinkers: set[str] = set()
 
 
 @lru_cache
-def get_gemini_client() -> genai.Client:
-    key = get_settings().gemini_api_key
+def get_gemini_client(images: bool = False) -> genai.Client:
+    """The client for the agent ladder, or with `images` for the image
+    models, which use GEMINI_IMAGE_API_KEY when it is set (see config)."""
+    settings = get_settings()
+    key = (images and settings.gemini_image_api_key) or settings.gemini_api_key
     if not key:
         raise GeminiNotConfigured("GEMINI_API_KEY is not set.")
     return genai.Client(api_key=key, http_options=types.HttpOptions(timeout=CALL_TIMEOUT_MS))
@@ -131,12 +134,13 @@ def generate(
     prefer: str | None = None,
     only: str | None = None,
     models: list[str] | None = None,
+    images: bool = False,
 ):
     """generate_content on the best available model. Returns (response,
     model). `prefer` tries that model first. `only` allows that model and
     no other, for a turn whose history is bound to it; if it is out of
     quota this raises AllModelsExhausted instead of falling through."""
-    client = get_gemini_client()
+    client = get_gemini_client(images)
     # `models` swaps in a different ladder (the image models) with the same
     # quota handling.
     candidates = models or ladder()

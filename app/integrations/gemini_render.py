@@ -64,6 +64,7 @@ def _image(contents: list) -> dict:
         contents,
         types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
         models=models,
+        images=True,
     )
     image = None
     note = []
