@@ -410,6 +410,13 @@ def state_note(state: dict | None) -> str | None:
         )
         + f"audio {'muted' if state.get('muted') else 'on'}."
         + (
+            " His CAMERA WINDOW FILLS THE SCREEN, so the chat is hidden: anything longer than a "
+            "sentence - lists, checked answers, steps, code - must go in a showcase window, or he "
+            "will not see it."
+            if state.get("camera_fills_screen")
+            else ""
+        )
+        + (
             " Workshop and camera are both up: when he asks you to model, capture or copy what he "
             "is showing, use workshop capture."
             if state.get("workshop_open") and state.get("camera_on")

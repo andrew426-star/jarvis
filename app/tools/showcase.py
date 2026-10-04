@@ -67,7 +67,9 @@ SHOWCASE_NOTE = (
     "cannot say them. Then keep the reply short and point at it (\"On screen, sir.\"), adding "
     "only what is worth saying aloud. Do not repeat the window's contents in the reply. Short "
     "plain answers still go in the chat as usual. If CONSOLE_STATE lists a window open, that is "
-    "what he is looking at."
+    "what he is looking at. Saying something is on screen does not put it there: never say "
+    "\"on screen\" or \"in the window\" unless you called showcase in this same reply. Checked "
+    "answers, marked questions and lists of results are things to look at - showcase them."
 )
 
 

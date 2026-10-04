@@ -199,6 +199,7 @@ export function consoleState() {
     workshop_open: spatial.workshopOpen,
     workshop_items: spatial.workshopOpen && workshop ? workshop.items() : [],
     camera_on: spatial.cameraOn,
+    camera_fills_screen: spatial.cameraFocused,
     hands_on: spatial.handsStatus === "tracking",
     watching: spatial.watching,
     showcase: showcaseState(),

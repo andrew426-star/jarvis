@@ -415,6 +415,13 @@ function Shell({
         sessionId,
         canSpeak: () => useJarvis.getState().status === "idle",
         onRemark: remark,
+        // The window he is working from, often the questions on the board.
+        onScreen: () => {
+          const { items, activeId } = useShowcase.getState()
+          const item = items.find((i) => i.id === activeId) ?? items.at(-1)
+          if (!item || item.kind === "image") return ""
+          return `${item.title}\n${item.content ?? ""}`.slice(0, 5000)
+        },
         onError: (message) => {
           pushLog("WARN", `Watch: ${message}`)
           notify("warning", "Watch hit a snag", message)
@@ -436,6 +443,29 @@ function Shell({
     spatial.setWatching(level)
     pushLog("OK", `Watching the board (${level})`)
     if (first) notify("info", "Watching the board", "Jarvis will speak up when he spots something worth saying.")
+  }
+
+  // A reply he cannot otherwise see goes in the showcase window: one that
+  // says it is on screen when no window was opened (the lite models do
+  // this), or a long one while the camera covers the chat or he is in the
+  // workshop. Session only - unlike a showcase call, it is not saved to Drive.
+  function showReplyIfHidden(asked: string, reply: string, results: { name: string; result: unknown }[]) {
+    const shown = results.some((entry) => entry.name === "showcase" && (entry.result as { ok?: boolean } | null)?.ok)
+    if (shown) return
+    const body = reply.replace(/^\s*on (your )?screen(,\s*sir)?[.!]?\s*/i, "").trim()
+    const claimed = /\b(on (your )?screen|in the window|displayed)\b/i.test(reply)
+    const spatial = useSpatial.getState()
+    const covered = spatial.cameraFocused || spatial.workshopOpen
+    if ((claimed && body.length > 120) || (covered && body.length > 280)) {
+      const title = asked.replace(/\s+/g, " ").trim()
+      useShowcase.getState().add({
+        kind: "text",
+        title: title.length > 60 ? `${title.slice(0, 57)}...` : title || "Jarvis",
+        content: body,
+        time: clockTime(),
+      })
+      pushLog("NONE", "Reply put on screen")
+    }
   }
 
   // An unprompted remark: a soft chime, then into the chat and spoken.
@@ -609,6 +639,8 @@ function Shell({
         }
         return finished
       })
+
+      showReplyIfHidden(text, result.response, result.tool_results)
 
       // Render's free tier sleeps after 15 minutes. A multi-second first
       // call is the instance waking up, not Jarvis thinking slowly, and

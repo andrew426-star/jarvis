@@ -49,8 +49,11 @@ interface SpatialState {
   hovered: string | null
   /** The full-screen 3D workshop is open. */
   workshopOpen: boolean
+  /** The camera window is focused, filling the console: the chat is hidden. */
+  cameraFocused: boolean
 
   setWorkshopOpen: (open: boolean) => void
+  setCameraFocused: (focused: boolean) => void
   setCameraOn: (on: boolean) => void
   setWatching: (level: WatchLevel | null) => void
   setWatchLooking: (looking: boolean) => void
@@ -107,8 +110,10 @@ export const useSpatial = create<SpatialState>((set, get) => ({
   grabbed: [],
   hovered: null,
   workshopOpen: false,
+  cameraFocused: false,
 
   setWorkshopOpen: (workshopOpen) => set({ workshopOpen }),
+  setCameraFocused: (cameraFocused) => set({ cameraFocused }),
   setCameraOn: (cameraOn) => set({ cameraOn }),
   setWatching: (watching) => set({ watching, watchLooking: false }),
   setWatchLooking: (watchLooking) => set({ watchLooking }),

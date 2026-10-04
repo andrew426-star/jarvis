@@ -167,6 +167,13 @@ export function CameraPreview({
     }
   })
   const docked = workshopOpen && !focused
+  // Jarvis is told when the camera covers the chat, so he puts what is
+  // longer than a sentence in a window instead (lib/console-commands.ts).
+  const covering = cameraOn && focused
+  useEffect(() => {
+    useSpatial.getState().setCameraFocused(covering)
+    return () => useSpatial.getState().setCameraFocused(false)
+  }, [covering])
   const flippedRef = useRef(false)
   useEffect(() => {
     flippedRef.current = layout?.flipped ?? false

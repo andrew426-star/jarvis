@@ -18,6 +18,9 @@ class ObserveRequest(BaseModel):
     notes: str = Field(default="", max_length=4000)
     recent_remarks: list[str] = Field(default_factory=list, max_length=10)
     still_seconds: int = Field(default=0, ge=0, le=86_400)
+    # What he has open in the showcase window, often the questions he is
+    # answering on the board.
+    on_screen: str = Field(default="", max_length=6000)
 
 
 # Watch mode's look at the whiteboard (app/services/watch.py). Sync for
@@ -33,6 +36,7 @@ def watch_observe(request: ObserveRequest) -> dict:
             request.notes,
             request.recent_remarks,
             request.still_seconds,
+            request.on_screen,
         )
     except GeminiNotConfigured as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

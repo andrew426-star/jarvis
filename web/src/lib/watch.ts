@@ -29,11 +29,13 @@ const CHANGE_SHARE = 0.003 // since the last look: something new (~28 pixels)
 const SETTLE_MS = 3000
 const MIN_LOOK_GAP_MS = 20_000
 // Whatever the thumbnails say, a settled board is looked at this often:
-// change detection can miss faint or small writing, and a look that finds
-// nothing new costs one quiet call.
-const PERIODIC_LOOK_MS = 90_000
+// change detection can miss faint or small writing. Each look is a call on
+// the same free daily quota as chat, though: at every 90 seconds (and up
+// to 90 an hour) an evening of watching used up the best models, and chat
+// fell to the lite ones, which claim to open windows they never open.
+const PERIODIC_LOOK_MS = 4 * 60_000
 // No more than this many looks an hour, whatever the board does.
-const MAX_LOOKS_PER_HOUR = 90
+const MAX_LOOKS_PER_HOUR = 40
 const STUCK_MS = 5 * 60_000
 const BACKOFF_MS = 2 * 60_000
 
@@ -53,6 +55,8 @@ export interface WatchHost {
   onError: (message: string) => void
   /** A look is out (true) or back (false, with what he made of it). */
   onLook?: (looking: boolean, result?: { spoke: boolean; notes: string }) => void
+  /** What is on screen for him (the showcase window), sent with each look. */
+  onScreen?: () => string
 }
 
 interface Watch {
@@ -142,6 +146,7 @@ async function look(current: Watch, sample: Float32Array, now: number) {
       notes: current.notes,
       recent_remarks: current.remarks,
       still_seconds: Math.round((now - current.lastChangeAt) / 1000),
+      on_screen: current.host.onScreen?.() ?? "",
     })
     if (watch !== current) return
     current.baseline = sample

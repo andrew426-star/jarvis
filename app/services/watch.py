@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from google.genai import types
 
 from app.core.gemini import generate
-from app.memory.session_buffer import append_turn
+from app.memory.interaction_log import write_interaction
+from app.memory.session_buffer import append_turn, get_recent_turns
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,15 @@ LEVELS = {
 }
 
 MAX_NOTES_CHARS = 1200
+WATCH_PROMPT_LINE = "(No message: Jarvis was watching Andrew's whiteboard and spoke up on his own.)"
 MAX_MESSAGE_CHARS = 400
+# What rides along from the console and the conversation, so a look knows
+# what he is working on: the questions Jarvis put on screen, and what was
+# just said. Without it a look saw answers with no questions to check
+# them against, and stayed quiet.
+MAX_ON_SCREEN_CHARS = 3000
+CONVERSATION_TURNS = 4
+TURN_CHARS = 500
 
 PROMPT = """You are J.A.R.V.I.S., Andrew's assistant, quietly watching his whiteboard through \
 his webcam while he does schoolwork. You were not asked anything. Decide whether to say something \
@@ -50,6 +59,17 @@ is "new" when your SESSION NOTES do not yet record it: record it there once you 
 it, so each problem is introduced only once. If the board is unreadable, blocked by him, or not schoolwork, stay silent. If \
 something is wrong, point at where and what, briefly - let him fix it himself unless he is badly \
 stuck. Check arithmetic and algebra yourself, step by step, before claiming an error.
+
+If ON SCREEN or the CONVERSATION holds questions or a task you set him, the board is most likely \
+his answers to them: match each answer to its question, and when new answers have appeared since \
+your notes, say which are right and which are wrong (and where), briefly - that is exactly what he \
+wants from you, and it clears the bar. Record in your notes which ones you have checked.
+
+ON SCREEN (what is open in his showcase window; may be empty):
+{on_screen}
+
+CONVERSATION (the last few exchanges; may be empty):
+{conversation}
 
 SESSION NOTES so far (your own running notes; may be empty):
 {notes}
@@ -78,6 +98,20 @@ def _parse(text: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _conversation(session_id: str) -> str:
+    try:
+        turns = get_recent_turns(session_id) or []
+    except Exception:  # noqa: BLE001 — a look without history is still a look
+        return "(none)"
+    lines = []
+    for turn in turns[-CONVERSATION_TURNS * 2 :]:
+        who = "Andrew" if turn.get("role") == "user" else "You"
+        text = " ".join(str(turn.get("content") or "").split())[:TURN_CHARS]
+        if text:
+            lines.append(f"{who}: {text}")
+    return "\n".join(lines) or "(none)"
+
+
 def observe(
     session_id: str,
     image_b64: str,
@@ -86,6 +120,7 @@ def observe(
     notes: str,
     recent_remarks: list[str],
     still_seconds: int,
+    on_screen: str = "",
 ) -> dict:
     """One look at the board. Returns {speak, message, confidence, notes}.
     `speak` is already held to the level's bar, so the console can act on
@@ -96,6 +131,8 @@ def observe(
         notes=(notes or "").strip()[:MAX_NOTES_CHARS] or "(none yet)",
         remarks="\n".join(f"- {r}" for r in recent_remarks[-5:]) or "(none)",
         still=max(0, int(still_seconds)),
+        on_screen=(on_screen or "").strip()[:MAX_ON_SCREEN_CHARS] or "(nothing open)",
+        conversation=_conversation(session_id),
     )
     response, model = generate(
         [types.Part.from_bytes(data=base64.b64decode(image_b64), mime_type=media_type), prompt],
@@ -122,14 +159,23 @@ def observe(
 
     if speak:
         # Into the session's history, so "what do you mean?" right after has
-        # something to refer to.
-        append_turn(
-            session_id,
-            str(uuid.uuid4()),
-            "(No message: Jarvis was watching Andrew's whiteboard and spoke up on his own.)",
-            message,
-            datetime.now(timezone.utc).isoformat(),
-        )
+        # something to refer to, and into the durable log, so "what did you
+        # do yesterday?" (app/tools/history.py) includes what he said here.
+        turn_id = str(uuid.uuid4())
+        append_turn(session_id, turn_id, WATCH_PROMPT_LINE, message, datetime.now(timezone.utc).isoformat())
+        try:
+            write_interaction(
+                interaction_id=turn_id,
+                session_id=session_id,
+                user_message=WATCH_PROMPT_LINE,
+                assistant_response=message,
+                tools_used=["watch"],
+                tool_call_trace=[],
+                model=model,
+                latency_ms=0,
+            )
+        except Exception:  # noqa: BLE001 — the remark still goes out
+            logger.warning("watch: could not log the remark", exc_info=True)
     return {
         "speak": speak,
         "message": message if speak else "",

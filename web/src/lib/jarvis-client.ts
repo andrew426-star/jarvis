@@ -338,6 +338,8 @@ export async function observeBoard(
     notes: string
     recent_remarks: string[]
     still_seconds: number
+    /** What is open in the showcase window, e.g. the questions being answered. */
+    on_screen: string
   }
 ): Promise<ObserveResult> {
   const res = await jarvisFetch("/watch/observe", token, {
