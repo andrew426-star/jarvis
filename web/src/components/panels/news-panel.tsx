@@ -6,7 +6,7 @@ import { ExternalLinkIcon, RadioIcon } from "lucide-react"
 
 import {
   JarvisAuthError,
-  getNews,
+  getIntel,
   NEWS_CATEGORIES,
   type NewsArticle,
   type NewsResult,
@@ -57,20 +57,25 @@ export function NewsPanel({ token, onAuthError, liveNews }: NewsPanelProps) {
   const [error, setError] = useState<string | null>(null)
   const [syncedAt, setSyncedAt] = useState<Date | null>(null)
 
-  // One request per theme, in parallel. State is only set once the
-  // requests settle, so the mount effect can start it directly; the
-  // Refresh button also turns the spinner back on first.
-  function fetchCategories() {
-    return Promise.all(NEWS_CATEGORIES.map((c) => getNews(token, c.query)))
-      .then((results) => {
+  // One request for every theme: the articles the hourly Intel refresh
+  // stored (app/services/intel.py), the same ones K.I.V.'s Intel Hub shows.
+  // Stale or empty, the server starts a refresh, and this checks back.
+  function fetchCategories(): Promise<void> {
+    return getIntel(token)
+      .then((result) => {
+        if (!result.ok) {
+          setError(result.error ?? "Could not load news.")
+          return
+        }
         setCategories(
-          NEWS_CATEGORIES.map((c, i) => ({
+          NEWS_CATEGORIES.map((c) => ({
             id: c.id,
             label: c.label,
-            articles: results[i].ok ? (results[i].articles ?? []) : [],
+            articles: result.categories?.[c.id] ?? [],
           })),
         )
-        setSyncedAt(new Date())
+        setSyncedAt(result.fetched_at ? new Date(result.fetched_at) : new Date())
+        if (result.refreshing) setTimeout(() => void fetchCategories(), 30_000)
       })
       .catch((err) => {
         if (err instanceof JarvisAuthError) {

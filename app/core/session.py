@@ -114,3 +114,44 @@ def verify_browser_token(token: str, generation: int) -> str | None:
         return None
     email = body.get("email")
     return email if isinstance(email, str) else None
+
+
+# The unlock token: what the console uses for everything once it is past
+# its lock (app/api/routes/unlock.py). A Google session proves who is
+# signing in, and on its own only opens the lock: the PIN on the phone, the
+# face scan on the desktop. Short-lived, so a lost or left-open device
+# locks itself again. `method` records which factor opened it.
+UNLOCK_MAX_AGE_SECONDS = 12 * 60 * 60
+
+
+def issue_unlock_token(email: str, method: str) -> tuple[str, int]:
+    expires = int(time.time()) + UNLOCK_MAX_AGE_SECONDS
+    return _issue({"email": email, "scope": "unlock", "m": method, "exp": expires}), expires
+
+
+def verify_unlock_token(token: str) -> str | None:
+    body = _verify(token)
+    if body is None or body.get("scope") != "unlock":
+        return None
+    email = body.get("email")
+    return email if isinstance(email, str) else None
+
+
+def expired_unlock_email(token: str) -> str | None:
+    """The email of a genuine unlock token that has run out (the console
+    should lock again rather than sign out); None for anything else. The
+    signature is checked before the payload is read."""
+    secret = get_settings().jarvis_session_secret
+    parts = token.split(".")
+    if not secret or len(parts) != 2 or not hmac.compare_digest(parts[1], _sign(parts[0], secret)):
+        return None
+    try:
+        body = json.loads(_b64d(parts[0]))
+    except ValueError:
+        return None
+    if not isinstance(body, dict) or body.get("scope") != "unlock":
+        return None
+    exp, email = body.get("exp"), body.get("email")
+    if not isinstance(exp, int) or exp >= int(time.time()) or not isinstance(email, str):
+        return None
+    return email

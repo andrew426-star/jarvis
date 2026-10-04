@@ -16,7 +16,7 @@ from app.tools.speech_coach import speech_coach
 from app.tools.launch_tracker import launch_tracker
 from app.tools.market_analysis import market_analysis
 from app.tools.market_history import MARKET_HISTORY_SCHEMA, market_history
-from app.tools.news_feed import news_feed
+from app.tools.news_feed import NEWS_FEED_SCHEMA, news_feed
 from app.tools.notes import NOTES_SCHEMA, notes
 from app.tools.portfolio import portfolio
 from app.tools.spotify import spotify
@@ -475,33 +475,7 @@ TOOL_SCHEMAS = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "news_feed",
-            "description": (
-                "Get recent news headlines — defaults to potential market moves, AI tools/LLM "
-                "updates, and shifts in hedge funds, private equity, venture capital, or the AI "
-                "field, or pass a specific query."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": (
-                            "Search query. Omit for the default market-moves/AI-tools-LLM/"
-                            "hedge-fund-PE-VC-AI feed. When choosing your own query for a "
-                            "general news request, prefer these same themes unless the user "
-                            "asks about something else specifically."
-                        ),
-                    },
-                    "page_size": {"type": "integer", "description": "Number of articles to return. Default 8."},
-                },
-                "required": [],
-            },
-        },
-    },
+    NEWS_FEED_SCHEMA,
     {
         "type": "function",
         "function": {

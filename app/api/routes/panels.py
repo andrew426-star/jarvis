@@ -1,8 +1,11 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends
 
 from app.core.auth import require_access_token
 from app.tools.market_analysis import market_analysis
 from app.tools.market_history import market_history
+from app.services.intel import refresh_in_background, stored_intel
 from app.tools.news_feed import news_feed
 from app.tools.portfolio import portfolio
 from app.tools.trade_signals import trade_signals
@@ -12,6 +15,11 @@ from app.tools.trade_signals import trade_signals
 # show real data the instant it's opened, without asking Jarvis anything
 # first. These tool functions already never raise ({"ok": False, ...} on
 # failure), so no extra error handling is needed here.
+
+# Older than this, opening Intel starts a refresh (the hourly one may have
+# found Render asleep).
+INTEL_STALE = timedelta(hours=2)
+
 router = APIRouter(prefix="/panels", dependencies=[Depends(require_access_token)])
 
 
@@ -28,6 +36,21 @@ def panel_market_history(symbol: str, range: str = "1M") -> dict:  # noqa: A002 
 @router.get("/trades")
 def panel_trades() -> dict:
     return trade_signals({})
+
+
+@router.get("/intel")
+def panel_intel() -> dict:
+    """The Intel categories as the last refresh stored them. Stale (or never
+    filled), a refresh starts in the background; this answer does not wait."""
+    try:
+        intel = stored_intel()
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+    fetched = intel.get("fetched_at")
+    stale = not fetched or datetime.now(timezone.utc) - datetime.fromisoformat(fetched) > INTEL_STALE
+    if stale:
+        refresh_in_background()
+    return {**intel, "refreshing": stale}
 
 
 @router.get("/news")

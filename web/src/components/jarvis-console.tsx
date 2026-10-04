@@ -22,6 +22,7 @@ import { HandCursors } from "@/components/spatial/hand-cursors"
 import { HologramLayer } from "@/components/spatial/hologram-layer"
 import { Workshop } from "@/components/workshop/workshop"
 import { TopBar } from "@/components/hud/top-bar"
+import { FaceGate } from "@/components/lock/face-gate"
 import { LoginGate } from "@/components/login-gate"
 import type { MicButtonHandle } from "@/components/mic-button"
 import { MarketsPanel } from "@/components/panels/markets-panel"
@@ -33,6 +34,7 @@ import {
   JarvisApiError,
   JarvisAuthError,
   JarvisNetworkError,
+  getMarketHistory,
   getStatus,
   type MarketHistory,
   type MarketSnapshot,
@@ -69,6 +71,7 @@ import { snoozeWatch, startWatch, stopWatch } from "@/lib/watch"
 import { loadLinkedFolders, startFolderSync, useLinkedFolders } from "@/lib/linked-folders"
 import { resolveAuth, subscribeAuth } from "@/lib/auth-state"
 import { clearSession, clearStoredToken } from "@/lib/storage"
+import { useAutoRelock, useLock } from "@/lib/lock-state"
 
 // "Not now", "quiet", "hush, Jarvis": while he is watching, a short line
 // like this snoozes him rather than going out as a message.
@@ -88,10 +91,14 @@ export function JarvisConsole() {
   // Set by a rejected token or an explicit sign-out; signing back in goes
   // through the Google redirect, which reloads the page and resets this.
   const [signedOut, setSignedOut] = useState(false)
+  // Past the face scan: the short-lived token the API accepts (lock-state.ts).
+  const unlock = useLock((state) => state.unlock)
+  useAutoRelock(30 * 60_000)
 
   function handleAuthError() {
     clearStoredToken()
     clearSession()
+    useLock.getState().lock()
     setSignedOut(true)
   }
 
@@ -102,13 +109,16 @@ export function JarvisConsole() {
 
   if (status === "resolving") return <div style={{ height: "100vh" }} />
   if (status === "unauthenticated" || !token) return <LoginGate loginError={loginError} />
+  // Signed in with Google, which only opens the lock: the desktop's is a
+  // face scan (components/lock/face-gate.tsx), checked by the server.
+  if (!unlock) return <FaceGate sessionToken={token} onSignOut={handleAuthError} />
 
   // Keyed on the token so signing out and back in remounts the shell and
   // replays the boot sequence rather than snapping to a live HUD.
   return (
     <Shell
-      key={token}
-      token={token}
+      key={unlock.token}
+      token={unlock.token}
       sessionId={sessionId}
       onAuthError={handleAuthError}
       onSignOut={handleAuthError}
@@ -813,7 +823,16 @@ function Shell({
           <NotesPanel token={token} onAuthError={onAuthError} />
         </div>
         <div className={activeTab === "inbox" ? "" : "hidden"} style={{ fontSize: 13 }}>
-          <InboxPanel token={token} onAuthError={onAuthError} />
+          <InboxPanel
+            token={token}
+            onAuthError={onAuthError}
+            onOpenSymbol={(symbol) => {
+              useJarvis.getState().setActiveTab("markets")
+              getMarketHistory(symbol, token, "1D")
+                .then(setLiveMarketHistory)
+                .catch(() => {})
+            }}
+          />
         </div>
       </DataWindow>
 

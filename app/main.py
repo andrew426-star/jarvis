@@ -12,6 +12,7 @@ from app.api.routes.checklists import router as checklists_router
 from app.api.routes.files import router as files_router
 from app.api.routes.google_auth import router as google_auth_router
 from app.api.routes.google_login import router as google_login_router
+from app.api.routes.intel import router as intel_router
 from app.api.routes.invoke import router as invoke_router
 from app.api.routes.notes import router as notes_router
 from app.api.routes.panels import router as panels_router
@@ -19,6 +20,8 @@ from app.api.routes.spotify_auth import router as spotify_auth_router
 from app.api.routes.speak import router as speak_router
 from app.api.routes.status import router as status_router
 from app.api.routes.transcribe import router as transcribe_router
+from app.api.routes.unlock import router as unlock_router
+from app.api.routes.updates import router as updates_router
 from app.api.routes.verify import router as verify_router
 from app.api.routes.watch import router as watch_router
 from app.api.routes.zoho_auth import router as zoho_auth_router
@@ -44,6 +47,7 @@ app.add_middleware(
 )
 
 app.include_router(invoke_router)
+app.include_router(intel_router)
 app.include_router(brief_router)
 app.include_router(autonomy_router)
 app.include_router(browser_router)
@@ -59,6 +63,8 @@ app.include_router(panels_router)
 app.include_router(notes_router)
 app.include_router(status_router)
 app.include_router(transcribe_router)
+app.include_router(unlock_router)
+app.include_router(updates_router)
 app.include_router(zoho_auth_router)
 
 

@@ -8,7 +8,13 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import get_settings
 from app.core.redis_client import get_redis_client
-from app.core.session import is_allowed, verify_browser_token, verify_session
+from app.core.session import (
+    is_allowed,
+    expired_unlock_email,
+    verify_browser_token,
+    verify_session,
+    verify_unlock_token,
+)
 from app.core.supabase_client import get_supabase_client
 
 _bearer = HTTPBearer(auto_error=False)
@@ -33,16 +39,44 @@ def require_access_token(
     so "open by accident" must not be reachable.
     """
     provided = credentials.credentials if credentials else None
-    if not provided or not has_full_access(provided):
+    if not provided:
         raise _unauthorized()
+    if has_full_access(provided):
+        return
+    # Signed in but not past the lock (or its unlock ran out): 423, so the
+    # console shows its lock screen instead of signing out.
+    if is_signed_in(provided) or is_allowed(expired_unlock_email(provided)):
+        raise _locked()
+    raise _unauthorized()
 
 
 def has_full_access(provided: str) -> bool:
-    session_email = verify_session(provided)
-    if session_email and is_allowed(session_email):
+    """An unlock token for an allowed address (the console, past its PIN or
+    face scan), or JARVIS_ACCESS_TOKEN (curl and scripts). A Google session
+    alone is not enough since the locks: it only opens them."""
+    unlocked_email = verify_unlock_token(provided)
+    if unlocked_email and is_allowed(unlocked_email):
         return True
     expected = get_settings().jarvis_access_token
     return bool(expected and hmac.compare_digest(provided, expected))
+
+
+def is_signed_in(provided: str) -> bool:
+    email = verify_session(provided)
+    return bool(email and is_allowed(email))
+
+
+def require_signed_in(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> str:
+    """For the lock itself (app/api/routes/unlock.py): a Google session for
+    an allowed address, or an unlock token (to re-enrol a face while in).
+    Returns the email."""
+    provided = credentials.credentials if credentials else None
+    email = (verify_session(provided) or verify_unlock_token(provided)) if provided else None
+    if not email or not is_allowed(email):
+        raise _unauthorized()
+    return email
 
 
 # --- The browser extension's scoped token (app/core/session.py) ----------
@@ -134,6 +168,10 @@ def require_routine_access(
         if expected and hmac.compare_digest(digest, expected):
             return
     require_access_token(credentials)
+
+
+def _locked() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_423_LOCKED, detail="Locked. Unlock with your PIN or face scan.")
 
 
 def _unauthorized() -> HTTPException:

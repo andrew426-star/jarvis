@@ -20,6 +20,7 @@ import { CoreCipher } from "@/components/hud/core-cipher"
 import { GlobalEffects } from "@/components/hud/global-effects"
 import { HolographicGrid } from "@/components/hud/holographic-grid"
 import { InboxPanel } from "@/components/inbox/inbox-panel"
+import { PinGate } from "@/components/lock/pin-gate"
 import { MicButton, type MicButtonHandle } from "@/components/mic-button"
 import { ReplyCards } from "@/components/reply-cards"
 import { ThinkingIndicator } from "@/components/thinking-indicator"
@@ -28,6 +29,7 @@ import { BAND_COUNT, audioAmplitude, audioBands } from "@/lib/audio-amplitude"
 import { resolveAuth, subscribeAuth } from "@/lib/auth-state"
 import { emitCore } from "@/lib/core-events"
 import { useInbox, useInboxSync } from "@/lib/inbox-store"
+import { useAutoRelock, useLock } from "@/lib/lock-state"
 import {
   JarvisApiError,
   JarvisAuthError,
@@ -149,6 +151,11 @@ export function MobileConsole() {
   const auth = useSyncExternalStore(subscribeAuth, resolveAuth, () => null)
   const [signedOut, setSignedOut] = useState(false)
 
+  // Past the PIN: the short-lived token the API accepts (lock-state.ts).
+  // The phone locks again after five minutes away.
+  const unlock = useLock((state) => state.unlock)
+  useAutoRelock(5 * 60_000)
+
   if (auth === null) return <div style={{ height: "100dvh" }} />
   if (signedOut || auth.status === "unauthenticated") {
     return <MobileSignIn loginError={auth.status === "unauthenticated" ? auth.loginError : null} />
@@ -157,13 +164,18 @@ export function MobileConsole() {
   function signOut() {
     clearStoredToken()
     clearSession()
+    useLock.getState().lock()
     try {
       window.localStorage.removeItem(THREAD_KEY)
     } catch {}
     setSignedOut(true)
   }
 
-  return <MobileChat token={auth.token} initialSessionId={auth.sessionId} onSignOut={signOut} />
+  // Signed in with Google, which only opens the lock: the phone's is a PIN
+  // (components/lock/pin-gate.tsx), checked by the server.
+  if (!unlock) return <PinGate sessionToken={auth.token} onSignOut={signOut} />
+
+  return <MobileChat key={unlock.token} token={unlock.token} initialSessionId={auth.sessionId} onSignOut={signOut} />
 }
 
 function MobileSignIn({ loginError }: { loginError: string | null }) {

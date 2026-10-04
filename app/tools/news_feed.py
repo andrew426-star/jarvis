@@ -1,93 +1,72 @@
 import json
 
-import httpx
-
-from app.core.config import get_settings
 from app.core.redis_client import get_redis_client
+from app.services.intel import CATEGORIES, search_vetted, stored_intel
 
-NEWSAPI_BASE = "https://newsapi.org/v2/everything"
-# Matches kiv-console's own newsapi.ts QUERY, verbatim — same curation:
-# potential market moves, AI tools/LLM updates, and shifts in hedge
-# funds, PE, VC, or the AI field, not a generic fintech/AI grab-bag.
-DEFAULT_QUERY = (
-    '"hedge fund" OR "private equity" OR "venture capital" OR "large language model" '
-    'OR "generative AI" OR "Federal Reserve" OR "market volatility"'
-)
-CACHE_TTL_SECONDS = 14400  # 4h — matches kiv-console's own NEWS_CACHE_LIFE.revalidate
+# News for Jarvis, from the vetted outlets in intel_sources only (rated for
+# credibility and lean; see supabase/migrations/0010). With no query, the
+# Intel briefing the hourly refresh stored, the same articles K.I.V.'s Intel
+# Hub shows (app/services/intel.py). With a query ("news on Nvidia"), a live
+# search across those outlets, cached for an hour.
 
-# Bump this whenever the request shape changes (searchIn, domains, any
-# param below) without the query TEXT itself changing — e.g. tightening
-# MAINSTREAM_DOMAINS. The cache key is keyed on query text, so a
-# request-shape-only change is otherwise invisible to it and Redis (unlike
-# kiv-console's Next.js cache, which auto-invalidates on every deploy via
-# its own build ID) keeps serving pre-change results for up to
-# CACHE_TTL_SECONDS after a real deploy. Confirmed live: this exact gap
-# served stale non-mainstream-source results for a full deploy cycle
-# before the cache was manually flushed.
-CACHE_KEY_VERSION = "v3"
+CACHE_TTL_SECONDS = 3600
+CACHE_KEY_VERSION = "v4"  # bump when the search changes shape
+PER_CATEGORY_IN_BRIEFING = 2
 
-# Mainstream outlets only — matches kiv-console's own MAINSTREAM_DOMAINS
-# verbatim. Andrew's ask: pull from recognizable sources (VentureBeat,
-# WSJ, etc.) rather than blogs/Hacker-News-style posts. Replaces the prior
-# pypi.org exclusion entirely — none of these domains are package-release
-# feeds, so the allowlist already covers that case and more.
-# Business Insider was dropped (Oct 2026): it was over a quarter of the
-# feed. PitchBook and The Information took its place, for the PE/VC and
-# tech-funding beats the Intel categories are about.
-MAINSTREAM_DOMAINS = ",".join([
-    "venturebeat.com", "wsj.com", "bloomberg.com", "reuters.com", "cnbc.com",
-    "techcrunch.com", "pitchbook.com", "theinformation.com", "ft.com", "forbes.com",
-    "fortune.com", "axios.com", "theverge.com", "marketwatch.com",
-])
+NEWS_FEED_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "news_feed",
+        "description": (
+            "Recent news from vetted outlets only (Reuters, WSJ, FT, Bloomberg, Barron's, "
+            "MarketWatch, The Economist, Fortune, Financial Post and trade outlets like Hedgeweek, "
+            "PitchBook and The Information; rated for credibility and lean). With no query: the "
+            "Intel briefing, the newest articles in each Intel category (market-moving signals, AI "
+            "tools and LLMs, hedge funds, private equity, venture capital and AI funding, AI "
+            "research), or one category. With a query: a search of those outlets for it."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What to search for. Omit for the Intel briefing."},
+                "category": {"type": "string", "enum": list(CATEGORIES), "description": "One Intel category."},
+                "page_size": {"type": "integer", "description": "How many articles for a query. Default 8."},
+            },
+            "required": [],
+        },
+    },
+}
 
 
 def news_feed(args: dict) -> dict:
-    query = str(args.get("query") or DEFAULT_QUERY).strip()
-    page_size = int(args.get("page_size") or 8)
-    cache_key = f"jarvis:newscache:{CACHE_KEY_VERSION}:{query.lower()}:{page_size}"
-
-    # Same NEWSAPI_KEY kiv-console already uses against its own 100-req/24h
-    # quota, which kiv-console's own history shows running tight — a Redis
-    # cache here keeps Jarvis's calls from adding pressure to that budget.
-    # A cache miss/outage falls through to a live call, never fails the tool.
+    query = str(args.get("query") or "").strip()
     try:
-        cached = get_redis_client().get(cache_key)
-        if cached:
-            return {"ok": True, "query": query, "articles": json.loads(cached), "cached": True}
-    except Exception:  # noqa: BLE001
-        pass
+        if not query:
+            intel = stored_intel()
+            category = args.get("category")
+            if category in intel["categories"]:
+                return {
+                    "ok": True,
+                    "query": CATEGORIES[category][0],
+                    "articles": intel["categories"][category],
+                    "fetched_at": intel["fetched_at"],
+                }
+            briefing = [a for articles in intel["categories"].values() for a in articles[:PER_CATEGORY_IN_BRIEFING]]
+            return {"ok": True, "query": "Intel briefing", "articles": briefing, "fetched_at": intel["fetched_at"]}
 
-    try:
-        res = httpx.get(
-            NEWSAPI_BASE,
-            params={
-                "q": query,
-                # Restricts matching to title/description rather than full
-                # article body — confirmed live against the real API that
-                # full-text matching (NewsAPI's default) pulls in a lot of
-                # noise that title/description matching cuts out almost
-                # entirely. Matches kiv-console's own fetchArticles().
-                "searchIn": "title,description",
-                "domains": MAINSTREAM_DOMAINS,
-                "language": "en",
-                "sortBy": "publishedAt",
-                "pageSize": page_size,
-                "apiKey": get_settings().newsapi_key,
-            },
-            timeout=15.0,
-        )
-        if not res.is_success:
-            return {"ok": False, "query": query, "error": res.text}
-        articles = [
-            {"title": a["title"], "url": a["url"], "source": a["source"]["name"], "published_at": a["publishedAt"]}
-            for a in res.json().get("articles", [])
-        ]
+        size = max(1, min(int(args.get("page_size") or 8), 12))
+        cache_key = f"jarvis:newscache:{CACHE_KEY_VERSION}:{query.lower()}:{size}"
+        try:
+            cached = get_redis_client().get(cache_key)
+            if cached:
+                return {"ok": True, "query": query, "articles": json.loads(cached), "cached": True}
+        except Exception:  # noqa: BLE001 — a cache outage falls through to a live search
+            pass
+        articles = search_vetted(query, size)
+        try:
+            get_redis_client().set(cache_key, json.dumps(articles), ex=CACHE_TTL_SECONDS)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": True, "query": query, "articles": articles}
     except Exception as exc:  # noqa: BLE001 — tool dispatch must never raise
-        return {"ok": False, "query": query, "error": str(exc)}
-
-    try:
-        get_redis_client().set(cache_key, json.dumps(articles), ex=CACHE_TTL_SECONDS)
-    except Exception:  # noqa: BLE001
-        pass
-
-    return {"ok": True, "query": query, "articles": articles}
+        return {"ok": False, "query": query or "Intel briefing", "error": str(exc)}

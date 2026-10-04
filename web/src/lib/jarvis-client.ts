@@ -1,3 +1,4 @@
+import { useLock, type Unlock } from "@/lib/lock-state"
 import { useJarvis } from "@/lib/store"
 
 // Empty string = same origin, which is the production shape: FastAPI
@@ -30,6 +31,15 @@ export class JarvisApiError extends Error {
   constructor(message: string) {
     super(message)
     this.name = "JarvisApiError"
+  }
+}
+
+/** Signed in but locked (423): the console shows its lock screen; this is
+ *  not a sign-out. */
+export class JarvisLockedError extends Error {
+  constructor() {
+    super("Locked.")
+    this.name = "JarvisLockedError"
   }
 }
 
@@ -73,6 +83,10 @@ async function jarvisFetch(path: string, token: string, init: RequestInit): Prom
   useJarvis.getState().setLatency(performance.now() - startedAt)
 
   if (res.status === 401) throw new JarvisAuthError()
+  if (res.status === 423) {
+    useLock.getState().lock()
+    throw new JarvisLockedError()
+  }
   if (!res.ok) throw new JarvisApiError(await extractErrorDetail(res))
   return res
 }
@@ -570,6 +584,22 @@ export async function getMarketHistory(
   return res.json()
 }
 
+/** The Intel categories as the hourly refresh stored them, from vetted
+ *  outlets (app/services/intel.py); the same articles K.I.V.'s Intel Hub shows. */
+export interface IntelResult {
+  ok: boolean
+  categories?: Record<string, NewsArticle[]>
+  fetched_at?: string | null
+  /** The stored set was stale or empty, and a refresh has started. */
+  refreshing?: boolean
+  error?: string
+}
+
+export async function getIntel(token: string): Promise<IntelResult> {
+  const res = await jarvisFetch("/panels/intel", token, { method: "GET", cache: "no-store" })
+  return res.json()
+}
+
 export async function getNews(token: string, query?: string): Promise<NewsResult> {
   const params = query ? `?${new URLSearchParams({ query })}` : ""
   const res = await jarvisFetch(`/panels/news${params}`, token, { method: "GET" })
@@ -688,6 +718,9 @@ export interface InboxItem {
   result: unknown
   created_at: string
   decided_at: string | null
+  /** rounds: what Jarvis's rounds filed; markets and signals: the 15-minute
+   *  market updates (app/services/market_updates.py). */
+  topic: "rounds" | "markets" | "signals"
 }
 
 export interface InboxResult {
@@ -779,4 +812,58 @@ export async function removePushSubscription(endpoint: string, token: string): P
 export async function testPush(token: string): Promise<{ ok: boolean; delivered: number }> {
   const res = await jarvisFetch("/push/test", token, { method: "POST" })
   return await res.json()
+}
+
+
+// ---- The lock (app/api/routes/unlock.py). Called with the Google session
+// token, which opens only these routes.
+
+export interface LockStatus {
+  ok: boolean
+  pin_set: boolean
+  face_enrolled: boolean
+  pin_locked_until: string | null
+  face_locked_until: string | null
+}
+
+export async function getLockStatus(sessionToken: string): Promise<LockStatus> {
+  const res = await jarvisFetch("/auth/lock", sessionToken, { method: "GET", cache: "no-store" })
+  return res.json()
+}
+
+type UnlockResponse = { unlock_token: string; expires_at: number; method: "pin" | "face"; distance?: number }
+
+function asUnlock(body: UnlockResponse): Unlock {
+  return { token: body.unlock_token, expiresAt: body.expires_at, method: body.method }
+}
+
+export async function unlockWithPin(pin: string, sessionToken: string): Promise<Unlock> {
+  const res = await jarvisFetch("/auth/unlock/pin", sessionToken, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pin }),
+  })
+  return asUnlock(await res.json())
+}
+
+export async function unlockWithFace(
+  descriptors: number[][],
+  liveness: { blinked: boolean; turned: boolean },
+  sessionToken: string
+): Promise<Unlock & { distance?: number }> {
+  const res = await jarvisFetch("/auth/unlock/face", sessionToken, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ descriptors, liveness }),
+  })
+  const body = (await res.json()) as UnlockResponse
+  return { ...asUnlock(body), distance: body.distance }
+}
+
+export async function enrollFace(pin: string, descriptors: number[][], sessionToken: string): Promise<void> {
+  await jarvisFetch("/auth/face/enroll", sessionToken, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pin, descriptors }),
+  })
 }

@@ -12,6 +12,7 @@ import {
   setAutonomy,
   testPush,
   type AutonomySettings,
+  type InboxItem,
 } from "@/lib/jarvis-client"
 import { disablePush, enablePush, pushStatus, type PushStatus } from "@/lib/push"
 
@@ -33,8 +34,30 @@ function hour(h: number): string {
   return `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? "am" : "pm"}`
 }
 
-export function InboxPanel({ token, onAuthError }: { token: string; onAuthError: () => void }) {
-  const { pending, recent, loaded, error } = useInbox()
+type Filter = "all" | InboxItem["topic"]
+
+const FILTERS: { id: Filter; label: string }[] = [
+  { id: "all", label: "ALL" },
+  { id: "rounds", label: "ROUNDS" },
+  { id: "markets", label: "MARKETS" },
+  { id: "signals", label: "SIGNALS" },
+]
+
+export function InboxPanel({
+  token,
+  onAuthError,
+  onOpenSymbol,
+}: {
+  token: string
+  onAuthError: () => void
+  /** Charts a market or signal notice's symbol (the desktop's Markets panel). */
+  onOpenSymbol?: (symbol: string) => void
+}) {
+  const { pending: allPending, recent: allRecent, loaded, error } = useInbox()
+  const [filter, setFilter] = useState<Filter>("all")
+  const shown = (item: InboxItem) => filter === "all" || (item.topic ?? "rounds") === filter
+  const pending = allPending.filter(shown)
+  const recent = allRecent.filter(shown)
   const [settings, setSettings] = useState<AutonomySettings | null>(null)
   const [push, setPush] = useState<PushStatus | null>(null)
   const [busy, setBusy] = useState<"rounds" | "push" | "toggle" | "refresh" | null>(null)
@@ -215,6 +238,28 @@ export function InboxPanel({ token, onAuthError }: { token: string; onAuthError:
         )}
       </section>
 
+      <div className="flex flex-wrap" style={{ gap: "0.4em" }} role="tablist" aria-label="Inbox topics">
+        {FILTERS.map((f) => {
+          const count =
+            f.id === "all" ? allPending.length : allPending.filter((p) => (p.topic ?? "rounds") === f.id).length
+          return (
+            <button
+              key={f.id}
+              type="button"
+              role="tab"
+              aria-selected={filter === f.id}
+              className="btn"
+              data-active={filter === f.id}
+              style={{ minHeight: "2.2em", padding: "0 0.9em", fontSize: "0.8em" }}
+              onClick={() => setFilter(f.id)}
+            >
+              {f.label}
+              {count > 0 && <span style={{ color: "var(--warning)", marginLeft: 6 }}>{count}</span>}
+            </button>
+          )
+        })}
+      </div>
+
       <div className="flex items-center" style={{ gap: "0.5em" }}>
         <span className="t-panel-header" style={{ color: "var(--accent)" }}>
           WAITING ON YOU
@@ -238,11 +283,13 @@ export function InboxPanel({ token, onAuthError }: { token: string; onAuthError:
       {!loaded ? (
         <p style={{ color: "var(--text-secondary)" }}>Loading…</p>
       ) : pending.length === 0 ? (
-        <p style={{ color: "var(--text-secondary)" }}>Nothing waiting, sir. Everything is in hand.</p>
+        <p style={{ color: "var(--text-secondary)" }}>
+          {filter === "all" ? "Nothing waiting, sir. Everything is in hand." : "Nothing waiting under " + filter + "."}
+        </p>
       ) : (
         <div className="flex flex-col" style={{ gap: "0.6em" }}>
           {pending.map((item) => (
-            <InboxItemCard key={item.id} item={item} token={token} onAuthError={onAuthError} />
+            <InboxItemCard key={item.id} item={item} token={token} onAuthError={onAuthError} onOpenSymbol={onOpenSymbol} />
           ))}
         </div>
       )}
@@ -254,7 +301,7 @@ export function InboxPanel({ token, onAuthError }: { token: string; onAuthError:
           </span>
           <div className="flex flex-col" style={{ gap: "0.6em" }}>
             {recent.map((item) => (
-              <InboxItemCard key={item.id} item={item} token={token} onAuthError={onAuthError} />
+              <InboxItemCard key={item.id} item={item} token={token} onAuthError={onAuthError} onOpenSymbol={onOpenSymbol} />
             ))}
           </div>
         </>

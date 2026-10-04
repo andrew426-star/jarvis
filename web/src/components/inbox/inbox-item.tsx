@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { BellIcon, CheckIcon, Loader2Icon, WandSparklesIcon, XIcon } from "lucide-react"
+import { BellIcon, CandlestickChartIcon, CheckIcon, Loader2Icon, WandSparklesIcon, XIcon } from "lucide-react"
 
 import { ChecklistCard } from "@/components/checklist-card"
 import { ToolBadge } from "@/components/tool-badge"
@@ -32,14 +32,23 @@ function age(iso: string): string {
   return hours < 24 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`
 }
 
+const TOPIC_LABEL: Record<InboxItem["topic"], string> = {
+  rounds: "Rounds",
+  markets: "Markets",
+  signals: "Signals",
+}
+
 export function InboxItemCard({
   item: initial,
   token,
   onAuthError,
+  onOpenSymbol,
 }: {
   item: InboxItem
   token: string
   onAuthError: () => void
+  /** Charts a notice's symbol in Markets (the desktop; the phone has no panels). */
+  onOpenSymbol?: (symbol: string) => void
 }) {
   // A card in an old chat reply follows the live inbox once it has loaded.
   const live = useInbox((state) => state.pending.find((p) => p.id === initial.id) ?? state.recent.find((r) => r.id === initial.id))
@@ -97,7 +106,7 @@ export function InboxItemCard({
         <div className="min-w-0 flex-1">
           <div style={{ color: "var(--text-primary)", fontWeight: 500, lineHeight: 1.35 }}>{item.title}</div>
           <div className="t-label" style={{ color: "var(--text-secondary)", marginTop: "0.15em" }}>
-            {proposal ? "Proposal" : "Notice"} · {age(item.created_at)}
+            {TOPIC_LABEL[item.topic ?? "rounds"]} · {proposal ? "Proposal" : "Notice"} · {age(item.created_at)}
             {item.priority === "high" && <span style={{ color: "var(--warning)" }}> · Urgent</span>}
             {!pending && <span> · {STATUS_LABEL[item.status]}</span>}
           </div>
@@ -105,7 +114,9 @@ export function InboxItemCard({
       </header>
 
       {item.body && (
-        <p style={{ color: "var(--text-secondary)", lineHeight: 1.45, marginTop: "0.45em" }}>{item.body}</p>
+        <p style={{ color: "var(--text-secondary)", lineHeight: 1.45, marginTop: "0.45em", whiteSpace: "pre-line" }}>
+          {item.body}
+        </p>
       )}
 
       {proposal && item.tool && (
@@ -159,6 +170,18 @@ export function InboxItemCard({
               </button>
             </>
           ) : (
+            <>
+              {onOpenSymbol && typeof item.args?.symbol === "string" && (
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ minHeight: "2.6em", padding: "0 1em", fontSize: "0.85em" }}
+                  onClick={() => onOpenSymbol(item.args!.symbol as string)}
+                >
+                  <CandlestickChartIcon size="1em" />
+                  CHART
+                </button>
+              )}
             <button
               type="button"
               className="btn"
@@ -169,6 +192,7 @@ export function InboxItemCard({
               {busy === "dismiss" ? <Loader2Icon size="1em" className="animate-spin" /> : <CheckIcon size="1em" />}
               GOT IT
             </button>
+            </>
           )}
         </div>
       )}

@@ -101,6 +101,11 @@ can switch rounds on or off, run a round now, and turn notifications on
 for that device. Notifications use Web Push (`app/services/push.py`,
 `web/public/sw.js`). On an iPhone they only work in the home-screen app.
 
+Every 15 minutes the inbox also gets market and signal updates
+(`app/services/market_updates.py`): a new K.I.V. scan and its top trades,
+a top trade reaching its target or stop, and big moves on the watchlist.
+Each is filed once. The inbox filters by topic: rounds, markets, signals.
+
 Setup, once:
 
 1. Apply `supabase/migrations/0008_jarvis_checklists.sql` and
@@ -109,6 +114,33 @@ Setup, once:
 2. Run `python scripts/make_vapid_keys.py` and set `VAPID_PUBLIC_KEY`,
    `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` (a `mailto:`) on the service.
    Without them the inbox works, but devices get no notifications.
+
+## Locks
+
+Signing in with Google only opens the lock. The phone asks for a PIN, the
+desktop for a face scan, and either gives the console a 12-hour unlock
+token, the only token the API accepts (`app/core/auth.py`). A Google
+session on its own gets `423 Locked`, so a stolen one is not enough.
+The console locks itself again when the token runs out, after five
+minutes away on the phone, and after 30 minutes away on the desktop.
+
+- **PIN** (`app/services/lock.py`): only a salted scrypt hash is stored,
+  in `jarvis_lock`. Set or change it with `python scripts/set_pin.py`.
+  Five wrong tries lock the PIN for 15 minutes, and each further five
+  doubles that.
+- **Face** (`web/src/components/lock/face-gate.tsx`): the scan runs in the
+  browser (MediaPipe's face mesh, face-api's descriptors). Only face
+  descriptors are sent, never images, and the server decides the match.
+  Each scan asks for a blink and a head turn, in a random order and
+  direction. The first scan enrols the face, and enrolling takes the PIN.
+
+Limits: the liveness steps run in the browser, so they stop a photo held
+up to the camera, not someone who already has your Google session and
+crafts the requests by hand. And the server accepts either factor from
+any device; which lock appears depends on the view.
+
+`JARVIS_ACCESS_TOKEN` (curl, the terminal CLI) and the browser
+extension's token are unaffected.
 
 ## Signing in
 

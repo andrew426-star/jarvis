@@ -35,6 +35,8 @@ def _shape(row: dict) -> dict:
         "result": row.get("result"),
         "created_at": row.get("created_at"),
         "decided_at": row.get("decided_at"),
+        # rounds (Jarvis's own), markets or signals (market_updates.py).
+        "topic": row.get("topic") or "rounds",
     }
 
 
@@ -91,6 +93,7 @@ def add_item(
     tool: str | None = None,
     args: dict | None = None,
     session_id: str | None = None,
+    topic: str = "rounds",
 ) -> dict | None:
     """Files a notice or proposal; None when the same one is already there."""
     title = " ".join(title.split())[:140] or ("Proposal" if kind == "proposal" else "Notice")
@@ -110,6 +113,7 @@ def add_item(
                 "tool": tool,
                 "args": args,
                 "session_id": session_id,
+                "topic": topic if topic in ("rounds", "markets", "signals") else "rounds",
             }
         )
         .execute()
