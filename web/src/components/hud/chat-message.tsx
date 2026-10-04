@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from "react"
 import { Loader2Icon, PinIcon, SquareIcon, Volume2Icon } from "lucide-react"
 
+import { ReplyCards } from "@/components/reply-cards"
 import { ToolBadge } from "@/components/tool-badge"
 import { startAudioAnalysis, stopAudioAnalysis } from "@/lib/audio-amplitude"
-import { JarvisAuthError, speak } from "@/lib/jarvis-client"
+import { JarvisAuthError, speak, type Checklist, type InboxItem } from "@/lib/jarvis-client"
 import { clearNarration, registerNarration, stopNarration } from "@/lib/narration"
 import { useSpatial } from "@/lib/spatial-store"
 import { useTypewriter } from "@/lib/use-typewriter"
@@ -27,6 +28,10 @@ export interface ChatMessageData {
   streaming?: boolean
   /** Files sent with a user message: names, and a thumbnail for images. */
   attachments?: { name: string; preview?: string }[]
+  /** Checklists the reply made or changed, shown as cards to tick. */
+  checklists?: Checklist[]
+  /** Inbox items the reply listed (the inbox tool), to approve or decline. */
+  inbox?: InboxItem[]
   reopenMicAfter?: boolean
 }
 
@@ -195,6 +200,7 @@ export function ChatMessage({
             {details}
           </div>
         )}
+        <ReplyCards message={message} token={token} onAuthError={onAuthError} />
       </div>
 
       <div

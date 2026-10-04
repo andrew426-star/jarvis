@@ -56,6 +56,60 @@ it go out on the `mobile` channel, which keeps replies short.
 To install it like an app: open the site in Safari, Share → Add to Home
 Screen. It opens full-screen, straight into the phone view.
 
+Keeping the two views in step:
+
+- One turn engine, `web/src/lib/turn.ts`, runs every message for both
+  views: streaming, speaking a sentence at a time, the "what he has said
+  so far" caption, and the cards a reply carries. Change it there and
+  both views get it.
+- Cards under a reply (checklists, inbox items) render from
+  `web/src/components/reply-cards.tsx` in both chats. A new kind of card
+  goes there.
+- New server tools reach the phone automatically. Only the console tools
+  (panels, workshop, camera, showcase) are desktop-only.
+- An open console notices a deploy (`web/src/lib/update-check.ts`). The
+  phone app reloads itself when it is idle, because its thread is saved.
+  The desktop shows a notice instead, because its chat is not saved.
+
+## Checklists
+
+Say or type a loose note ("pick up printer paper, email Dr. Lee about lab
+4, book the dentist") and Jarvis makes a checklist from it
+(`app/tools/checklist.py`, table `jarvis_checklists`). It shows as a card
+in the chat on both views, and items tick off with a tap. He can also
+add to a list, tick items off, show it, or archive it.
+
+## Rounds, inbox and notifications
+
+Every two hours outside quiet hours (10pm–8am Central by default), Jarvis
+makes his rounds on his own (`app/services/autonomy.py`). He looks over
+tasks, the launch, habits, calendar, mail and open lists, and files what
+he finds in the **inbox**:
+
+- **Notices**: things worth knowing now.
+- **Proposals**: one exact tool call he would make (send this email,
+  mark that task done), with why.
+
+He can read anything on rounds, but nothing that changes anything runs
+without you. `app/tools/rounds.py` enforces this in code: every write is
+refused there, and the only way through is a proposal that runs when you
+tap **Approve**. In a conversation he can list, decline or dismiss inbox
+items, but he cannot approve one.
+
+The inbox is a tab on the desktop and in the phone's menu. From it you
+can switch rounds on or off, run a round now, and turn notifications on
+for that device. Notifications use Web Push (`app/services/push.py`,
+`web/public/sw.js`). On an iPhone they only work in the home-screen app.
+
+Setup, once:
+
+1. Apply `supabase/migrations/0008_jarvis_checklists.sql` and
+   `0009_jarvis_autonomy.sql`. 0009 schedules the rounds in pg_cron, so
+   apply it after this code is deployed.
+2. Run `python scripts/make_vapid_keys.py` and set `VAPID_PUBLIC_KEY`,
+   `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` (a `mailto:`) on the service.
+   Without them the inbox works, but devices get no notifications.
+
 ## Signing in
 
 The console authenticates with Google, restricted to an allowlist. Three

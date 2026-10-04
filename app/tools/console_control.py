@@ -34,7 +34,7 @@ CONSOLE_ACTIONS = [
     "clear_holograms",
     "close_console",
 ]
-PANELS = {"markets", "intel", "assets", "notes"}
+PANELS = {"markets", "intel", "assets", "notes", "inbox"}
 WATCH_LEVELS = {"quiet", "normal", "coach"}
 MODES = {"normal", "serious"}
 
@@ -95,7 +95,7 @@ CONSOLE_SCHEMA = {
         "name": "console",
         "description": (
             "Operate Andrew's J.A.R.V.I.S. console in his browser: open or close the data "
-            "panels (markets, intel, assets, notes: his saved notes), open or close the 3D workshop, turn the camera "
+            "panels (markets, intel, assets, notes: his saved notes, inbox: what your rounds left for him), open or close the 3D workshop, turn the camera "
             "or hand tracking on or off, close the showcase window (close_showcase), start or stop watching his whiteboard (watch_on brings "
             "the camera up; target sets how readily you speak up: quiet | normal | coach; watch_snooze keeps you quiet "
             "for 15 minutes without stopping), switch between normal and serious mode, mute or "
@@ -117,7 +117,7 @@ CONSOLE_SCHEMA = {
                             "target": {
                                 "type": "string",
                                 "description": (
-                                    "open_panel: markets | intel | assets | notes. set_mode: normal | serious. "
+                                    "open_panel: markets | intel | assets | notes | inbox. set_mode: normal | serious. "
                                     "watch_on: quiet | normal | coach (default normal)."
                                 ),
                             },

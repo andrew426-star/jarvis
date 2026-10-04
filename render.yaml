@@ -86,6 +86,8 @@ services:
     #   FISH_AUDIO_API_KEY / FISH_AUDIO_VOICE_ID    -> /speak
     #   SPOTIFY_CLIENT_ID / _SECRET / _REDIRECT_URI / _OAUTH_STATE_SECRET
     #   ZOHO_CLIENT_ID / _SECRET / _REDIRECT_URI / _OAUTH_STATE_SECRET
+    #   VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT -> inbox push
+    #     (scripts/make_vapid_keys.py)
     # The two REDIRECT_URIs above are host-dependent in the same way
     # GOOGLE_REDIRECT_URI is.
     #

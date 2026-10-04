@@ -459,6 +459,16 @@ MOBILE_MODE = (
     "they are on the desktop console."
 )
 
+ROUNDS_MODE = (
+    "CHANNEL: ROUNDS. Andrew is not here. You are making your rounds on your own: looking over his "
+    "work so that what needs him reaches him, and what can move forward is ready for his yes. You "
+    "can read anything; you cannot change anything yourself. Use notify for what he should know "
+    "and propose for an action you would take, written as the exact tool call, with why. Be "
+    "discreet: interrupt him only for what matters today, never repeat what is already in his inbox, "
+    "and a round where everything is in order should file nothing at all. Your final reply is a "
+    "short log of what you checked and what you filed; it is not shown to him unless he asks."
+)
+
 _OUT_OF_TIME = (
     "My reasoning model is answering far too slowly at the moment, sir, so I stopped rather than "
     "keep you waiting. Would you ask again?"
@@ -491,6 +501,7 @@ def stream_invoke(
     look: bool = False,
     console_state: dict | None = None,
     attachments: list[dict] | None = None,
+    tool_override: tuple[list[dict], dict] | None = None,
 ) -> Iterator[dict]:
     """A turn as a stream of events, for /invoke/stream:
 
@@ -503,7 +514,10 @@ def stream_invoke(
 
     `image` is a base64 camera frame the console attaches while its camera
     is on; `look` means Andrew pressed Look, so the frame is described up
-    front instead of waiting for the model to ask for it."""
+    front instead of waiting for the model to ask for it.
+
+    `tool_override` replaces the tool set: the schemas and handlers rounds
+    run with (app/tools/rounds.py), where anything that writes is held."""
     session_id = session_id or str(uuid.uuid4())
     settings = get_settings()
     started = time.monotonic()
@@ -519,6 +533,8 @@ def stream_invoke(
         system.append(MOBILE_MODE)
     elif channel == "browser":
         system.append(BROWSER_MODE)
+    elif channel == "autonomy":
+        system.append(ROUNDS_MODE)
     # Where he is in his browser, when the extension is connected.
     browser_line = browser_context_line()
     if browser_line and channel != "terminal":
@@ -544,6 +560,9 @@ def stream_invoke(
         showing = state_line(console_state)
         if showing:
             system.append(showing)
+    if tool_override is not None:
+        declarations = [_declaration(schema) for schema in tool_override[0]]
+        handlers = tool_override[1]
     camera_look = None
     # The terminal has no camera, so a frame there could only be a bug.
     if image and channel == "console":

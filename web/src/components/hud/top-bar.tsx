@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react"
 
+import { useInbox } from "@/lib/inbox-store"
 import { sfx } from "@/lib/sfx"
 import { useSpatial } from "@/lib/spatial-store"
 import { useClock } from "@/lib/use-clock"
@@ -13,6 +14,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "intel", label: "Intel" },
   { key: "assets", label: "Assets" },
   { key: "notes", label: "Notes" },
+  { key: "inbox", label: "Inbox" },
 ]
 
 function Metric({ label, value, color }: { label: string; value: string; color?: string }) {
@@ -46,6 +48,7 @@ export function TopBar() {
   const muted = useSyncExternalStore(sfx.subscribeMuted, sfx.isMuted, () => false)
 
   const { activeTab, setActiveTab, mode, toggleMode, signals } = useJarvis()
+  const waiting = useInbox((state) => state.pending.length)
   const setWorkshopOpen = useSpatial((state) => state.setWorkshopOpen)
   // 0 until the first client tick - see use-clock.ts for why the clock
   // is an external store rather than state driven by an effect.
@@ -98,6 +101,11 @@ export function TopBar() {
               style={{ padding: "4px 12px" }}
             >
               {tab.label}
+              {tab.key === "inbox" && waiting > 0 && (
+                <span style={{ color: "var(--warning)", marginLeft: 6 }} aria-label={`${waiting} waiting`}>
+                  {waiting}
+                </span>
+              )}
             </button>
           ))}
           <button

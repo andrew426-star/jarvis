@@ -27,13 +27,13 @@ import type { MicButtonHandle } from "@/components/mic-button"
 import { MarketsPanel } from "@/components/panels/markets-panel"
 import { NewsPanel } from "@/components/panels/news-panel"
 import { NotesPanel } from "@/components/panels/notes-panel"
+import { InboxPanel } from "@/components/inbox/inbox-panel"
 import { PortfolioPanel } from "@/components/panels/portfolio-panel"
 import {
   JarvisApiError,
   JarvisAuthError,
   JarvisNetworkError,
   getStatus,
-  invokeStream,
   type MarketHistory,
   type MarketSnapshot,
   type NewsResult,
@@ -59,8 +59,11 @@ import { onScreenText, useShowcase, type ShowcaseItem } from "@/lib/showcase-sto
 import { SpeechQueue } from "@/lib/speech-queue"
 import { useSpatial } from "@/lib/spatial-store"
 import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store"
+import { runTurn } from "@/lib/turn"
 import { useBoot } from "@/lib/use-boot"
 import { useHeartbeat } from "@/lib/use-heartbeat"
+import { useUpdateCheck } from "@/lib/update-check"
+import { useInboxSync } from "@/lib/inbox-store"
 import { snoozeWatch, startWatch, stopWatch } from "@/lib/watch"
 import { loadLinkedFolders, startFolderSync, useLinkedFolders } from "@/lib/linked-folders"
 import { resolveAuth, subscribeAuth } from "@/lib/auth-state"
@@ -279,6 +282,34 @@ function Shell({
   // how much Jarvis remembers of this session: the chat on screen starts
   // empty after a reload, but the session and its memory carry on.
   useHeartbeat(token, sessionId, onAuthError)
+
+  // A deploy landed while the console was open. The chat on screen is not
+  // saved, so it is his call when to reload; said once per page.
+  const updateNoticed = useRef(false)
+  useUpdateCheck(() => {
+    if (updateNoticed.current) return
+    updateNoticed.current = true
+    pushLog("OK", "New console build deployed")
+    notify("info", "Console updated", "A new version of the console is live. Reload when convenient to use it.")
+  })
+
+  // What Jarvis's rounds leave for him (lib/inbox-store.ts): new items get
+  // a chime and a toast; a tapped notification opens the inbox.
+  useInboxSync(
+    token,
+    onAuthError,
+    (items) => {
+      sfx.confirm()
+      const lead = items[0]
+      notify(
+        lead.priority === "high" ? "warning" : "info",
+        items.length === 1 ? lead.title : `${items.length} new in your inbox`,
+        items.length === 1 ? lead.body || "In the inbox." : items.map((i) => i.title).join(" · ")
+      )
+      pushLog("OK", `Inbox: ${items.length} new from rounds`)
+    },
+    () => useJarvis.getState().setActiveTab("inbox")
+  )
 
   // Linked folders (Settings > Files) are kept in step while the console
   // is open. One that the browser wants re-approved is flagged once.
@@ -537,63 +568,30 @@ function Shell({
     emitCore({ kind: "send" })
     pushLog("NONE", viaVoice ? "Voice command received" : "Command received")
 
-    // The reply appears, and is spoken, while it is still being written.
-    // Its message goes in empty and fills as text arrives; the voice line
-    // (which the server sends first) is spoken a sentence at a time.
-    const replyId = crypto.randomUUID()
-    let replyShown = false
-    const updateReply = (change: (message: ChatMessageData) => ChatMessageData) => {
-      if (!replyShown) {
-        replyShown = true
-        setMessages((prev) => [
-          ...prev,
-          change({ id: replyId, role: "assistant", content: "", time: clockTime(), streaming: true }),
-        ])
-        return
-      }
-      setMessages((prev) => prev.map((m) => (m.id === replyId ? change(m) : m)))
-    }
-    // The bubble shows what he has said so far, a sentence at a time as
-    // each is heard. Cut off (barge-in) or finished, it shows all of it.
-    let interrupted = false
-    const sayAll = (m: ChatMessageData) => (m.said !== undefined && m.spoken ? { ...m, said: m.spoken } : m)
-    const voice = new SpeechQueue(token, {
-      onSay: (sentence) =>
-        updateReply((m) => ({ ...m, said: m.said ? `${m.said} ${sentence}` : sentence })),
-      onStart: () => setSpeaking(true),
-      onEnd: (completed) => {
-        if (!completed) interrupted = true
-        if (replyShown) updateReply(sayAll)
-        setSpeaking(false)
-        // After a spoken exchange the mic reopens for the answer, unless
-        // the speech was cut off by a barge-in (which opens it itself).
-        if (completed && viaVoice) micRef.current?.startRecording()
-      },
-      onAuthError,
-    })
-
     try {
-      const result = await invokeStream(
+      // Streaming, speech and the reply's cards: lib/turn.ts, shared with
+      // the phone view.
+      const { result } = await runTurn({
         text,
         sessionId,
         token,
-        { image: frame?.base64, look, consoleState: consoleState(), attachments },
-        (event) => {
-          if (event.type === "text") updateReply((m) => ({ ...m, content: m.content + event.delta }))
-          else if (event.type === "reset") updateReply((m) => ({ ...m, content: "" }))
-          else if (event.type === "spoken") {
-            voice.push(event.delta)
-            updateReply((m) => ({ ...m, spoken: (m.spoken ?? "") + event.delta, said: m.said ?? "" }))
-          }
-          else if (event.type === "tool") {
-            // Acted on the moment each tool finishes, not at the end: a
-            // panel or workshop change lands while he is still talking.
-            handleToolResults([{ name: event.name, result: event.result }])
-            emitCore({ kind: "tool", name: event.name })
-          }
-        }
-      )
-      voice.finish(result.spoken)
+        options: { image: frame?.base64, look, consoleState: consoleState(), attachments },
+        setMessages,
+        speak: true,
+        onAuthError,
+        onSpeakingChange: setSpeaking,
+        // After a spoken exchange the mic reopens for the answer, unless
+        // the speech was cut off by a barge-in (which opens it itself).
+        onVoiceEnd: (completed) => {
+          if (completed && viaVoice) micRef.current?.startRecording()
+        },
+        onTool: (entry) => {
+          // Acted on the moment each tool finishes, not at the end: a
+          // panel or workshop change lands while he is still talking.
+          handleToolResults([entry])
+          emitCore({ kind: "tool", name: entry.name })
+        },
+      })
       setContext(result.context_turns, result.context_window)
       // One line per turn in the system log: which step cost what, so a
       // slow reply can be pinned on the model, a tool, or memory.
@@ -619,22 +617,6 @@ function Shell({
         })
         pushLog("OK", "Frame analysed")
       }
-      // The finished reply replaces what streamed in: the server's final
-      // text is the authoritative one (tags stripped, whitespace settled).
-      updateReply((m) => {
-        const finished = {
-          ...m,
-          content: result.response,
-          spoken: result.spoken,
-          toolsUsed: result.tools_used,
-          streaming: false,
-          // No voice line: the screen text is the reply, as before. Cut off
-          // already: nothing more will be heard, so show the rest.
-          said: result.spoken?.trim() ? (interrupted ? result.spoken : (m.said ?? "")) : undefined,
-        }
-        return finished
-      })
-
       showReplyIfHidden(text, result.response, result.tool_results)
 
       // Render's free tier sleeps after 15 minutes. A multi-second first
@@ -649,8 +631,6 @@ function Shell({
         )
       }
     } catch (err) {
-      voice.stop()
-      if (replyShown) updateReply((m) => sayAll({ ...m, streaming: false }))
       if (err instanceof JarvisAuthError) {
         pushLog("ERR", "Session rejected")
         notify("warning", "Session expired", "Sign in again to continue.")
@@ -825,6 +805,9 @@ function Shell({
         </div>
         <div className={activeTab === "notes" ? "" : "hidden"}>
           <NotesPanel token={token} onAuthError={onAuthError} />
+        </div>
+        <div className={activeTab === "inbox" ? "" : "hidden"} style={{ fontSize: 13 }}>
+          <InboxPanel token={token} onAuthError={onAuthError} />
         </div>
       </DataWindow>
 

@@ -5,8 +5,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.routes.autonomy import router as autonomy_router
 from app.api.routes.brief import router as brief_router
 from app.api.routes.browser import router as browser_router
+from app.api.routes.checklists import router as checklists_router
 from app.api.routes.files import router as files_router
 from app.api.routes.google_auth import router as google_auth_router
 from app.api.routes.google_login import router as google_login_router
@@ -43,7 +45,9 @@ app.add_middleware(
 
 app.include_router(invoke_router)
 app.include_router(brief_router)
+app.include_router(autonomy_router)
 app.include_router(browser_router)
+app.include_router(checklists_router)
 app.include_router(files_router)
 app.include_router(google_auth_router)
 app.include_router(google_login_router)
@@ -94,14 +98,16 @@ class _ConsoleFiles(StaticFiles):
     previous build after a deploy. Pages revalidate on every load (a cheap
     304 via the ETag when nothing changed); /_next/static/ files carry a
     content hash in their names, so they are cached for good - which also
-    keeps the 11 MB OpenSCAD chunk from downloading more than once."""
+    keeps the 11 MB OpenSCAD chunk from downloading more than once. The
+    notification worker (sw.js) revalidates like a page, so a change to it
+    reaches devices on their next visit."""
 
     def file_response(self, full_path, stat_result, scope, status_code=200):
         response = super().file_response(full_path, stat_result, scope, status_code)
         path = scope.get("path", "")
         if path.startswith("/_next/static/"):
             response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-        elif str(full_path).endswith(".html") or path in ("", "/"):
+        elif str(full_path).endswith(".html") or path in ("", "/", "/sw.js"):
             response.headers["Cache-Control"] = "no-cache"
         return response
 

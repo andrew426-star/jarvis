@@ -23,6 +23,7 @@ const TOOL_LABELS: Record<string, string> = {
   workshop: "Workshop",
   watch: "Watching",
   showcase: "Display",
+  checklist: "Checklist",
 }
 
 // Same language as every other interactive-looking element: transparent

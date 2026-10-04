@@ -1,4 +1,5 @@
 from app.tools.calculator import calculator
+from app.tools.checklist import CHECKLIST_SCHEMA, checklist
 from app.tools.company_financials import company_financials
 from app.tools.database_agent import database_agent
 from app.tools.browser import BROWSER_SCHEMA, browser
@@ -8,6 +9,7 @@ from app.tools.google_titan import google_titan
 from app.tools.kivaro_pipeline import kivaro_pipeline
 from app.tools.habits import habits
 from app.tools.history import HISTORY_SCHEMA, history
+from app.tools.inbox import INBOX_SCHEMA, inbox
 from app.tools.italian import italian
 from app.tools.kiv_tasks import kiv_tasks
 from app.tools.speech_coach import speech_coach
@@ -615,6 +617,8 @@ TOOL_SCHEMAS = [
     BROWSER_SCHEMA,
     NOTES_SCHEMA,
     HISTORY_SCHEMA,
+    CHECKLIST_SCHEMA,
+    INBOX_SCHEMA,
 ]
 
 DISPATCH = {
@@ -641,4 +645,6 @@ DISPATCH = {
     "browser": browser,
     "notes": notes,
     "history": history,
+    "checklist": checklist,
+    "inbox": inbox,
 }

@@ -4,39 +4,46 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import {
   ArrowUpIcon,
   GridIcon,
+  InboxIcon,
   Loader2Icon,
   MonitorIcon,
   MoreVerticalIcon,
   RotateCcwIcon,
   ShieldAlertIcon,
   SquareIcon,
+  XIcon,
 } from "lucide-react"
 
 import { AudioVisualizer } from "@/components/hud/audio-visualizer"
+import type { ChatMessageData } from "@/components/hud/chat-message"
 import { CoreCipher } from "@/components/hud/core-cipher"
 import { GlobalEffects } from "@/components/hud/global-effects"
 import { HolographicGrid } from "@/components/hud/holographic-grid"
+import { InboxPanel } from "@/components/inbox/inbox-panel"
 import { MicButton, type MicButtonHandle } from "@/components/mic-button"
+import { ReplyCards } from "@/components/reply-cards"
 import { ThinkingIndicator } from "@/components/thinking-indicator"
 import { ToolBadge } from "@/components/tool-badge"
 import { BAND_COUNT, audioAmplitude, audioBands } from "@/lib/audio-amplitude"
 import { resolveAuth, subscribeAuth } from "@/lib/auth-state"
 import { emitCore } from "@/lib/core-events"
+import { useInbox, useInboxSync } from "@/lib/inbox-store"
 import {
   JarvisApiError,
   JarvisAuthError,
   JarvisNetworkError,
   googleLoginUrl,
-  invokeStream,
+  type InboxItem,
 } from "@/lib/jarvis-client"
 import { stopNarration } from "@/lib/narration"
-import { SpeechQueue } from "@/lib/speech-queue"
 import { clearSession, clearStoredToken, getOrCreateSessionId } from "@/lib/storage"
 import { clockTime, useJarvis, type AgentStatus } from "@/lib/store"
 import { centralTime } from "@/lib/time"
+import { runTurn } from "@/lib/turn"
 import { useBoot } from "@/lib/use-boot"
 import { useClock } from "@/lib/use-clock"
 import { useHeartbeat } from "@/lib/use-heartbeat"
+import { useUpdateCheck } from "@/lib/update-check"
 import { setView } from "@/lib/view"
 
 // The phone view of the console: the desktop's core, voice bars, grid,
@@ -45,13 +52,8 @@ import { setView } from "@/lib/view"
 // workshop, the camera and hand tracking. Turns go out on the "mobile"
 // channel, which keeps replies short and leaves out the console tools.
 
-interface Message {
-  id: string
-  role: "user" | "assistant"
-  content: string
-  time: string
-  tools?: string[]
-  streaming?: boolean
+// The desktop chat's message, so lib/turn.ts fills both the same way.
+interface Message extends ChatMessageData {
   /** A failed turn: shown in the error colour, with a retry. */
   failed?: { retry: string }
 }
@@ -221,6 +223,7 @@ function Reactor({ size }: { size: number }) {
 /** The desktop top bar's readouts, condensed to one line. */
 function StatusStrip({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boolean }) {
   const { signals, mode } = useJarvis()
+  const waiting = useInbox((state) => state.pending.length)
   const now = useClock()
   const linkColor = signals.link === "down" ? "var(--error)" : signals.link === "up" ? "var(--success)" : "var(--text-secondary)"
   const latency = signals.latencyMs
@@ -261,6 +264,13 @@ function StatusStrip({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boole
         onClick={onMenu}
       >
         <MoreVerticalIcon size={18} />
+        {waiting > 0 && (
+          <span
+            className="absolute rounded-full"
+            style={{ top: 8, right: 8, width: 8, height: 8, background: "var(--warning)", boxShadow: "0 0 6px var(--warning)" }}
+            aria-label={`${waiting} waiting in the inbox`}
+          />
+        )}
       </button>
     </header>
   )
@@ -276,7 +286,12 @@ function MobileChat({
   onSignOut: () => void
 }) {
   const [sessionId, setSessionId] = useState(initialSessionId)
-  const [messages, setMessages] = useState<Message[]>(() => readStorage<Message[]>(THREAD_KEY, []))
+  const [messages, setMessages] = useState<Message[]>(() =>
+    // Threads saved before the views shared lib/turn.ts kept tool names in `tools`.
+    readStorage<(Message & { tools?: string[] })[]>(THREAD_KEY, []).map(({ tools, ...m }) =>
+      tools && !m.toolsUsed ? { ...m, toolsUsed: tools } : m
+    )
+  )
   const [draft, setDraft] = useState("")
   const [pending, setPending] = useState(false)
   const [phase, setPhase] = useState("Thinking")
@@ -286,6 +301,10 @@ function MobileChat({
   const [typing, setTyping] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [speech, setSpeech] = useState<SpeechMode>(() => readStorage<SpeechMode>(SPEECH_KEY, "voice"))
+  const [arrived, setArrived] = useState<InboxItem[] | null>(null)
+  const inboxOpen = useInbox((state) => state.open)
+  const waiting = useInbox((state) => state.pending.length)
+  const setInboxOpen = useInbox((state) => state.setOpen)
 
   const { mode, toggleMode, gridVisible, setGridVisible, setContext } = useJarvis()
   const boot = useBoot()
@@ -304,7 +323,11 @@ function MobileChat({
   useEffect(() => {
     writeStorage(
       THREAD_KEY,
-      messages.filter((m) => !m.streaming).slice(-THREAD_LIMIT)
+      messages
+        .filter((m) => !m.streaming)
+        .slice(-THREAD_LIMIT)
+        // Speech progress belongs to this page load; a reload shows the text.
+        .map((m) => ({ ...m, said: undefined, spoken: undefined }))
     )
   }, [messages])
 
@@ -312,6 +335,26 @@ function MobileChat({
 
   // LINK, LAT and CTX kept live while the app is on screen.
   useHeartbeat(token, sessionId, onSignOut)
+
+  // What Jarvis's rounds leave for him (lib/inbox-store.ts): a banner for
+  // what is new; a tapped notification opens the inbox.
+  useInboxSync(token, onSignOut, setArrived, () => {
+    setMenuOpen(false)
+    setInboxOpen(true)
+  })
+  useEffect(() => {
+    if (!arrived) return
+    const id = setTimeout(() => setArrived(null), 8000)
+    return () => clearTimeout(id)
+  }, [arrived])
+
+  // A deploy landed while the app sat on the home screen: pick it up, but
+  // only when nothing is in flight. The thread is saved, so a reload loses
+  // nothing; busy now, a later check (or the next return to the app) does it.
+  useUpdateCheck(() => {
+    if (pending || speaking || listening || typing || draft.trim() || useInbox.getState().open) return
+    window.location.reload()
+  })
 
   // Follow the conversation down as it grows.
   useEffect(() => {
@@ -369,56 +412,29 @@ function MobileChat({
     setElapsed(0)
     emitCore({ kind: "send" })
 
-    const replyId = crypto.randomUUID()
-    let shown = false
-    const updateReply = (change: (m: Message) => Message) => {
-      if (!shown) {
-        shown = true
-        setMessages((prev) => [
-          ...prev,
-          change({ id: replyId, role: "assistant", content: "", time: clockTime(), streaming: true }),
-        ])
-        return
-      }
-      setMessages((prev) => prev.map((m) => (m.id === replyId ? change(m) : m)))
-    }
-
-    const speakIt = speech === "always" || (speech === "voice" && viaVoice)
-    const voice = speakIt
-      ? new SpeechQueue(
-          token,
-          {
-            onStart: () => setSpeaking(true),
-            onEnd: (completed) => {
-              setSpeaking(false)
-              // Spoken to, so keep the conversation going hands-free.
-              if (completed && viaVoice) micRef.current?.startRecording()
-            },
-            onAuthError: onSignOut,
-          },
-          audioRef.current ?? undefined
-        )
-      : null
-
     try {
-      const result = await invokeStream(message, sessionId, token, { channel: "mobile" }, (event) => {
-        if (event.type === "status") setPhase(event.label)
-        else if (event.type === "text") updateReply((m) => ({ ...m, content: m.content + event.delta }))
-        else if (event.type === "reset") updateReply((m) => ({ ...m, content: "" }))
-        else if (event.type === "spoken") voice?.push(event.delta)
-        else if (event.type === "tool") emitCore({ kind: "tool", name: event.name })
+      // Streaming, speech and the reply's cards: lib/turn.ts, shared with
+      // the desktop console.
+      const { result } = await runTurn<Message>({
+        text: message,
+        sessionId,
+        token,
+        options: { channel: "mobile" },
+        setMessages,
+        speak: speech === "always" || (speech === "voice" && viaVoice),
+        audio: audioRef.current ?? undefined,
+        onAuthError: onSignOut,
+        onSpeakingChange: setSpeaking,
+        // Spoken to, so keep the conversation going hands-free.
+        onVoiceEnd: (completed) => {
+          if (completed && viaVoice) micRef.current?.startRecording()
+        },
+        onStatus: setPhase,
+        onTool: (entry) => emitCore({ kind: "tool", name: entry.name }),
       })
-      voice?.finish(result.spoken)
       setContext(result.context_turns, result.context_window)
       emitCore({ kind: "reply" })
-      updateReply((m) => ({
-        ...m,
-        content: result.response,
-        tools: [...new Set(result.tools_used)],
-        streaming: false,
-      }))
     } catch (err) {
-      voice?.stop()
       if (err instanceof JarvisAuthError) {
         onSignOut()
         return
@@ -430,8 +446,7 @@ function MobileChat({
           : err instanceof JarvisApiError
             ? err.message
             : "Something went wrong."
-      // A partial reply stays; the failure is added after it.
-      if (shown) updateReply((m) => ({ ...m, streaming: false }))
+      // A partial reply stays (runTurn settles it); the failure follows.
       setMessages((prev) => [
         ...prev,
         { id: crypto.randomUUID(), role: "assistant", content: reason, time: clockTime(), failed: { retry: message } },
@@ -491,6 +506,62 @@ function MobileChat({
       >
         <StatusStrip onMenu={() => setMenuOpen((open) => !open)} menuOpen={menuOpen} />
 
+        {arrived && arrived.length > 0 && !inboxOpen && (
+          <button
+            type="button"
+            className="absolute right-3 left-3 z-20 flex items-center gap-2 px-3 text-left"
+            style={{
+              top: 54,
+              minHeight: 48,
+              background: "var(--bg-base)",
+              border: `1px solid ${arrived[0].priority === "high" ? "var(--warning)" : "rgba(var(--accent-rgb), 0.45)"}`,
+              borderRadius: "var(--radius)",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+              fontSize: 14,
+            }}
+            onClick={() => {
+              setArrived(null)
+              setInboxOpen(true)
+            }}
+          >
+            <InboxIcon size={16} style={{ color: "var(--accent)", flexShrink: 0 }} />
+            <span className="min-w-0 flex-1 truncate" style={{ color: "var(--text-primary)" }}>
+              {arrived.length === 1 ? arrived[0].title : `${arrived.length} new in your inbox`}
+            </span>
+          </button>
+        )}
+
+        {inboxOpen && (
+          <div
+            className="fixed inset-0 z-40 flex flex-col"
+            style={{ background: "rgba(5, 5, 8, 0.97)", paddingTop: "env(safe-area-inset-top)" }}
+          >
+            <header
+              className="flex shrink-0 items-center px-4"
+              style={{ height: 48, borderBottom: "1px solid rgba(var(--accent-rgb), 0.15)" }}
+            >
+              <span className="t-header text-glow" style={{ color: "var(--accent)" }}>
+                INBOX
+              </span>
+              <button
+                type="button"
+                className="btn btn-icon ml-auto"
+                style={{ width: 40, height: 40, border: "none" }}
+                aria-label="Close inbox"
+                onClick={() => setInboxOpen(false)}
+              >
+                <XIcon size={18} />
+              </button>
+            </header>
+            <div
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pt-3"
+              style={{ fontSize: 15, paddingBottom: "max(16px, env(safe-area-inset-bottom))" }}
+            >
+              <InboxPanel token={token} onAuthError={onSignOut} />
+            </div>
+          </div>
+        )}
+
         {menuOpen && (
           <>
             <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} aria-hidden />
@@ -534,6 +605,14 @@ function MobileChat({
                 onClick={() => setGridVisible(!gridVisible)}
                 icon={<GridIcon size={16} />}
                 label={gridVisible ? "Hide grid" : "Show grid"}
+              />
+              <MenuItem
+                onClick={() => {
+                  setMenuOpen(false)
+                  setInboxOpen(true)
+                }}
+                icon={<InboxIcon size={16} />}
+                label={waiting ? `Inbox · ${waiting} waiting` : "Inbox"}
               />
               <MenuItem onClick={newConversation} icon={<RotateCcwIcon size={16} />} label="New conversation" />
               <MenuItem onClick={() => setView("desktop")} icon={<MonitorIcon size={16} />} label="Desktop console" />
@@ -613,7 +692,14 @@ function MobileChat({
             ) : (
               <div className="flex flex-col gap-3">
                 {messages.map((m) => (
-                  <Bubble key={m.id} message={m} onRetry={(text) => send(text, false)} disabled={pending} />
+                  <Bubble
+                    key={m.id}
+                    message={m}
+                    token={token}
+                    onAuthError={onSignOut}
+                    onRetry={(text) => send(text, false)}
+                    disabled={pending}
+                  />
                 ))}
                 {pending && !messages.some((m) => m.streaming && m.content) && <ThinkingIndicator />}
               </div>
@@ -727,14 +813,23 @@ function MenuItem({
 
 function Bubble({
   message,
+  token,
+  onAuthError,
   onRetry,
   disabled,
 }: {
   message: Message
+  token: string
+  onAuthError: () => void
   onRetry: (text: string) => void
   disabled: boolean
 }) {
   const isUser = message.role === "user"
+  // As on the desktop: while he speaks, the bubble shows what he has said
+  // so far; once he is done, the full screen text.
+  const saying =
+    !isUser && message.said !== undefined && message.said.length < (message.spoken?.trim().length ?? 0)
+  const text = saying ? message.said! : message.content
   // Same palette as the desktop's chat-message.tsx: his lines in deep
   // blue, Jarvis's in the accent with a faint glow.
   return (
@@ -759,12 +854,13 @@ function Bubble({
           boxShadow: isUser || message.failed ? "none" : "0 0 12px rgba(var(--accent-rgb), 0.1)",
         }}
       >
-        <Linkified text={message.content} />
-        {message.streaming && <span className="caret" aria-hidden />}
+        <Linkified text={text} />
+        {(message.streaming || saying) && <span className="caret" aria-hidden />}
+        <ReplyCards message={message} token={token} onAuthError={onAuthError} />
       </div>
       <div className={`flex flex-wrap items-center gap-1.5 ${isUser ? "flex-row-reverse" : ""}`}>
         <span className="t-time">{message.time}</span>
-        {message.tools?.map((tool) => <ToolBadge key={tool} tool={tool} />)}
+        {message.toolsUsed?.map((tool) => <ToolBadge key={tool} tool={tool} />)}
         {message.failed && (
           <button
             type="button"

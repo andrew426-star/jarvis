@@ -573,3 +573,133 @@ export async function getStatus(token: string): Promise<StatusResult> {
   const res = await jarvisFetch("/status", token, { method: "GET" })
   return res.json()
 }
+
+export interface ChecklistItem {
+  id: string
+  text: string
+  done: boolean
+}
+
+export interface Checklist {
+  id: string
+  title: string
+  items: ChecklistItem[]
+  done: number
+  total: number
+  archived: boolean
+}
+
+/** One tick from a checklist card (components/checklist-card.tsx). */
+export async function setChecklistItem(
+  listId: string,
+  itemId: string,
+  done: boolean,
+  token: string
+): Promise<Checklist> {
+  const res = await jarvisFetch(`/checklists/${encodeURIComponent(listId)}/items/${encodeURIComponent(itemId)}`, token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ done }),
+  })
+  const body = (await res.json()) as { ok: boolean; checklist?: Checklist; error?: string }
+  if (!body.ok || !body.checklist) throw new JarvisApiError(body.error ?? "Could not update the checklist.")
+  return body.checklist
+}
+
+// ---- Jarvis on his own: the inbox, rounds, and push (app/api/routes/autonomy.py)
+
+export interface InboxItem {
+  id: string
+  kind: "notice" | "proposal"
+  title: string
+  body: string
+  priority: "low" | "normal" | "high"
+  tool: string | null
+  args: Record<string, unknown> | null
+  status: "pending" | "approved" | "declined" | "done" | "failed" | "dismissed"
+  result: unknown
+  created_at: string
+  decided_at: string | null
+}
+
+export interface InboxResult {
+  ok: boolean
+  pending?: InboxItem[]
+  recent?: InboxItem[]
+  error?: string
+}
+
+export interface InboxDecision {
+  ok: boolean
+  item?: InboxItem
+  result?: unknown
+  error?: string
+}
+
+export interface AutonomySettings {
+  ok: boolean
+  enabled: boolean
+  quiet_start: number
+  quiet_end: number
+  last_round_at: string | null
+  /** The VAPID public key; null when push is not set up on the server. */
+  push_key: string | null
+}
+
+export async function getInbox(token: string): Promise<InboxResult> {
+  const res = await jarvisFetch("/inbox", token, { method: "GET", cache: "no-store" })
+  return (await res.json()) as InboxResult
+}
+
+export async function decideInboxItem(
+  id: string,
+  decision: "approve" | "decline" | "dismiss",
+  token: string
+): Promise<InboxDecision> {
+  const res = await jarvisFetch(`/inbox/${encodeURIComponent(id)}/${decision}`, token, { method: "POST" })
+  return (await res.json()) as InboxDecision
+}
+
+export async function getAutonomy(token: string): Promise<AutonomySettings> {
+  const res = await jarvisFetch("/autonomy", token, { method: "GET", cache: "no-store" })
+  return (await res.json()) as AutonomySettings
+}
+
+export async function setAutonomy(
+  changes: Partial<Pick<AutonomySettings, "enabled" | "quiet_start" | "quiet_end">>,
+  token: string
+): Promise<AutonomySettings> {
+  const res = await jarvisFetch("/autonomy", token, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
+  })
+  return (await res.json()) as AutonomySettings
+}
+
+/** A round now, whatever the hour: a full agent turn, so it takes a while. */
+export async function runRoundsNow(token: string): Promise<{ ok: boolean; filed?: InboxItem[]; log?: string; skipped?: string }> {
+  const res = await jarvisFetch("/autonomy/run", token, { method: "POST" })
+  return await res.json()
+}
+
+export async function savePushSubscription(subscription: PushSubscriptionJSON, device: string, token: string): Promise<void> {
+  await jarvisFetch("/push/subscribe", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...subscription, device }),
+  })
+}
+
+export async function removePushSubscription(endpoint: string, token: string): Promise<void> {
+  await jarvisFetch("/push/unsubscribe", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ endpoint }),
+  })
+}
+
+export async function testPush(token: string): Promise<{ ok: boolean; delivered: number }> {
+  const res = await jarvisFetch("/push/test", token, { method: "POST" })
+  return await res.json()
+}

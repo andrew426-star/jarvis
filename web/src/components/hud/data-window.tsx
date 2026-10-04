@@ -11,6 +11,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "intel", label: "Intel" },
   { key: "assets", label: "Assets" },
   { key: "notes", label: "Notes" },
+  { key: "inbox", label: "Inbox" },
 ]
 
 // Top bar 48px, bottom bar 56px, plus a gutter — the window floats over

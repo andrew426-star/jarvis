@@ -82,6 +82,15 @@ class Settings(BaseSettings):
     # first save. Set to a folder id to file them somewhere else.
     notes_drive_folder_id: str | None = None
 
+    # Web Push (app/services/push.py): notifications from Jarvis's rounds
+    # and inbox on the phone's home-screen app and desktop browsers. A
+    # VAPID key pair, made once with scripts/make_vapid_keys.py; the
+    # subject is a mailto: or https: contact for the push services. Unset,
+    # the inbox still works in the console, it just does not buzz devices.
+    vapid_public_key: str | None = None
+    vapid_private_key: str | None = None
+    vapid_subject: str | None = None
+
     # Sign-in is a SEPARATE Google flow from the connect flow above, and
     # needs its own registered redirect URI. Kept apart deliberately:
     # connect asks for the broad Gmail/Drive/Docs scopes with
