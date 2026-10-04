@@ -80,14 +80,23 @@ function nearestBar(candles: Candle[], t: string): Candle | null {
   return best
 }
 
+/** A price drawn across the chart: a trade's entry, stop and target. */
+export interface ChartLevel {
+  label: string
+  price: number
+  color: string
+}
+
 export function MarketChart({
   history,
   annotations,
+  levels = [],
   loading,
   onAsk,
 }: {
   history: MarketHistory
   annotations: ChartAnnotation[]
+  levels?: ChartLevel[]
   loading: boolean
   onAsk?: (question: string) => void
 }) {
@@ -227,6 +236,23 @@ export function MarketChart({
                 strokeDasharray="4 4"
                 label={{ value: refLabel, position: "insideTopLeft", fill: "var(--text-secondary)", fontSize: 9 }}
               />
+              {levels.map((level) => (
+                <ReferenceLine
+                  key={level.label}
+                  yAxisId="price"
+                  y={level.price}
+                  stroke={level.color}
+                  strokeOpacity={0.8}
+                  strokeDasharray="6 3"
+                  ifOverflow="extendDomain"
+                  label={{
+                    value: `${level.label} ${formatPrice(level.price, asset)}`,
+                    position: "insideBottomLeft",
+                    fill: level.color,
+                    fontSize: 9,
+                  }}
+                />
+              ))}
               <Area
                 yAxisId="price"
                 type="linear"

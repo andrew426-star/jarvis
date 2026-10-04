@@ -38,6 +38,7 @@ import {
   type MarketSnapshot,
   type NewsResult,
   type PortfolioResult,
+  type TopTrades,
   type ToolResult,
   type WatchLevel,
 } from "@/lib/jarvis-client"
@@ -77,6 +78,7 @@ const SNOOZE_MS = 15 * 60_000
 const TOOL_PANEL_MAP: Record<string, TabKey> = {
   market_analysis: "markets",
   market_history: "markets",
+  trade_signals: "markets",
   news_feed: "intel",
   portfolio: "assets",
 }
@@ -154,6 +156,7 @@ function Shell({
   const [liveMarketHistory, setLiveMarketHistory] = useState<MarketHistory | undefined>()
   const [liveNews, setLiveNews] = useState<NewsResult | undefined>()
   const [livePortfolio, setLivePortfolio] = useState<PortfolioResult | undefined>()
+  const [liveTrades, setLiveTrades] = useState<TopTrades | undefined>()
 
   // Listening outranks speaking: during a barge-in the mic opens in the
   // same tick narration is cut, and the reactor should read as listening
@@ -373,6 +376,7 @@ function Shell({
       if (entry.name === "market_history") setLiveMarketHistory(entry.result as MarketHistory)
       if (entry.name === "news_feed") setLiveNews(entry.result as NewsResult)
       if (entry.name === "portfolio") setLivePortfolio(entry.result as PortfolioResult)
+      if (entry.name === "trade_signals") setLiveTrades(entry.result as TopTrades)
       const mapped = TOOL_PANEL_MAP[entry.name]
       // A panel Jarvis opened or closed on purpose wins over the automatic
       // "show the data behind that answer" switch.
@@ -795,6 +799,7 @@ function Shell({
             onAuthError={onAuthError}
             liveSnapshot={liveMarketSnapshot}
             liveHistory={liveMarketHistory}
+            liveTrades={liveTrades}
             onAsk={(question) => void handleSend(question, false)}
           />
         </div>

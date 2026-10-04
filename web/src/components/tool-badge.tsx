@@ -24,6 +24,8 @@ const TOOL_LABELS: Record<string, string> = {
   watch: "Watching",
   showcase: "Display",
   checklist: "Checklist",
+  trade_signals: "Trades",
+  inbox: "Inbox",
 }
 
 // Same language as every other interactive-looking element: transparent

@@ -21,6 +21,7 @@ from app.tools.notes import NOTES_SCHEMA, notes
 from app.tools.portfolio import portfolio
 from app.tools.spotify import spotify
 from app.tools.think import think
+from app.tools.trade_signals import TRADE_SIGNALS_SCHEMA, trade_signals
 from app.tools.web_research import web_research
 from app.tools.zoho_mail import zoho_mail
 
@@ -598,6 +599,7 @@ TOOL_SCHEMAS = [
     HISTORY_SCHEMA,
     CHECKLIST_SCHEMA,
     INBOX_SCHEMA,
+    TRADE_SIGNALS_SCHEMA,
 ]
 
 DISPATCH = {
@@ -626,4 +628,5 @@ DISPATCH = {
     "history": history,
     "checklist": checklist,
     "inbox": inbox,
+    "trade_signals": trade_signals,
 }

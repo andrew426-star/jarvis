@@ -24,17 +24,20 @@ CACHE_TTL_SECONDS = 14400  # 4h — matches kiv-console's own NEWS_CACHE_LIFE.re
 # CACHE_TTL_SECONDS after a real deploy. Confirmed live: this exact gap
 # served stale non-mainstream-source results for a full deploy cycle
 # before the cache was manually flushed.
-CACHE_KEY_VERSION = "v2"
+CACHE_KEY_VERSION = "v3"
 
 # Mainstream outlets only — matches kiv-console's own MAINSTREAM_DOMAINS
 # verbatim. Andrew's ask: pull from recognizable sources (VentureBeat,
 # WSJ, etc.) rather than blogs/Hacker-News-style posts. Replaces the prior
 # pypi.org exclusion entirely — none of these domains are package-release
 # feeds, so the allowlist already covers that case and more.
+# Business Insider was dropped (Oct 2026): it was over a quarter of the
+# feed. PitchBook and The Information took its place, for the PE/VC and
+# tech-funding beats the Intel categories are about.
 MAINSTREAM_DOMAINS = ",".join([
     "venturebeat.com", "wsj.com", "bloomberg.com", "reuters.com", "cnbc.com",
-    "techcrunch.com", "businessinsider.com", "ft.com", "forbes.com", "fortune.com",
-    "axios.com", "theverge.com", "marketwatch.com",
+    "techcrunch.com", "pitchbook.com", "theinformation.com", "ft.com", "forbes.com",
+    "fortune.com", "axios.com", "theverge.com", "marketwatch.com",
 ])
 
 

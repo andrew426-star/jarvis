@@ -435,6 +435,40 @@ export interface MarketHistory {
   error?: string
 }
 
+/** One of K.I.V.'s top recommended trades (app/tools/trade_signals.py). */
+export interface TradeSignal {
+  id: string
+  symbol: string
+  asset_class: string
+  direction: "long" | "short"
+  strategy: string
+  confidence: number
+  entry: number | null
+  stop: number | null
+  target: number | null
+  reward_to_risk: number | null
+  position_size_usd: number
+  position_size_qty: number
+  rationale: string[]
+  created_at: string
+}
+
+export interface TopTrades {
+  ok: boolean
+  trades?: TradeSignal[]
+  /** When the scan these come from wrote its last signal. */
+  scan_at?: string | null
+  scan_signals?: number
+  scan_approved?: number
+  note?: string | null
+  error?: string
+}
+
+export async function getTopTrades(token: string): Promise<TopTrades> {
+  const res = await jarvisFetch("/panels/trades", token, { method: "GET", cache: "no-store" })
+  return res.json()
+}
+
 export interface NewsArticle {
   title: string
   url: string

@@ -13,6 +13,8 @@ import {
   type MarketRange,
   type MarketQuote,
   type MarketSnapshot,
+  type TopTrades,
+  type TradeSignal,
 } from "@/lib/jarvis-client"
 import {
   AnimatedValue,
@@ -29,13 +31,16 @@ import {
   usd,
   useChangeFlash,
 } from "./hud-kit"
-import { MarketChart } from "./market-chart"
+import { MarketChart, type ChartLevel } from "./market-chart"
+import { TopTradesSection } from "./top-trades"
 
 interface MarketsPanelProps {
   token: string
   onAuthError: () => void
   liveSnapshot?: MarketSnapshot
   liveHistory?: MarketHistory
+  /** K.I.V.'s top trades, when Jarvis read them in a conversation. */
+  liveTrades?: TopTrades
   /** Ask Jarvis something from the panel ("why does it look like this here?"). */
   onAsk?: (question: string) => void
 }
@@ -47,7 +52,7 @@ const FULL_SCALE_PCT = 5
 
 type Sourced<T> = { data: T; source: "fetch" | "live"; at: Date | null }
 
-export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory, onAsk }: MarketsPanelProps) {
+export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory, liveTrades, onAsk }: MarketsPanelProps) {
   // A live tool result from a chat turn seeds the panel when it opens and
   // replaces what's shown whenever a new one arrives. The background fetch
   // on mount only fills in if nothing live got there first, so a slow
@@ -85,7 +90,19 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory, on
     }
   }
 
+  const [trade, setTrade] = useState<TradeSignal | null>(null)
+
   const snapshot = view?.data ?? null
+
+  // A trade's entry, stop and target, drawn while its symbol is charted.
+  const levels: ChartLevel[] =
+    trade && history?.symbol === trade.symbol
+      ? [
+          { label: "ENTRY", price: trade.entry, color: "var(--accent)" },
+          { label: "STOP", price: trade.stop, color: "var(--error)" },
+          { label: "TARGET", price: trade.target, color: "var(--success)" },
+        ].filter((l): l is ChartLevel => l.price !== null)
+      : []
 
   async function refreshSnapshot() {
     setLoadingSnapshot(true)
@@ -160,6 +177,7 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory, on
       className="grid grid-cols-1 items-start @4xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]"
       style={{ gap: "var(--sp-3)" }}
     >
+      <div className="flex min-w-0 flex-col" style={{ gap: "var(--sp-3)" }}>
       <PanelSection
         title="Watchlist"
         meta={view?.source === "live" ? "FROM CHAT" : syncStamp(view?.at ?? null)}
@@ -191,6 +209,18 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory, on
           </motion.div>
         )}
       </PanelSection>
+
+      <TopTradesSection
+        token={token}
+        onAuthError={onAuthError}
+        live={liveTrades}
+        selected={trade?.symbol ?? null}
+        onSelect={(picked) => {
+          setTrade(picked)
+          loadHistory(picked.symbol)
+        }}
+      />
+      </div>
 
       <PanelSection
         title="Price History"
@@ -258,6 +288,7 @@ export function MarketsPanel({ token, onAuthError, liveSnapshot, liveHistory, on
           <MarketChart
             history={history}
             annotations={notes[history.symbol] ?? []}
+            levels={levels}
             loading={loadingHistory}
             onAsk={onAsk}
           />

@@ -5,6 +5,7 @@ from app.tools.market_analysis import market_analysis
 from app.tools.market_history import market_history
 from app.tools.news_feed import news_feed
 from app.tools.portfolio import portfolio
+from app.tools.trade_signals import trade_signals
 
 # Direct REST access to the same tool functions Jarvis's agent loop calls —
 # no Groq round-trip, no token cost. Lets a tab (Markets/News/Portfolio)
@@ -22,6 +23,11 @@ def panel_market() -> dict:
 @router.get("/market/history")
 def panel_market_history(symbol: str, range: str = "1M") -> dict:  # noqa: A002 — the query parameter's name
     return market_history({"symbol": symbol, "range": range})
+
+
+@router.get("/trades")
+def panel_trades() -> dict:
+    return trade_signals({})
 
 
 @router.get("/news")
