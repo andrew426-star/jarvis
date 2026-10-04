@@ -22,8 +22,11 @@ TRADE_SIGNALS_SCHEMA = {
         "name": "trade_signals",
         "description": (
             "The top 3-5 recommended trades from K.I.V.'s algorithmic trading signals: what its "
-            "latest daily scan found and its risk engine approved, best confidence first, with "
-            "direction, entry, stop, target, position size and the strategy's reasoning. They also "
+            "latest daily scan found and its risk engine approved, best confidence first, with the "
+            "asset's common name, direction, entry, stop, target, position size, the reasoning in "
+            "plain English and sources (a price chart, and recent headlines about the asset, which "
+            "are context: the strategies decide from price data alone). Name assets by their common "
+            "name when you talk about them. They also "
             "show in the Markets panel. Use for 'what are the top trades', 'what is the algo "
             "saying', or before discussing one of them. Read-only: trades are placed from K.I.V."
         ),
@@ -60,7 +63,8 @@ def top_trades(limit: int = MAX_TRADES) -> dict:
         .table("trading_signals")
         .select(
             "id, symbol, asset_class, strategy_id, direction, confidence, entry, stop, target, rationale, "
-            "created_at, trading_decisions(approved, reasons, position_size_usd, position_size_qty)"
+            "asset_name, summary, sources, created_at, "
+            "trading_decisions(approved, reasons, position_size_usd, position_size_qty)"
         )
         .order("created_at", desc=True)
         .limit(400)
@@ -103,6 +107,13 @@ def top_trades(limit: int = MAX_TRADES) -> dict:
                 "position_size_usd": float(decision.get("position_size_usd") or 0),
                 "position_size_qty": float(decision.get("position_size_qty") or 0),
                 "rationale": _rationale(row.get("rationale")),
+                # Written by K.I.V.'s scan (src/lib/trading/signals/explain.ts):
+                # the common name, the reasoning in plain English, and sources
+                # (a price chart; for approved signals, recent headlines,
+                # which are context: the strategies decide from prices alone).
+                "name": row.get("asset_name") or row["symbol"],
+                "summary": row.get("summary"),
+                "sources": row.get("sources") or [],
                 "created_at": row["created_at"],
             }
         )

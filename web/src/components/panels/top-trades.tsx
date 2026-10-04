@@ -145,6 +145,12 @@ export function TopTradesSection({
   )
 }
 
+/** "Palladium (PALL ETF proxy)" reads as "Palladium" on the card; the
+ *  symbol and "ETF proxy" sit underneath. */
+function commonName(trade: TradeSignal): string {
+  return trade.name.replace(/\s*\(.*\)$/, "") || trade.symbol
+}
+
 function TradeCard({
   trade,
   rank,
@@ -177,8 +183,14 @@ function TradeCard({
         <span className="t-label" style={{ color: "var(--text-secondary)" }}>
           #{rank}
         </span>
-        <span className="t-value" style={{ fontSize: 14, color: "var(--text-primary)" }}>
-          {trade.symbol}
+        <span className="flex min-w-0 flex-col">
+          <span className="t-value truncate-1" style={{ fontSize: 14, color: "var(--text-primary)" }} title={trade.name}>
+            {commonName(trade)}
+          </span>
+          <span className="t-label" style={{ color: "var(--text-secondary)" }}>
+            {trade.symbol}
+            {/proxy\)/i.test(trade.name) ? " · ETF PROXY" : ""}
+          </span>
         </span>
         <span
           className="t-label"
@@ -211,14 +223,42 @@ function TradeCard({
           SIZE {formatPrice(trade.position_size_usd, "stock").replace(".00", "")}
         </span>
       </div>
-      {active && trade.rationale.length > 0 && (
-        <ul className="flex flex-col" style={{ gap: 1, marginTop: 2 }}>
-          {trade.rationale.map((line) => (
-            <li key={line} style={{ color: "var(--text-secondary)", fontSize: 12 }}>
-              · {line}
-            </li>
-          ))}
-        </ul>
+      {active && (
+        <div className="flex flex-col" style={{ gap: 4, marginTop: 2 }}>
+          {trade.summary ? (
+            <p style={{ color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.45 }}>{trade.summary}</p>
+          ) : (
+            <ul className="flex flex-col" style={{ gap: 1 }}>
+              {trade.rationale.map((line) => (
+                <li key={line} style={{ color: "var(--text-secondary)", fontSize: 12 }}>
+                  · {line}
+                </li>
+              ))}
+            </ul>
+          )}
+          {trade.sources.length > 0 && (
+            <ul className="flex flex-col" style={{ gap: 1 }}>
+              {trade.sources.map((source) => (
+                <li key={source.url} style={{ fontSize: 11.5 }}>
+                  <a
+                    href={source.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: "var(--accent)" }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {source.title}
+                  </a>
+                  <span style={{ color: "var(--text-secondary)" }}>
+                    {" "}
+                    · {source.publisher}
+                    {source.kind === "news" ? " · context" : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </button>
   )

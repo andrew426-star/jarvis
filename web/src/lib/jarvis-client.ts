@@ -450,7 +450,20 @@ export interface TradeSignal {
   position_size_usd: number
   position_size_qty: number
   rationale: string[]
+  /** The common name ("Palladium (PALL ETF proxy)"); the symbol for older signals. */
+  name: string
+  /** The reasoning in plain English; absent for signals from before K.I.V. wrote it. */
+  summary: string | null
+  sources: TradeSource[]
   created_at: string
+}
+
+export interface TradeSource {
+  kind: "data" | "news"
+  title: string
+  publisher: string
+  url: string
+  publishedAt: string | null
 }
 
 export interface TopTrades {
