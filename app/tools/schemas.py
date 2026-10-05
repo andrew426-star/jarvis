@@ -302,12 +302,27 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "kivaro_pipeline",
             "description": (
-                "Get Kivaro AI's current prospect and client pipeline — which companies are at "
-                "what stage in the outreach process. Covers the Autonomous Lead Engine's "
-                "automated pipeline (discovered, researched, or pitched) and existing clients "
-                "with their status (active, paused, completed)."
+                "Kivaro AI's Autonomous Lead Engine (ALE) — its three Google Sheets (Geolocation "
+                "Lead Engine Log, Autonomous Lead Engine Log, Sales Pitch Log) — and existing "
+                "clients. operation=status lists every lead with its stage (discovered, "
+                "researched, drafted, sent), website and contact count, the leads with no "
+                "website, the clients by status, and what each spreadsheet and tab holds. "
+                "operation=find shows exactly which tabs and rows hold one company. "
+                "operation=remove deletes that company's rows from every ALE tab, then reads "
+                "the sheets back; only verified_gone=true means it is actually gone."
             ),
-            "parameters": {"type": "object", "properties": {}, "required": []},
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {"type": "string", "enum": ["status", "find", "remove"]},
+                    "company": {
+                        "type": "string",
+                        "description": "find/remove: the company's exact name as it appears in the "
+                        "sheets (case and spacing don't matter).",
+                    },
+                },
+                "required": ["operation"],
+            },
         },
     },
     {

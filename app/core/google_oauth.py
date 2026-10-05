@@ -28,13 +28,12 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/userinfo.email",
 ]
-# kivaro_pipeline reads ALE's Sheets-based prospect pipeline (Maps Data /
-# Companies / Sales Pitch Log tabs) via the Sheets API — no separate
-# spreadsheets.readonly scope needed: confirmed live that the already-
-# granted (broad) `drive` scope above covers reading Sheets values too,
-# since spreadsheets are just Drive files under the hood. Don't add
-# spreadsheets.readonly here, it'd be redundant and force an unnecessary
-# reconnect.
+# kivaro_pipeline reads ALE's Sheets (GLE / ALE / Sales Pitch Log) via the
+# Sheets API, and its remove operation deletes rows from them — no separate
+# spreadsheets scope needed: the already-granted (broad) `drive` scope
+# above covers reading and writing Sheets, since spreadsheets are just
+# Drive files under the hood. Don't add a spreadsheets scope here, it'd be
+# redundant and force an unnecessary reconnect.
 
 STATE_MAX_AGE_SECONDS = 15 * 60
 TABLE = "jarvis_google_connection"

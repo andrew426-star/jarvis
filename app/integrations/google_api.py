@@ -378,7 +378,7 @@ def docs_get_document(access_token: str, document_id: str) -> dict:
     }
 
 
-# --- Sheets (read-only) -------------------------------------------------
+# --- Sheets ----------------------------------------------------------------
 
 
 def sheets_get_values(access_token: str, spreadsheet_id: str, range_or_tab_name: str) -> list[list[str]]:
@@ -391,3 +391,39 @@ def sheets_get_values(access_token: str, spreadsheet_id: str, range_or_tab_name:
     if not res.is_success:
         raise RuntimeError(f"Sheets read failed: {res.text}")
     return res.json().get("values", [])
+
+
+def sheets_get_tab_ids(access_token: str, spreadsheet_id: str) -> dict[str, int]:
+    """Tab title -> numeric sheetId, which row deletes need."""
+    res = httpx.get(
+        f"{SHEETS_BASE}/{spreadsheet_id}",
+        headers=_headers(access_token),
+        params={"fields": "sheets.properties(sheetId,title)"},
+        timeout=20.0,
+    )
+    if not res.is_success:
+        raise RuntimeError(f"Sheets metadata failed: {res.text}")
+    return {s["properties"]["title"]: s["properties"]["sheetId"] for s in res.json().get("sheets", [])}
+
+
+def sheets_delete_rows(access_token: str, spreadsheet_id: str, sheet_id: int, row_numbers: list[int]) -> None:
+    """Delete whole rows (1-based sheet row numbers) in one batchUpdate,
+    bottom-up so earlier deletes don't shift the rows still to go."""
+    requests = [
+        {
+            "deleteDimension": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": n - 1, "endIndex": n}
+            }
+        }
+        for n in sorted(set(row_numbers), reverse=True)
+    ]
+    if not requests:
+        return
+    res = httpx.post(
+        f"{SHEETS_BASE}/{spreadsheet_id}:batchUpdate",
+        headers=_headers(access_token),
+        json={"requests": requests},
+        timeout=20.0,
+    )
+    if not res.is_success:
+        raise RuntimeError(f"Sheets delete rows failed: {res.text}")

@@ -37,7 +37,7 @@ READ_ONLY: dict[str, set[str] | None] = {
     "market_history": None,
     "portfolio": None,
     "company_financials": None,
-    "kivaro_pipeline": None,
+    "kivaro_pipeline": {"status", "find"},
     "calculator": None,
     "trade_signals": None,
 }

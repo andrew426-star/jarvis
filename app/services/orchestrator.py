@@ -64,6 +64,7 @@ _TOOL_STATUS = {
     "browser": "Looking at your browser",
     "showcase": "Preparing the display",
     "notes": "Opening your notes",
+    "kivaro_pipeline": "Checking the lead engine",
     "history": "Checking the log",
 }
 
@@ -71,8 +72,8 @@ _TOOL_STATUS = {
 # still lands in the audit trail (Supabase/Pinecone) and the console.
 TOOL_RESULT_CHAR_CAP = 4000
 # Except where the content IS the point: a source file cut at 4000
-# characters cannot be reviewed.
-_TOOL_CAPS = {"files": 24_000, "browser": 24_000, "notes": 24_000, "history": 24_000}
+# characters cannot be reviewed, and a lead list cut short hides leads.
+_TOOL_CAPS = {"files": 24_000, "browser": 24_000, "notes": 24_000, "history": 24_000, "kivaro_pipeline": 16_000}
 
 # Separate, independent pool from FastAPI/Starlette's own threadpool (which
 # is what actually runs this sync route across concurrent requests) — this
@@ -166,6 +167,24 @@ SYSTEM_PROMPT = (
     "request, use it, or if given standing permission, do it and report back. Frame responses "
     "around next steps and real choices (\"I've done X. Shall I proceed with Y, or would you "
     "prefer Z?\"). Treat idle chatter as the exception, not the rule.\n\n"
+    "AUTONOMOUS LEAD ENGINE (ALE): Kivaro's outreach pipeline, which K.I.V.'s Autonomy page "
+    "runs, lives in three real Google Sheets, and kivaro_pipeline is how you read and change "
+    "them. Geolocation Lead Engine Log (stage 1): Maps Data is the master lead list (every "
+    "discovered company), Websites holds each one's site, Hunter holds the contacts found. "
+    "Autonomous Lead Engine Log (stage 2): Companies and Contacts hold the research. Sales Pitch "
+    "Log (stage 3): History of Company, Problems, \"New Era\" Proposition, and ALE Sales Pitch "
+    "Log, the drafted pitch per company, whose Email Sent At column marks it actually sent. A "
+    "company with no website, or no contact with an email, cannot be reached and stalls. When "
+    "Andrew asks about leads, the ALE, the pipeline or a company in it, check kivaro_pipeline "
+    "rather than answering from memory. When he asks to remove, drop or clear a lead, call "
+    "kivaro_pipeline remove with its exact name in the same turn; if it finds nothing, show him "
+    "the similar names and ask which, and if it removes it, say from which tabs.\n\n"
+    "REPORTING ACTIONS: never say you did something — removed, deleted, updated, sent, logged, "
+    "created, scheduled — unless a tool call in this turn did it and its result says it "
+    "succeeded. If no tool can do it, say so plainly. If the tool failed, or the result shows it "
+    "only partly worked (still_present, failed, verified_gone false), say exactly that. "
+    "Claiming an action you did not take is the worst mistake you can make, far worse than "
+    "admitting a limit.\n\n"
     "BOUNDARIES: the wit and formality are flavor, never a substitute for actually solving "
     "Andrew's problem. If a request is unsafe, unclear, or needs a decision only Andrew can make, "
     "say so plainly and ask — briefly, without a wall of caveats.\n\n"
@@ -174,8 +193,8 @@ SYSTEM_PROMPT = (
     "instead of doing math inline), market_analysis (live stock/crypto quotes via Finnhub), "
     "market_history (historical daily price bars for a single equity/ETF symbol, for chart-type "
     "questions), portfolio (Andrew's Alpaca investment account, read-only), company_financials (Kivaro AI's "
-    "Stripe balance/activity, read-only), kivaro_pipeline (Kivaro AI's prospect/client pipeline — "
-    "which companies are at what outreach stage), launch_tracker (the launch plan's scoreboard, "
+    "Stripe balance/activity, read-only), kivaro_pipeline (Kivaro AI's Autonomous Lead Engine "
+    "spreadsheets and client list — status, find a company, remove a company), launch_tracker (the launch plan's scoreboard, "
     "and the place to log real conversations, pilots, commitments, publicity and content), "
     "kiv_tasks (his K.I.V. task board: list, update, create), habits (daily practice check-ins "
     "and streaks), italian (his flashcard tutor with spaced repetition), speech_coach (measures a "
@@ -317,9 +336,10 @@ def _model_view(result: dict) -> dict:
 
 def _capped(result: dict, name: str = "") -> dict:
     payload = json.dumps(result, default=str)
-    if len(payload) <= _TOOL_CAPS.get(name, TOOL_RESULT_CHAR_CAP):
+    cap = _TOOL_CAPS.get(name, TOOL_RESULT_CHAR_CAP)
+    if len(payload) <= cap:
         return json.loads(payload)
-    return {"truncated_json": payload[:TOOL_RESULT_CHAR_CAP] + "...[truncated]"}
+    return {"truncated_json": payload[:cap] + "...[truncated]"}
 
 
 def _history_contents(turns: list[dict]) -> list[types.Content]:
