@@ -88,6 +88,10 @@ function runWorkshopAction(step: WorkshopAction) {
     useProject.getState().load(step.project, step.report ?? null)
     return
   }
+  if (step.action === "gallery") {
+    useProject.getState().setGalleryOpen(true)
+    return
+  }
   if (step.action === "project_close") {
     stopSim()
     useProject.getState().close()

@@ -41,10 +41,13 @@ export function assemblyName(project: Project) {
 }
 
 /** Build the assembly; printed parts are compiled by `compile` (the
- *  workshop's OpenSCAD worker). Failures come back to report, not throw. */
+ *  workshop's OpenSCAD worker). Failures come back to report, not throw.
+ *  `bind` makes it the one the simulation animates (the stage's); the
+ *  gallery and the folder's viewer build theirs unbound. */
 export async function buildAssembly(
   project: Project,
-  compile: (code: string) => Promise<Uint8Array>
+  compile: (code: string) => Promise<Uint8Array>,
+  { bind = true }: { bind?: boolean } = {}
 ): Promise<{ item: BuiltItem; failures: { name: string; error: string }[] }> {
   const zUp = new THREE.Group()
   const bindings: Bindings = { glow: new Map(), horn: new Map(), spin: new Map() }
@@ -118,7 +121,7 @@ export async function buildAssembly(
   g.add(turned)
   g.scale.setScalar(MM * fit)
   g.position.y = 0.02
-  current = bindings
+  if (bind) current = bindings
 
   const errors = failures.length ? [`${failures.length} PRINTED PART(S) FAILED`] : []
   return {

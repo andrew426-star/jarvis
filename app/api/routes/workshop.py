@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Body, Depends
 
 from app.core.auth import require_access_token
-from app.tools.workshop_project import delete_project, get_project, list_projects, save_project
+from app.tools.workshop_project import delete_project, gallery, get_project, list_projects, save_project
 
 # The workshop's project panel (web/src/components/workshop/project-panel.tsx):
 # saving Andrew's own edits (the sketch, a part, a wire) without a model
@@ -13,6 +13,16 @@ router = APIRouter(prefix="/workshop", dependencies=[Depends(require_access_toke
 def projects_list() -> dict:
     try:
         return {"ok": True, "projects": list_projects()}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+
+@router.get("/gallery")
+def projects_gallery() -> dict:
+    """The project gallery: every project with its parts and printed parts
+    for its hologram, and a summary for its card."""
+    try:
+        return {"ok": True, "projects": gallery()}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
 

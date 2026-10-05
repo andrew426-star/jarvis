@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useRef, useState, useEffect } from "react"
 import {
   AlertTriangleIcon,
   ChevronRightIcon,
@@ -8,30 +8,35 @@ import {
   CodeIcon,
   CpuIcon,
   DownloadIcon,
-  FolderOpenIcon,
+  FileTextIcon,
+  LayersIcon,
   Loader2Icon,
+  PackageIcon,
   PauseIcon,
   PlayIcon,
-  PlusIcon,
   RotateCcwIcon,
+  SaveIcon,
   SendIcon,
-  ShoppingCartIcon,
 } from "lucide-react"
 
+import { HoloViewer } from "@/components/workshop/holo-viewer"
+import { STATUS_LABEL } from "@/components/workshop/project-gallery"
 import { Schematic } from "@/components/workshop/schematic"
-import { listProjects, openProject, saveProject } from "@/lib/jarvis-client"
 import { useJarvis } from "@/lib/store"
+import { compileScadCached } from "@/lib/workshop/openscad"
 import { useProject, type ProjectTab } from "@/lib/workshop/project/store"
-import { emptyProject, prop, type Part, type ProjectSummary } from "@/lib/workshop/project/types"
+import { PARTS, STATUSES, prop, type BomLine, type Part, type PrintedPart } from "@/lib/workshop/project/types"
 import { isRunning, resetSim, sendSerial, setSimInput, setSimSpeed, startSim, stopSim } from "@/lib/workshop/sim/controller"
 
-// The workshop's project panel, down the right edge: what to buy and what
-// is wrong (BUILD), the wiring (CIRCUIT), the sketch (CODE) and the live
-// simulation (SIM). Jarvis fills it through his project tool; Andrew can
-// edit the sketch and drive the simulation's inputs himself.
+// The open project's folder, down the right edge of the workshop: the
+// finished product, status, notes and files (OVERVIEW); every part by
+// sub-assembly with what it costs and where to get it (PARTS); the wiring
+// (CIRCUIT); the sketch (CODE); and the live simulation (SIM). Jarvis fills
+// it through his project tool; the gallery opens any other project.
 
 const TABS: { key: ProjectTab; label: string; icon: typeof CpuIcon }[] = [
-  { key: "build", label: "BUILD", icon: ShoppingCartIcon },
+  { key: "overview", label: "OVERVIEW", icon: FileTextIcon },
+  { key: "parts", label: "PARTS", icon: PackageIcon },
   { key: "circuit", label: "CIRCUIT", icon: CircuitBoardIcon },
   { key: "code", label: "CODE", icon: CodeIcon },
   { key: "sim", label: "SIM", icon: CpuIcon },
@@ -41,28 +46,36 @@ const LEVEL_COLOR = { error: "var(--error, #ff4d4d)", warning: "var(--warning)",
 
 export const PANEL_WIDTH = 420
 
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "part"
+
+function download(name: string, blob: Blob) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 5000)
+}
+
 export function ProjectPanel() {
   const project = useProject((s) => s.project)
   const open = useProject((s) => s.panelOpen)
   const tab = useProject((s) => s.tab)
   const setTab = useProject((s) => s.setTab)
   const setOpen = useProject((s) => s.setPanelOpen)
+  const setGallery = useProject((s) => s.setGalleryOpen)
   const report = useProject((s) => s.report)
-  const [picking, setPicking] = useState(false)
 
-  if (!open || (!project && !picking)) {
+  if (!open || !project) {
     return (
       <button
         type="button"
         className="btn absolute flex items-center"
         style={{ top: 12, right: 12, zIndex: 3, gap: 6, padding: "6px 10px" }}
-        onClick={() => {
-          setOpen(true)
-          if (!project) setPicking(true)
-        }}
-        title="Open the project panel"
+        onClick={() => (project ? setOpen(true) : setGallery(true))}
+        title={project ? "Open the project folder" : "Open the project gallery"}
       >
-        <CpuIcon size={13} /> {project ? project.name.toUpperCase().slice(0, 28) : "PROJECTS"}
+        {project ? <CpuIcon size={13} /> : <LayersIcon size={13} />} {project ? project.name.toUpperCase().slice(0, 28) : "PROJECTS"}
       </button>
     )
   }
@@ -73,67 +86,60 @@ export function ProjectPanel() {
     <aside
       className="holo-card flex flex-col"
       style={{ position: "absolute", top: 12, right: 12, bottom: 12, width: PANEL_WIDTH, zIndex: 3 }}
-      aria-label="Workshop project"
+      aria-label="Project folder"
     >
       <header className="holo-card-header">
         <span className="t-label flex min-w-0 items-center" style={{ gap: 6 }}>
           <CpuIcon size={12} className="shrink-0" />
-          <span className="truncate-1">{project ? project.name.toUpperCase() : "PROJECTS"}</span>
+          <span className="truncate-1">{project.name.toUpperCase()}</span>
+          <span className="t-time shrink-0">· {STATUS_LABEL[project.status] ?? ""}</span>
         </span>
         <span className="flex shrink-0" style={{ gap: 4 }}>
           <button
             type="button"
             className="btn"
             style={{ width: 20, height: 20, padding: 0 }}
-            data-active={picking}
-            onClick={() => setPicking((p) => !p)}
-            aria-label="Open or start a project"
-            title="Open or start a project"
+            onClick={() => setGallery(true)}
+            aria-label="Project gallery"
+            title="All projects (gallery)"
           >
-            <FolderOpenIcon size={11} className="mx-auto" />
+            <LayersIcon size={11} className="mx-auto" />
           </button>
           <button
             type="button"
             className="btn"
             style={{ width: 20, height: 20, padding: 0 }}
-            onClick={() => {
-              setOpen(false)
-              setPicking(false)
-            }}
-            aria-label="Collapse the project panel"
+            onClick={() => setOpen(false)}
+            aria-label="Collapse the project folder"
           >
             <ChevronRightIcon size={12} className="mx-auto" />
           </button>
         </span>
       </header>
 
-      {picking || !project ? (
-        <Picker onDone={() => setPicking(false)} />
-      ) : (
-        <>
-          <nav className="flex shrink-0" style={{ gap: 4, padding: "6px var(--sp-2)", borderBottom: "1px solid rgba(var(--accent-rgb), 0.2)" }}>
-            {TABS.map(({ key, label, icon: Icon }) => (
-              <button
-                key={key}
-                type="button"
-                className="btn flex flex-1 items-center"
-                style={{ gap: 5, padding: "4px 0" }}
-                data-active={tab === key}
-                onClick={() => setTab(key)}
-              >
-                <Icon size={12} /> {label}
-                {key === "build" && errors > 0 && <span style={{ color: LEVEL_COLOR.error }}>· {errors}</span>}
-              </button>
-            ))}
-          </nav>
-          <div className="min-h-0 flex-1 overflow-y-auto" style={{ padding: "var(--sp-2)" }}>
-            {tab === "build" && <BuildTab />}
-            {tab === "circuit" && <CircuitTab />}
-            {tab === "code" && <CodeTab />}
-            {tab === "sim" && <SimTab />}
-          </div>
-        </>
-      )}
+      <nav className="flex shrink-0" style={{ gap: 3, padding: "6px var(--sp-2)", borderBottom: "1px solid rgba(var(--accent-rgb), 0.2)" }}>
+        {TABS.map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            type="button"
+            className="btn flex flex-1 items-center"
+            style={{ gap: 4, padding: "4px 0", letterSpacing: "0.04em" }}
+            data-active={tab === key}
+            onClick={() => setTab(key)}
+            title={label}
+          >
+            <Icon size={11} /> {label}
+            {key === "overview" && errors > 0 && <span style={{ color: LEVEL_COLOR.error }}>·{errors}</span>}
+          </button>
+        ))}
+      </nav>
+      <div className="min-h-0 flex-1 overflow-y-auto" style={{ padding: "var(--sp-2)" }}>
+        {tab === "overview" && <OverviewTab />}
+        {tab === "parts" && <PartsTab />}
+        {tab === "circuit" && <CircuitTab />}
+        {tab === "code" && <CodeTab />}
+        {tab === "sim" && <SimTab />}
+      </div>
     </aside>
   )
 }
@@ -150,105 +156,68 @@ function Muted({ children }: { children: React.ReactNode }) {
   return <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "4px 0" }}>{children}</p>
 }
 
-function Picker({ onDone }: { onDone: () => void }) {
-  const token = useProject((s) => s.token)
-  const load = useProject((s) => s.load)
-  const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [name, setName] = useState("")
-  const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
-    if (!token) return
-    listProjects(token)
-      .then((r) => (r.ok ? setProjects(r.projects ?? []) : setError(r.error ?? "Could not list projects.")))
-      .catch((err) => setError(String(err)))
-  }, [token])
+function OverviewTab() {
+  const project = useProject((s) => s.project)!
+  const version = useProject((s) => s.version)
+  const report = useProject((s) => s.report)
+  const saving = useProject((s) => s.saving)
+  const save = useProject((s) => s.save)
+  const [files, setFiles] = useState<string | null>(null)
 
-  async function pick(id: string) {
-    if (!token) return
-    setBusy(true)
-    const r = await openProject(id, token).catch((err) => ({ ok: false as const, error: String(err) }))
-    setBusy(false)
-    if (r.ok) {
-      load(r.project, r.report)
-      onDone()
-    } else setError(r.error)
+  async function downloadPrinted() {
+    setFiles("Compiling printed parts...")
+    for (const part of project.printed) {
+      try {
+        const stl = await compileScadCached(part.code)
+        download(`${slug(part.name)}.stl`, new Blob([stl.slice()], { type: "model/stl" }))
+      } catch (err) {
+        useJarvis.getState().notify("warning", `${part.name} did not compile`, String(err).slice(0, 160))
+      }
+      download(`${slug(part.name)}.scad`, new Blob([part.code], { type: "text/plain" }))
+    }
+    setFiles(null)
   }
 
-  async function create() {
-    if (!token || !name.trim()) return
-    setBusy(true)
-    const r = await saveProject(emptyProject(name.trim()), token).catch((err) => ({ ok: false as const, error: String(err) }))
-    setBusy(false)
-    if (r.ok) {
-      load(r.project, r.report)
-      onDone()
-    } else setError(r.error)
+  function downloadAll() {
+    // The compiled HEX is the server's to rebuild; the rest is the project.
+    const json = JSON.stringify(project, (key, value) => (key === "hex" || key === "compiled_code" ? undefined : value), 2)
+    download(`${slug(project.name)}.json`, new Blob([json], { type: "application/json" }))
   }
 
+  const b = report?.bom
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto" style={{ padding: "var(--sp-2)" }}>
-      <Heading>NEW PROJECT</Heading>
-      <form
-        className="flex"
-        style={{ gap: 6 }}
-        onSubmit={(e) => {
-          e.preventDefault()
-          void create()
-        }}
-      >
-        <input
-          className="t-label min-w-0 flex-1"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Desk fan controller"
-          style={{ background: "rgba(0,0,0,0.4)", border: "1px solid rgba(var(--accent-rgb), 0.35)", color: "var(--text-primary)", padding: "4px 8px", userSelect: "text" }}
-        />
-        <button type="submit" className="btn flex items-center" style={{ gap: 4, padding: "4px 10px" }} disabled={busy || !name.trim()}>
-          <PlusIcon size={12} /> START
-        </button>
-      </form>
-      <Muted>Or just tell Jarvis what you want to build.</Muted>
-      <Heading>SAVED</Heading>
-      {error && <Muted>{error}</Muted>}
-      {!projects && !error && <Muted>Loading...</Muted>}
-      {projects?.length === 0 && <Muted>None yet.</Muted>}
-      <div className="flex flex-col" style={{ gap: 4 }}>
-        {projects?.map((p) => (
-          <button key={p.id} type="button" className="library-row" disabled={busy} onClick={() => void pick(p.id)}>
-            <span className="t-label truncate-1 flex-1" style={{ color: "var(--text-primary)", textAlign: "left" }}>
-              {p.name.toUpperCase()}
-            </span>
-            <span className="t-time shrink-0">{p.parts} PARTS</span>
+    <>
+      <HoloViewer project={project} version={version} />
+
+      <div className="flex" style={{ gap: 3, margin: "8px 0" }} role="radiogroup" aria-label="Project status">
+        {STATUSES.map((status) => (
+          <button
+            key={status}
+            type="button"
+            role="radio"
+            aria-checked={project.status === status}
+            className="btn flex-1"
+            style={{ padding: "3px 0", letterSpacing: "0.04em" }}
+            data-active={project.status === status}
+            disabled={saving}
+            onClick={() => project.status !== status && void save({ status })}
+          >
+            {STATUS_LABEL[status]}
           </button>
         ))}
       </div>
-    </div>
-  )
-}
 
-function BuildTab() {
-  const project = useProject((s) => s.project)!
-  const report = useProject((s) => s.report)
+      <div className="grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 6 }}>
+        <Stat label="PARTS" value={String(project.parts.length)} />
+        <Stat label="PRINTED" value={String(project.printed.length)} />
+        <Stat label="WIRES" value={String(project.wires.length)} />
+        <Stat label="EST. COST" value={b ? `$${b.estimated_total.toFixed(2)}` : "-"} />
+      </div>
 
-  function downloadBom() {
-    if (!report) return
-    const rows = [["Item", "Buy", "Unit", "Price", "Cost", "Where", "Part #", "For"]]
-    for (const l of report.bom.lines) rows.push([l.item, String(l.buy), l.unit, l.price.toFixed(2), l.cost.toFixed(2), l.where, l.part_number, l.for.join(" ")])
-    rows.push(["Subtotal", "", "", "", report.bom.subtotal.toFixed(2)], ["Estimated with tax (x1.13)", "", "", "", report.bom.estimated_total.toFixed(2)])
-    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n")
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }))
-    const a = document.createElement("a")
-    a.href = url
-    a.download = `${project.name.replace(/[^a-z0-9]+/gi, "-")}-parts.csv`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 5000)
-  }
+      <Heading>GOAL</Heading>
+      <EditableText key={`goal-${version}`} value={project.goal} rows={2} placeholder="What it is for." onSave={(goal) => save({ goal })} />
 
-  return (
-    <>
-      {project.goal && <p style={{ fontSize: 12, margin: "0 0 6px", color: "var(--text-primary)" }}>{project.goal}</p>}
       <Heading>CHECKS</Heading>
       {!report ? (
         <Muted>Not checked yet.</Muted>
@@ -259,9 +228,7 @@ function BuildTab() {
           {report.checks.map((c, i) => (
             <li key={i} className="flex" style={{ gap: 6, fontSize: 12, marginBottom: 5, lineHeight: 1.35 }}>
               <AlertTriangleIcon size={12} className="shrink-0" style={{ color: LEVEL_COLOR[c.level], marginTop: 2 }} />
-              <span className="wrap-words" style={{ color: c.level === "note" ? "var(--text-secondary)" : "var(--text-primary)" }}>
-                {c.text}
-              </span>
+              <span className="wrap-words" style={{ color: c.level === "note" ? "var(--text-secondary)" : "var(--text-primary)" }}>{c.text}</span>
             </li>
           ))}
         </ul>
@@ -269,59 +236,225 @@ function BuildTab() {
       {report?.dropped.length ? (
         <>
           <Heading>NOT UNDERSTOOD</Heading>
-          {report.dropped.map((d) => (
-            <Muted key={d}>{d}</Muted>
-          ))}
+          {report.dropped.map((d) => <Muted key={d}>{d}</Muted>)}
         </>
       ) : null}
 
+      <Heading>NOTES</Heading>
+      <EditableText
+        key={`notes-${version}`}
+        value={project.notes}
+        rows={6}
+        placeholder="Decisions, measurements, what was tried, what is left."
+        onSave={(notes) => save({ notes })}
+      />
+
+      <Heading>FILES</Heading>
+      <div className="flex flex-wrap" style={{ gap: 6 }}>
+        <button type="button" className="btn flex items-center" style={{ gap: 4, padding: "3px 8px" }} disabled={!project.code} onClick={() => download(`${slug(project.name)}.ino`, new Blob([project.code], { type: "text/plain" }))}>
+          <DownloadIcon size={11} /> SKETCH .INO
+        </button>
+        <button type="button" className="btn flex items-center" style={{ gap: 4, padding: "3px 8px" }} disabled={!b?.lines.length} onClick={() => b && download(`${slug(project.name)}-parts.csv`, bomCsv(b.lines, b.subtotal, b.estimated_total))}>
+          <DownloadIcon size={11} /> PARTS .CSV
+        </button>
+        <button type="button" className="btn flex items-center" style={{ gap: 4, padding: "3px 8px" }} disabled={!project.printed.length || !!files} onClick={() => void downloadPrinted()}>
+          {files ? <Loader2Icon size={11} className="animate-spin" /> : <DownloadIcon size={11} />} PRINTED .STL + .SCAD
+        </button>
+        <button type="button" className="btn flex items-center" style={{ gap: 4, padding: "3px 8px" }} onClick={downloadAll}>
+          <DownloadIcon size={11} /> PROJECT .JSON
+        </button>
+      </div>
+      {files && <Muted>{files}</Muted>}
+    </>
+  )
+}
+
+function bomCsv(lines: BomLine[], subtotal: number, total: number): Blob {
+  const rows = [["Item", "Buy", "Unit", "Price", "Cost", "Where", "Part #", "For"]]
+  for (const l of lines) rows.push([l.item, String(l.buy), l.unit, l.price.toFixed(2), l.cost.toFixed(2), l.where, l.part_number, l.for.join(" ")])
+  rows.push(["Subtotal", "", "", "", subtotal.toFixed(2)], ["Estimated with tax (x1.13)", "", "", "", total.toFixed(2)])
+  return new Blob([rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n")], { type: "text/csv" })
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="t-time">{label}</div>
+      <div className="t-value" style={{ color: "var(--text-primary)", fontSize: 13 }}>{value}</div>
+    </div>
+  )
+}
+
+function EditableText({ value, rows, placeholder, onSave }: { value: string; rows: number; placeholder: string; onSave: (v: string) => Promise<boolean> }) {
+  const [draft, setDraft] = useState(value)
+  const [busy, setBusy] = useState(false)
+  const changed = draft !== value
+  return (
+    <div className="flex flex-col" style={{ gap: 4 }}>
+      <textarea
+        value={draft}
+        rows={rows}
+        placeholder={placeholder}
+        onChange={(e) => setDraft(e.target.value)}
+        style={{ resize: "vertical", background: "rgba(0,0,0,0.4)", border: "1px solid rgba(var(--accent-rgb), 0.25)", color: "var(--text-primary)", fontSize: 12, lineHeight: 1.45, padding: 6, userSelect: "text" }}
+      />
+      {changed && (
+        <button
+          type="button"
+          className="btn flex items-center self-end"
+          style={{ gap: 4, padding: "2px 10px" }}
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            await onSave(draft)
+            setBusy(false)
+          }}
+        >
+          {busy ? <Loader2Icon size={11} className="animate-spin" /> : <SaveIcon size={11} />} SAVE
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** A part's kind for the folder: electronics, hardware, or printed. */
+function shelf(part: Part): "electronics" | "hardware" {
+  return PARTS[part.type]?.kind === "mech" ? "hardware" : "electronics"
+}
+
+function describe(part: Part): string {
+  const spec = PARTS[part.type]
+  const bits = [part.label || spec?.label || part.type]
+  if (part.type === "resistor") bits.push(`${prop(part, "ohms", 1000)} Ω`)
+  if (part.type === "led") bits.push(String(prop(part, "color", "red")))
+  if (prop<number | null>(part, "length", null)) bits.push(`${prop(part, "length", 0)} mm`)
+  return bits.join(" · ")
+}
+
+function PartsTab() {
+  const project = useProject((s) => s.project)!
+  const report = useProject((s) => s.report)
+  const b = report?.bom
+  const lineFor = (id: string) => b?.lines.find((l) => l.for.includes(id))
+
+  // Sub-assemblies in the order they first appear; ungrouped things last.
+  const names: string[] = []
+  for (const x of [...project.parts, ...project.printed]) if (x.group && !names.includes(x.group)) names.push(x.group)
+  const ungrouped = project.parts.some((p) => !p.group) || project.printed.some((p) => !p.group)
+  const groups = [...names, ...(ungrouped ? [null] : [])]
+
+  return (
+    <>
+      {groups.length === 0 && <Muted>No parts yet. Tell Jarvis what you want to build.</Muted>}
+      {groups.map((group) => {
+        const parts = project.parts.filter((p) => (p.group ?? null) === group)
+        const printed = project.printed.filter((p) => (p.group ?? null) === group)
+        const cost = parts.reduce((sum, p) => {
+          const l = lineFor(p.id)
+          return sum + (l ? l.cost / Math.max(1, l.for.length) : 0)
+        }, 0)
+        return (
+          <section key={group ?? "_"} style={{ marginBottom: 10, border: "1px solid rgba(var(--accent-rgb), 0.18)", padding: "4px 8px 6px" }}>
+            <div className="flex items-center justify-between">
+              <Heading>
+                <LayersIcon size={11} style={{ display: "inline", marginRight: 4 }} />
+                {(group ?? (names.length ? "Everything else" : "All parts")).toUpperCase()}
+              </Heading>
+              <span className="t-time">≈ ${cost.toFixed(2)}</span>
+            </div>
+            {(["electronics", "hardware"] as const).map((kind) => {
+              const list = parts.filter((p) => shelf(p) === kind)
+              if (!list.length) return null
+              return (
+                <div key={kind}>
+                  <div className="t-time" style={{ margin: "2px 0" }}>{kind.toUpperCase()}</div>
+                  {list.map((p) => {
+                    const l = lineFor(p.id)
+                    return (
+                      <div key={p.id} className="flex" style={{ gap: 8, fontSize: 12, padding: "2px 0", borderBottom: "1px solid rgba(var(--accent-rgb), 0.08)" }}>
+                        <span className="t-label shrink-0" style={{ width: 52, color: "var(--accent)" }}>{p.id}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="wrap-words" style={{ color: "var(--text-primary)" }}>{describe(p)}</span>
+                          <span className="t-time" style={{ display: "block" }}>{l ? `${l.where} · $${l.price.toFixed(2)} / ${l.unit}` : "Not stocked at Tech"}</span>
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })}
+            {printed.length > 0 && (
+              <div>
+                <div className="t-time" style={{ margin: "2px 0" }}>PRINTED</div>
+                {printed.map((p: PrintedPart) => (
+                  <div key={p.name} className="flex items-center" style={{ gap: 8, fontSize: 12, padding: "2px 0", borderBottom: "1px solid rgba(var(--accent-rgb), 0.08)" }}>
+                    <span className="min-w-0 flex-1">
+                      <span style={{ color: "var(--text-primary)" }}>{p.name}</span>
+                      {p.notes.length > 0 && <span className="t-time" style={{ display: "block" }}>{p.notes.join(" · ")}</span>}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn shrink-0"
+                      style={{ width: 22, height: 22, padding: 0 }}
+                      title="Download STL and SCAD"
+                      aria-label={`Download ${p.name}`}
+                      onClick={async () => {
+                        try {
+                          const stl = await compileScadCached(p.code)
+                          download(`${slug(p.name)}.stl`, new Blob([stl.slice()], { type: "model/stl" }))
+                        } catch (err) {
+                          useJarvis.getState().notify("warning", `${p.name} did not compile`, String(err).slice(0, 160))
+                        }
+                        download(`${slug(p.name)}.scad`, new Blob([p.code], { type: "text/plain" }))
+                      }}
+                    >
+                      <DownloadIcon size={11} className="mx-auto" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )
+      })}
+
       <div className="flex items-center justify-between">
-        <Heading>PARTS TO BUY</Heading>
-        {report && report.bom.lines.length > 0 && (
-          <button type="button" className="btn flex items-center" style={{ gap: 4, padding: "2px 8px" }} onClick={downloadBom}>
+        <Heading>SHOPPING LIST</Heading>
+        {b && b.lines.length > 0 && (
+          <button type="button" className="btn flex items-center" style={{ gap: 4, padding: "2px 8px" }} onClick={() => download(`${slug(project.name)}-parts.csv`, bomCsv(b.lines, b.subtotal, b.estimated_total))}>
             <DownloadIcon size={11} /> CSV
           </button>
         )}
       </div>
-      {!report || report.bom.lines.length === 0 ? (
-        <Muted>No parts yet.</Muted>
+      {!b || b.lines.length === 0 ? (
+        <Muted>Nothing to buy yet.</Muted>
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <tbody>
-            {report.bom.lines.map((l) => (
+            {b.lines.map((l) => (
               <tr key={l.item + l.where} style={{ borderBottom: "1px solid rgba(var(--accent-rgb), 0.12)" }}>
                 <td style={{ padding: "4px 0", verticalAlign: "top" }}>
-                  <div className="wrap-words" style={{ color: "var(--text-primary)" }}>
-                    {l.buy} × {l.item}
-                  </div>
-                  <div className="t-time">
-                    {l.where}
-                    {l.part_number ? ` · ${l.part_number}` : ""}
-                    {l.for.length ? ` · ${l.for.join(", ")}` : ""}
-                  </div>
+                  <div className="wrap-words" style={{ color: "var(--text-primary)" }}>{l.buy} × {l.item}</div>
+                  <div className="t-time">{l.where}{l.part_number ? ` · ${l.part_number}` : ""}</div>
                 </td>
-                <td className="t-label" style={{ padding: "4px 0 4px 8px", textAlign: "right", verticalAlign: "top", whiteSpace: "nowrap" }}>
-                  ${l.cost.toFixed(2)}
-                </td>
+                <td className="t-label" style={{ padding: "4px 0 4px 8px", textAlign: "right", verticalAlign: "top", whiteSpace: "nowrap" }}>${l.cost.toFixed(2)}</td>
               </tr>
             ))}
             <tr>
               <td className="t-label" style={{ paddingTop: 6 }}>SUBTOTAL</td>
-              <td className="t-label" style={{ paddingTop: 6, textAlign: "right" }}>${report.bom.subtotal.toFixed(2)}</td>
+              <td className="t-label" style={{ paddingTop: 6, textAlign: "right" }}>${b.subtotal.toFixed(2)}</td>
             </tr>
             <tr>
               <td className="t-label" style={{ color: "var(--accent)" }}>WITH TAX + CARD FEES (≈1.13×)</td>
-              <td className="t-label" style={{ textAlign: "right", color: "var(--accent)" }}>${report.bom.estimated_total.toFixed(2)}</td>
+              <td className="t-label" style={{ textAlign: "right", color: "var(--accent)" }}>${b.estimated_total.toFixed(2)}</td>
             </tr>
           </tbody>
         </table>
       )}
-      {report?.bom.not_stocked.length ? (
+      {b?.not_stocked.length ? (
         <>
           <Heading>NOT STOCKED AT TECH</Heading>
-          {report.bom.not_stocked.map((n) => (
-            <Muted key={n}>{n}</Muted>
-          ))}
+          {b.not_stocked.map((n) => <Muted key={n}>{n}</Muted>)}
         </>
       ) : null}
     </>

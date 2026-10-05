@@ -161,3 +161,21 @@ def test_compile_refuses_path_includes(code, ok, monkeypatch):
         assert "library headers" in result["error"]
     else:
         assert result.get("unavailable")
+
+
+def test_status_notes_groups_and_the_gallery(db, monkeypatch):
+    monkeypatch.setattr(wp, "compile_sketch", lambda code: {"ok": True, "hex": ":00000001FF", "warnings": []})
+    pid = wp.project_tool({"operation": "open", "name": "Rover"}, None)["actions"][0]["project"]["id"]
+    wp.project_tool({
+        "operation": "update", "status": "simulate", "notes": "Wheels 60 mm.",
+        "parts": [UNO, {"id": "M1", "type": "dc_motor", "group": "Drive"}],
+        "printed": [{"name": "Motor clip", "code": "cube(5);", "group": "Drive"}],
+        "wires": [{"a": "U1.D5", "b": "M1.+"}],
+    }, pid)
+    project = wp.get_project(pid)
+    assert project["status"] == "simulate" and project["notes"] == "Wheels 60 mm."
+    assert project["parts"][1]["group"] == "Drive" and project["printed"][0]["group"] == "Drive"
+    assert wp.normalize({"status": "teleported"})[0]["status"] == "design"
+    [card] = wp.gallery()
+    assert card["name"] == "Rover" and card["groups"] == ["Drive"] and card["errors"] >= 1
+    assert "code" not in card and card["printed"][0]["code"] == "cube(5);"

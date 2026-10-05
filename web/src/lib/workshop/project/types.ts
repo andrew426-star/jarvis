@@ -25,6 +25,8 @@ export interface Part {
   props: Record<string, unknown>
   label?: string
   catalog?: string
+  /** Sub-assembly it belongs to ("Chassis", "Arm"...). */
+  group?: string
 }
 
 export interface Wire {
@@ -37,6 +39,7 @@ export interface PrintedPart {
   name: string
   code: string
   notes: string[]
+  group?: string
 }
 
 export interface Placement {
@@ -48,6 +51,8 @@ export interface Project {
   id: string | null
   name: string
   goal: string
+  status: ProjectStatus
+  notes: string
   parts: Part[]
   wires: Wire[]
   code: string
@@ -56,6 +61,26 @@ export interface Project {
   extras: { item: string; qty: number }[]
   hex: string | null
   compiled_code: string | null
+}
+
+export const STATUSES = ["idea", "design", "simulate", "build", "complete"] as const
+export type ProjectStatus = (typeof STATUSES)[number]
+
+/** A project as the gallery lists it: enough for its card and hologram. */
+export interface GalleryProject {
+  id: string
+  name: string
+  goal: string
+  status: ProjectStatus
+  parts: Part[]
+  printed: PrintedPart[]
+  layout: Record<string, Placement>
+  wires: number
+  compiled: boolean
+  estimated_total: number
+  errors: number
+  groups: string[]
+  updated_at: string
 }
 
 export interface Check {
@@ -103,6 +128,8 @@ export function emptyProject(name = "Untitled project"): Project {
     id: null,
     name,
     goal: "",
+    status: "idea",
+    notes: "",
     parts: [],
     wires: [],
     code: "",

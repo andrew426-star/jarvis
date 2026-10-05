@@ -1,6 +1,6 @@
 import { useLock, type Unlock } from "@/lib/lock-state"
 import { useJarvis } from "@/lib/store"
-import type { Project, ProjectSummary, Report } from "@/lib/workshop/project/types"
+import type { GalleryProject, Project, ProjectSummary, Report } from "@/lib/workshop/project/types"
 
 // Empty string = same origin, which is the production shape: FastAPI
 // serves this bundle and the API off one port, so "/invoke" is already
@@ -875,6 +875,11 @@ export type ProjectSaved = { ok: true; project: Project; report: Report } | { ok
 
 export async function listProjects(token: string): Promise<{ ok: boolean; projects?: ProjectSummary[]; error?: string }> {
   const res = await jarvisFetch("/workshop/projects", token, { method: "GET" })
+  return res.json()
+}
+
+export async function getGallery(token: string): Promise<{ ok: boolean; projects?: GalleryProject[]; error?: string }> {
+  const res = await jarvisFetch("/workshop/gallery", token, { method: "GET" })
   return res.json()
 }
 

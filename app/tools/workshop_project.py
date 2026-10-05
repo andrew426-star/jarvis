@@ -28,6 +28,8 @@ MAX_WIRES = 300
 MAX_PRINTED = 12
 MAX_SCAD_CHARS = 40_000
 MAX_CODE_CHARS = 60_000
+STATUSES = ("idea", "design", "simulate", "build", "complete")
+MAX_NOTES_CHARS = 4000
 ID_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,15}$")
 GROUND_SOURCES = {("uno", "GND")}
 
@@ -80,6 +82,8 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         seen.add(pid)
         props = {**(lib[ptype].get("props") or {}), **(p.get("props") if isinstance(p.get("props"), dict) else {})}
         part = {"id": pid, "type": ptype, "props": props}
+        if str(p.get("group") or "").strip():
+            part["group"] = str(p["group"]).strip()[:40]
         if p.get("label"):
             part["label"] = str(p["label"])[:60]
         if p.get("catalog"):
@@ -121,7 +125,10 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
             problems.append(f"printed part {item.get('name')}: code too long")
             continue
         notes = item.get("notes") if isinstance(item.get("notes"), list) else []
-        printed.append({"name": str(item.get("name") or "Part")[:60], "code": code, "notes": [str(n)[:60] for n in notes[:4]]})
+        entry = {"name": str(item.get("name") or "Part")[:60], "code": code, "notes": [str(n)[:60] for n in notes[:4]]}
+        if str(item.get("group") or "").strip():
+            entry["group"] = str(item["group"]).strip()[:40]
+        printed.append(entry)
 
     layout = {}
     names = set(by_id) | {p["name"] for p in printed}
@@ -146,6 +153,8 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         "id": raw.get("id"),
         "name": str(raw.get("name") or "Untitled project")[:80],
         "goal": str(raw.get("goal") or "")[:600],
+        "status": raw.get("status") if raw.get("status") in STATUSES else "design",
+        "notes": str(raw.get("notes") or "")[:MAX_NOTES_CHARS],
         "parts": parts,
         "wires": wires,
         "code": code,
@@ -696,6 +705,34 @@ def list_projects() -> list[dict]:
     ]
 
 
+def gallery() -> list[dict]:
+    """Every project with what its gallery card and hologram need: the
+    parts, printed parts and layout (not the sketch or HEX), the priced
+    total and how many checks fail."""
+    rows = get_supabase_client().table(TABLE).select("*").order("updated_at", desc=True).limit(40).execute().data or []
+    out = []
+    for row in rows:
+        project, _ = normalize(_load(row))
+        b = bom(project)
+        checks = check(project)
+        out.append({
+            "id": project["id"],
+            "name": project["name"],
+            "goal": project["goal"],
+            "status": project["status"],
+            "parts": project["parts"],
+            "printed": project["printed"],
+            "layout": project["layout"],
+            "wires": len(project["wires"]),
+            "compiled": bool(project["hex"]),
+            "estimated_total": b["estimated_total"],
+            "errors": sum(1 for c in checks if c["level"] == "error"),
+            "groups": sorted({p.get("group") for p in project["parts"] + project["printed"] if p.get("group")}),
+            "updated_at": row.get("updated_at"),
+        })
+    return out
+
+
 def delete_project(project_id: str) -> None:
     get_supabase_client().table(TABLE).delete().eq("id", project_id).execute()
 
@@ -718,7 +755,9 @@ PROJECT_SCHEMA = {
         "name": "project",
         "description": (
             "Andrew's workshop projects: real builds with electronics, simulated before he buys or "
-            "solders anything. A project holds parts (from the Louisiana Tech catalog), the wiring, "
+            "solders anything. Each project is a folder in the workshop's project gallery, its "
+            "finished product shown as a hologram; group a bigger build's parts and printed parts "
+            "into sub-assemblies (group), keep its status and notes current. A project holds parts (from the Louisiana Tech catalog), the wiring, "
             "an Arduino UNO sketch, printed parts (OpenSCAD) and a 3D layout. It shows in the "
             "workshop's project panel and 3D stage, opening the workshop if needed. "
             "open: load a saved project by name, or start a new one with that name (and goal). "
@@ -733,7 +772,8 @@ PROJECT_SCHEMA = {
             "photoresistor light 0-1, thermistor temp C, ping distance cm, adxl335 [x,y,z] g). "
             "What it does comes back in CONSOLE_STATE on his next message (serial output, LED, "
             "servo and motor states, live warnings), not in this turn. "
-            "list: saved projects. delete: remove one (only when he asks). "
+            "gallery: show him the project gallery (every project's finished product as a "
+            "hologram on a revolving ring). list: saved projects. delete: remove one (only when he asks). "
             "Part types (id it like LED1, R1, U1): " + _types_line() + ". "
             "Wires join pins: {a: 'U1.D9', b: 'SRV1.SIG'}. Only the UNO is emulated. Every servo Tech "
             "stocks is continuous rotation. Resistors stocked: 100, 1k, 10k ohm only. "
@@ -743,9 +783,11 @@ PROJECT_SCHEMA = {
         "parameters": {
             "type": "object",
             "properties": {
-                "operation": {"type": "string", "enum": ["open", "update", "simulate", "list", "delete"]},
+                "operation": {"type": "string", "enum": ["open", "update", "simulate", "gallery", "list", "delete"]},
                 "name": {"type": "string", "description": "open/delete: the project's name. update: renames it."},
                 "goal": {"type": "string", "description": "What the build is for, in a sentence or two."},
+                "status": {"type": "string", "enum": list(STATUSES), "description": "Where the build stands. Move it on as it does: simulate once it runs clean, build when he starts buying and assembling, complete when it is done."},
+                "notes": {"type": "string", "description": "The project's running notes (replaces them): decisions, measurements, what was tried, what is left. Keep what is there and add to it."},
                 "parts": {
                     "type": "array",
                     "items": {
@@ -755,6 +797,7 @@ PROJECT_SCHEMA = {
                             "type": {"type": "string"},
                             "props": {"type": "object", "description": "e.g. {ohms: 1000}, {color: 'green'}, {length: 300}."},
                             "label": {"type": "string"},
+                            "group": {"type": "string", "description": "Sub-assembly it belongs to, e.g. 'Chassis', 'Arm', 'Controller'."},
                         },
                         "required": ["id", "type"],
                     },
@@ -776,6 +819,7 @@ PROJECT_SCHEMA = {
                             "name": {"type": "string"},
                             "code": {"type": "string", "description": "OpenSCAD, as for the workshop's scad action."},
                             "notes": {"type": "array", "items": {"type": "string"}},
+                            "group": {"type": "string", "description": "Sub-assembly it belongs to."},
                         },
                         "required": ["name", "code"],
                     },
@@ -799,7 +843,7 @@ PROJECT_SCHEMA = {
     },
 }
 
-SECTIONS = ("name", "goal", "parts", "wires", "code", "printed", "layout", "extras")
+SECTIONS = ("name", "goal", "status", "notes", "parts", "wires", "code", "printed", "layout", "extras")
 
 
 def _model_report(project: dict, report: dict) -> dict:
@@ -826,6 +870,9 @@ def project_tool(args: dict, open_id: str | None) -> dict:
     try:
         if op == "list":
             return {"ok": True, "projects": list_projects()}
+
+        if op == "gallery":
+            return {"ok": True, "actions": [{"action": "gallery"}], "note": "The gallery is open in the workshop."}
 
         if op == "delete":
             found = find_project(str(args.get("name") or ""))

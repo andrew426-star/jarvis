@@ -40,6 +40,22 @@ export function compileScad(code: string): Promise<Uint8Array> {
   })
 }
 
+// Compiled parts by source, for this session: the gallery, the folder's
+// viewer and the stage all build the same projects, and a part compiles
+// once. A failed compile is not kept, so a fix gets a fresh try.
+const compiled = new Map<string, Promise<Uint8Array>>()
+
+/** compileScad, remembered by source text. */
+export function compileScadCached(code: string): Promise<Uint8Array> {
+  let entry = compiled.get(code)
+  if (!entry) {
+    entry = compileScad(code)
+    compiled.set(code, entry)
+    entry.catch(() => compiled.delete(code))
+  }
+  return entry
+}
+
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "part"
 
 /** A compiled part as a workshop item. */

@@ -8,6 +8,7 @@ import {
   DownloadIcon,
   HandIcon,
   ImageIcon,
+  LayersIcon,
   Loader2Icon,
   MagnetIcon,
   RotateCcwIcon,
@@ -29,6 +30,7 @@ import { getGestures, KEYS, useGestures, type TapAction } from "@/lib/workshop/g
 import { GestureSettings } from "@/components/workshop/gesture-settings"
 import { LibraryDock, type StageItem } from "@/components/workshop/library-dock"
 import { PANEL_WIDTH, ProjectPanel } from "@/components/workshop/project-panel"
+import { ProjectGallery } from "@/components/workshop/project-gallery"
 import { buildAssembly, releaseAssembly } from "@/lib/workshop/project/assembly"
 import { useProject } from "@/lib/workshop/project/store"
 import { stopSim } from "@/lib/workshop/sim/controller"
@@ -92,7 +94,7 @@ export function Workshop({ token }: { token: string }) {
   useEffect(() => {
     if (!open) return
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false)
+      if (event.key === "Escape" && !useProject.getState().galleryOpen) setOpen(false)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
@@ -176,6 +178,7 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
   const handsOn = handsStatus === "tracking"
   const projectVersion = useProject((state) => state.version)
   const projectShown = useProject((state) => state.panelOpen && !!state.project)
+  const galleryOpen = useProject((state) => state.galleryOpen)
   // The open project's 3D assembly on the stage, by the name it was given.
   const assemblyRef = useRef<string | null>(null)
 
@@ -516,6 +519,17 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
             type="button"
             className="btn flex items-center"
             style={{ gap: 6, padding: "4px 10px" }}
+            onClick={() => useProject.getState().setGalleryOpen(!galleryOpen)}
+            data-active={galleryOpen}
+            aria-pressed={galleryOpen}
+            title="Every project, its finished product as a hologram"
+          >
+            <LayersIcon size={12} /> GALLERY
+          </button>
+          <button
+            type="button"
+            className="btn flex items-center"
+            style={{ gap: 6, padding: "4px 10px" }}
             onClick={() => sceneRef.current && download(sceneRef.current.exportStl())}
             disabled={!ready || !focus}
             title="Download the selected item as STL, in millimetres"
@@ -648,6 +662,7 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
         {gesturesOpen && <GestureSettings onClose={() => setGesturesOpen(false)} />}
 
         <ProjectPanel />
+        {galleryOpen && <ProjectGallery />}
 
         {/* Spec readout, positioned over the focused item by the scene. */}
         <div

@@ -13,7 +13,7 @@ import type { SimSnapshot } from "@/lib/workshop/sim/runner"
 // what is here. The simulation (sim/controller.ts) publishes its snapshot
 // here for the panel and for Jarvis's view of the console.
 
-export type ProjectTab = "build" | "circuit" | "code" | "sim"
+export type ProjectTab = "overview" | "parts" | "circuit" | "code" | "sim"
 
 interface ProjectState {
   project: Project | null
@@ -23,6 +23,8 @@ interface ProjectState {
   version: number
   saving: boolean
   panelOpen: boolean
+  /** The project gallery, over the stage. */
+  galleryOpen: boolean
   tab: ProjectTab
   sim: SimSnapshot | null
   token: string | null
@@ -30,6 +32,7 @@ interface ProjectState {
   close: () => void
   setTab: (tab: ProjectTab) => void
   setPanelOpen: (open: boolean) => void
+  setGalleryOpen: (open: boolean) => void
   setSim: (sim: SimSnapshot | null) => void
   setToken: (token: string | null) => void
   /** Save edits made in the panel; true when the server took them. */
@@ -42,7 +45,8 @@ export const useProject = create<ProjectState>((set, get) => ({
   version: 0,
   saving: false,
   panelOpen: true,
-  tab: "build",
+  galleryOpen: false,
+  tab: "overview",
   sim: null,
   token: null,
   load: (project, report) =>
@@ -50,6 +54,7 @@ export const useProject = create<ProjectState>((set, get) => ({
   close: () => set((state) => ({ project: null, report: null, sim: null, version: state.version + 1 })),
   setTab: (tab) => set({ tab }),
   setPanelOpen: (panelOpen) => set({ panelOpen }),
+  setGalleryOpen: (galleryOpen) => set({ galleryOpen }),
   setSim: (sim) => set({ sim }),
   setToken: (token) => set({ token }),
   save: async (changes) => {
@@ -80,6 +85,7 @@ export function projectState() {
   return {
     id: project.id,
     name: project.name,
+    status: project.status,
     parts: project.parts.length,
     compiled: !!project.hex,
     errors: report?.checks.filter((c) => c.level === "error").length ?? 0,
