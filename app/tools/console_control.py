@@ -38,7 +38,6 @@ PANELS = {"markets", "intel", "assets", "notes", "inbox"}
 WATCH_LEVELS = {"quiet", "normal", "coach"}
 MODES = {"normal", "serious"}
 
-CATALOGUE = ["reactor", "helmet", "gauntlet", "element", "tower", "missile"]
 SHAPES = ["box", "rounded_box", "sphere", "cylinder", "cone", "torus", "capsule"]
 MATERIALS = ["red", "gold", "steel", "dark", "copper", "glow", "glass"]
 MAX_PARTS = 80
@@ -157,9 +156,8 @@ WORKSHOP_SCHEMA = {
         "name": "workshop",
         "description": (
             "Work in the 3D workshop in Andrew's console (it opens itself if needed). "
-            "spawn: project a catalogue piece (target: " + ", ".join(CATALOGUE) + "). "
             "build: design and project a NEW model from parts - use it whenever he asks you to "
-            "make, design, generate or mock up something not in the catalogue. Build in a space "
+            "make, design, generate or mock up something. Build in a space "
             "about 2 units wide, y up, the model's base near y=0 (it is lifted onto the stage), "
             "with 6 to 60 parts; compose recognisable forms from the primitives, use 'glow' for "
             "lights and energy, and give it a name, a designation line and 2-4 spec notes. "
@@ -185,7 +183,7 @@ WORKSHOP_SCHEMA = {
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["spawn", "build", "scad", "capture", "export_stl", "render", "snapshot", "discard", "set_mode", "clear"],
+                                "enum": ["build", "scad", "capture", "export_stl", "render", "snapshot", "discard", "set_mode", "clear"],
                             },
                             "target": {"type": "string"},
                             "name": {"type": "string", "description": "scad or capture: the part's name."},
@@ -318,12 +316,7 @@ def workshop(args: dict, frame_b64: str | None = None, frame_type: str = "image/
         raw = raw or {}
         action = raw.get("action")
         target = str(raw.get("target") or "").strip()
-        if action == "spawn":
-            if target.lower() not in CATALOGUE:
-                problems.append(f"spawn needs one of {CATALOGUE}")
-                continue
-            actions.append({"action": "spawn", "target": target.lower()})
-        elif action == "build":
+        if action == "build":
             model, error = _clean_model(raw.get("model") or {})
             if error:
                 problems.append(error)

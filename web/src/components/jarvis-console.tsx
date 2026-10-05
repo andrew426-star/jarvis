@@ -840,8 +840,6 @@ function Shell({
       <ShowcaseWindow />
       <Workshop token={token} />
       <CameraPreview
-        lookDisabled={pending}
-        onLook={() => handleSend("What do you see?", false, true)}
         onToggleHands={toggleHands}
         onSetWatch={(level) => void setWatch(level)}
         onSnooze={snooze}

@@ -29,6 +29,22 @@ MAX_PRINTED = 12
 MAX_SCAD_CHARS = 40_000
 MAX_CODE_CHARS = 60_000
 STATUSES = ("idea", "design", "simulate", "build", "complete")
+# Where a project is worn or set for the camera try-on, and the frame its
+# design uses there (mm; see WEAR_GUIDE).
+ANCHORS = ("face", "wrist", "hand", "forearm", "desk")
+WEAR_GUIDE = (
+    "wear: how the camera try-on shows it on him, live: {anchor, group?, offset?, rot?, scale?}. "
+    "Design worn things in the anchor's own frame, in mm, so they land on him at real size. "
+    "face: origin midway between the pupils, z up, the front faces -y (OpenSCAD's front view); "
+    "lenses about 12 mm in front (y = -12), nose bridge y = -8 to -12, temples run back to the ears "
+    "about 95 mm behind (y = +95) and 70 mm either side, head about 150 mm wide. "
+    "wrist / forearm / hand: origin on the arm's axis (wrist joint; forearm: 100 mm up the arm "
+    "from it; hand: palm centre), x along the arm toward the fingers, z out of the back of the "
+    "hand; a wrist is about 60 x 40 mm, a forearm 70 x 55, so a watch face sits near z = 22 and a "
+    "bracer's shell wraps the x axis. desk: origin on the desk surface, z up, front faces -y. "
+    "group shows only that sub-assembly; parts with no layout position are left out of the "
+    "try-on. offset (mm) and rot (degrees) nudge the whole thing in the anchor frame."
+)
 MAX_NOTES_CHARS = 4000
 ID_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,15}$")
 GROUND_SOURCES = {("uno", "GND")}
@@ -149,6 +165,16 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
             extras.append({"item": str(e["item"])[:120], "qty": qty})
 
     code = str(raw.get("code") or "")[:MAX_CODE_CHARS]
+    wear = None
+    w = raw.get("wear")
+    if isinstance(w, dict) and w.get("anchor") in ANCHORS:
+        wear = {"anchor": w["anchor"], "offset": _vec(w.get("offset")), "rot": _vec(w.get("rot"))}
+        if str(w.get("group") or "").strip():
+            wear["group"] = str(w["group"]).strip()[:40]
+        try:
+            wear["scale"] = max(0.2, min(5.0, float(w.get("scale") or 1)))
+        except (TypeError, ValueError):
+            wear["scale"] = 1.0
     project = {
         "id": raw.get("id"),
         "name": str(raw.get("name") or "Untitled project")[:80],
@@ -161,6 +187,7 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         "printed": printed,
         "layout": layout,
         "extras": extras,
+        "wear": wear,
         "hex": raw.get("hex") if isinstance(raw.get("hex"), str) else None,
         "compiled_code": raw.get("compiled_code") if isinstance(raw.get("compiled_code"), str) else None,
     }
@@ -772,6 +799,9 @@ PROJECT_SCHEMA = {
             "photoresistor light 0-1, thermistor temp C, ping distance cm, adxl335 [x,y,z] g). "
             "What it does comes back in CONSOLE_STATE on his next message (serial output, LED, "
             "servo and motor states, live warnings), not in this turn. "
+            "try_on: show the open project on him, live in his camera, as a hologram anchored to "
+            "his face, wrist, hand or forearm, or set on his desk (anchor overrides the project's "
+            "wear anchor; the camera comes on). "
             "gallery: show him the project gallery (every project's finished product as a "
             "hologram on a revolving ring). list: saved projects. delete: remove one (only when he asks). "
             "Part types (id it like LED1, R1, U1): " + _types_line() + ". "
@@ -783,7 +813,7 @@ PROJECT_SCHEMA = {
         "parameters": {
             "type": "object",
             "properties": {
-                "operation": {"type": "string", "enum": ["open", "update", "simulate", "gallery", "list", "delete"]},
+                "operation": {"type": "string", "enum": ["open", "update", "simulate", "try_on", "gallery", "list", "delete"]},
                 "name": {"type": "string", "description": "open/delete: the project's name. update: renames it."},
                 "goal": {"type": "string", "description": "What the build is for, in a sentence or two."},
                 "status": {"type": "string", "enum": list(STATUSES), "description": "Where the build stands. Move it on as it does: simulate once it runs clean, build when he starts buying and assembling, complete when it is done."},
@@ -834,6 +864,18 @@ PROJECT_SCHEMA = {
                         "required": ["item"],
                     },
                 },
+                "wear": {
+                    "type": "object",
+                    "description": WEAR_GUIDE,
+                    "properties": {
+                        "anchor": {"type": "string", "enum": list(ANCHORS)},
+                        "group": {"type": "string"},
+                        "offset": {"type": "array", "items": {"type": "number"}},
+                        "rot": {"type": "array", "items": {"type": "number"}},
+                        "scale": {"type": "number"},
+                    },
+                },
+                "anchor": {"type": "string", "enum": list(ANCHORS), "description": "try_on: where to show it."},
                 "run": {"type": "boolean", "description": "simulate: true to start, false to stop."},
                 "inputs": {"type": "object", "description": "simulate: {part id: value}, as above."},
                 "speed": {"type": "number", "description": "simulate: 0.1-1, slow motion below 1."},
@@ -843,7 +885,7 @@ PROJECT_SCHEMA = {
     },
 }
 
-SECTIONS = ("name", "goal", "status", "notes", "parts", "wires", "code", "printed", "layout", "extras")
+SECTIONS = ("name", "goal", "status", "notes", "wear", "parts", "wires", "code", "printed", "layout", "extras")
 
 
 def _model_report(project: dict, report: dict) -> dict:
@@ -870,6 +912,14 @@ def project_tool(args: dict, open_id: str | None) -> dict:
     try:
         if op == "list":
             return {"ok": True, "projects": list_projects()}
+
+        if op == "try_on":
+            if not open_id:
+                return {"ok": False, "error": "No project is open in the workshop; open one first."}
+            action = {"action": "try_on"}
+            if args.get("anchor") in ANCHORS:
+                action["anchor"] = args["anchor"]
+            return {"ok": True, "actions": [action], "note": "Showing it in his camera; tracking results arrive in CONSOLE_STATE."}
 
         if op == "gallery":
             return {"ok": True, "actions": [{"action": "gallery"}], "note": "The gallery is open in the workshop."}
@@ -951,4 +1001,7 @@ def state_line(state: dict | None) -> str | None:
             parts.append("serial output (latest): " + json.dumps(str(sim["serial"])[-600:]))
         if sim.get("error"):
             parts.append("simulator error: " + str(sim["error"])[:300])
+    tryon = p.get("try_on") if isinstance(p.get("try_on"), dict) else None
+    if tryon and tryon.get("active"):
+        parts.append(f"TRY-ON showing in his camera on his {tryon.get('anchor')}: {tryon.get('tracking') or 'searching'}")
     return "; ".join(parts) + "."

@@ -306,35 +306,20 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
       })
       sceneRef.current = scene
       // Jarvis works the stage through this. Registering flushes anything
-      // he asked for while the scene was still loading, so when he has a
-      // job queued the stage opens straight onto it instead of the default.
-      let queued = false
+      // he asked for while the scene was still loading.
       registerWorkshop({
-        spawn: (key) => {
-          queued = true
-          scene.spawn(key)
-        },
-        build: (model) => {
-          queued = true
-          scene.spawnBuilt(buildGenerated(model))
-        },
+        build: (model) => scene.spawnBuilt(buildGenerated(model)),
         discard: (target) => scene.discardWhere(target),
         setMode: (target, mode) => scene.setModeWhere(target, mode),
         clear: () => scene.clear(),
         items: () => scene.listItems(),
-        scad: (name, code, notes) => {
-          queued = true
-          void buildScad.current(name, code, notes)
-        },
+        scad: (name, code, notes) => void buildScad.current(name, code, notes),
         exportStl: (target) => download(scene.exportStl(target)),
         // Through a ref: this registration runs once, and must reach the
         // current render and snapshot functions, not the first ones.
         snapshot: () => void latest.current?.takeSnapshot(),
         render: (prompt) => void latest.current?.renderNow(prompt),
       })
-      // Something to hold on arrival: the reactor as a hologram (unless a
-      // project is open; its assembly is what belongs on the stage).
-      if (!queued && !useProject.getState().project) scene.spawn("reactor")
       setSpatialHandler({
         down: (id, x, y) => scene.down(id, x, y),
         move: (id, x, y) => scene.move(id, x, y),
@@ -640,7 +625,6 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
           compiling={!!compiling}
           items={stage}
           focusedId={focus?.id ?? null}
-          onProject={(key) => sceneRef.current?.spawn(key)}
           onTemplate={(label, code) => void buildScad.current(label, code)}
           onFocus={(id) => sceneRef.current?.focusId(id)}
           onDiscard={(id) => sceneRef.current?.discardId(id)}

@@ -179,3 +179,13 @@ def test_status_notes_groups_and_the_gallery(db, monkeypatch):
     [card] = wp.gallery()
     assert card["name"] == "Rover" and card["groups"] == ["Drive"] and card["errors"] >= 1
     assert "code" not in card and card["printed"][0]["code"] == "cube(5);"
+
+
+def test_wear_and_try_on():
+    p, _ = wp.normalize({"wear": {"anchor": "wrist", "group": "Band", "offset": [0, 0, 22], "scale": 9}})
+    assert p["wear"] == {"anchor": "wrist", "group": "Band", "offset": [0.0, 0.0, 22.0], "rot": [0.0, 0.0, 0.0], "scale": 5.0}
+    assert wp.normalize({"wear": {"anchor": "tail"}})[0]["wear"] is None
+    assert not wp.project_tool({"operation": "try_on"}, None)["ok"]
+    assert wp.project_tool({"operation": "try_on", "anchor": "face"}, "abc")["actions"] == [{"action": "try_on", "anchor": "face"}]
+    line = wp.state_line({"project": {"name": "Specs", "parts": 1, "try_on": {"active": True, "anchor": "face", "tracking": "tracking"}}})
+    assert "TRY-ON showing in his camera on his face: tracking" in line

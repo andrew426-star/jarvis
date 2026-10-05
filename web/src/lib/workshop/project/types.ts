@@ -47,6 +47,18 @@ export interface Placement {
   rot: number[]
 }
 
+export const ANCHORS = ["face", "wrist", "hand", "forearm", "desk"] as const
+export type Anchor = (typeof ANCHORS)[number]
+
+/** How the camera try-on wears it (app/tools/workshop_project.py WEAR_GUIDE). */
+export interface Wear {
+  anchor: Anchor
+  group?: string
+  offset: number[]
+  rot: number[]
+  scale?: number
+}
+
 export interface Project {
   id: string | null
   name: string
@@ -59,6 +71,7 @@ export interface Project {
   printed: PrintedPart[]
   layout: Record<string, Placement>
   extras: { item: string; qty: number }[]
+  wear?: Wear | null
   hex: string | null
   compiled_code: string | null
 }

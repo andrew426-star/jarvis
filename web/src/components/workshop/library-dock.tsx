@@ -1,13 +1,11 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { ChevronLeftIcon, LibraryIcon, WrenchIcon, XIcon } from "lucide-react"
 
 import { useSpatial } from "@/lib/spatial-store"
-import { CATALOGUE } from "@/lib/workshop/models"
 import { SCAD_TEMPLATES } from "@/lib/workshop/openscad"
 import type { ItemMode } from "@/lib/workshop/scene"
-import { thumbnail } from "@/lib/workshop/thumbnails"
 
 export interface StageItem {
   id: string
@@ -20,7 +18,6 @@ interface LibraryDockProps {
   compiling: boolean
   items: StageItem[]
   focusedId: string | null
-  onProject: (key: string) => void
   onTemplate: (label: string, code: string) => void
   onFocus: (id: string) => void
   onDiscard: (id: string) => void
@@ -37,8 +34,8 @@ function readOpen(): boolean {
 }
 
 // The workshop's library, docked down the left edge in place of a strip of
-// buttons in the header: the catalogue as preview cards, the printable
-// templates, and what is on the stage right now. Every control is an
+// buttons in the header: the printable templates, and what is on the
+// stage right now. Projects have their own gallery. Every control is an
 // ordinary button, so hands reach it with an air tap like anything else.
 export function LibraryDock(props: LibraryDockProps) {
   const [open, setOpen] = useState(readOpen)
@@ -99,20 +96,6 @@ export function LibraryDock(props: LibraryDockProps) {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto" style={{ padding: "var(--sp-2)" }}>
-        <Section title="SHOWPIECES">
-          <div className="grid grid-cols-2" style={{ gap: 6 }}>
-            {CATALOGUE.map((entry) => (
-              <ProjectCard
-                key={entry.key}
-                projectKey={entry.key}
-                label={entry.label}
-                disabled={!props.ready}
-                onClick={() => props.onProject(entry.key)}
-              />
-            ))}
-          </div>
-        </Section>
-
         <Section title="PRINTABLE PARTS">
           <div className="flex flex-col" style={{ gap: 4 }}>
             {SCAD_TEMPLATES.map((template) => (
@@ -141,7 +124,7 @@ export function LibraryDock(props: LibraryDockProps) {
         <Section title={`ON STAGE · ${props.items.length}`}>
           {props.items.length === 0 ? (
             <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: 0 }}>
-              Nothing yet. Pick a project or a part, or ask Jarvis to build one.
+              Nothing yet. Open a project from the gallery, pick a part, or ask Jarvis to build one.
             </p>
           ) : (
             <div className="flex flex-col" style={{ gap: 4 }}>
@@ -186,40 +169,5 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       </h3>
       {children}
     </section>
-  )
-}
-
-function ProjectCard({
-  projectKey,
-  label,
-  disabled,
-  onClick,
-}: {
-  projectKey: string
-  label: string
-  disabled: boolean
-  onClick: () => void
-}) {
-  const [image, setImage] = useState<string | null>(null)
-  useEffect(() => {
-    let live = true
-    thumbnail(projectKey)
-      .then((url) => live && setImage(url))
-      .catch(() => {})
-    return () => {
-      live = false
-    }
-  }, [projectKey])
-
-  return (
-    <button type="button" className="library-card" disabled={disabled} onClick={onClick} title={`Project ${label}`}>
-      <span className="library-card-image">
-        {image && (
-          // eslint-disable-next-line @next/next/no-img-element -- a locally rendered data URL
-          <img src={image} alt="" draggable={false} />
-        )}
-      </span>
-      <span className="t-label truncate-1">{label.toUpperCase()}</span>
-    </button>
   )
 }

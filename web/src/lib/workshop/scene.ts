@@ -10,7 +10,7 @@ import { STLExporter } from "three/addons/exporters/STLExporter.js"
 
 import { accentHex } from "@/lib/core-events"
 import { toViewport, type HandPointer } from "@/lib/hand-tracking"
-import { CATALOGUE, type BuiltItem, type ItemSpec } from "@/lib/workshop/models"
+import type { BuiltItem, ItemSpec } from "@/lib/workshop/models"
 
 // The workshop: a lit stage where items can be grabbed, thrown into a spin,
 // resized with two hands, and switched between a wireframe hologram and
@@ -309,11 +309,6 @@ export class WorkshopScene {
   }
 
   // --- public API --------------------------------------------------------
-
-  spawn(key: string) {
-    const entry = CATALOGUE.find((c) => c.key === key)
-    if (entry) this.spawnBuilt(entry.build())
-  }
 
   /** Put any built model on the stage - a catalogue piece or one Jarvis designed. */
   spawnBuilt({ object, spec }: BuiltItem) {

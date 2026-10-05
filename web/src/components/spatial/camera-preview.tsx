@@ -5,7 +5,7 @@ import {
   BellOffIcon,
   ChevronDownIcon,
   ChevronUpIcon,
-  EyeIcon,
+  GlassesIcon,
   FlipHorizontalIcon,
   HandIcon,
   Maximize2Icon,
@@ -15,11 +15,14 @@ import {
 } from "lucide-react"
 
 import { CoreCipher } from "@/components/hud/core-cipher"
+import { TryOnLayer } from "@/components/spatial/try-on-layer"
+import { useTryOn } from "@/lib/ar/store"
 import { attachVideo } from "@/lib/camera"
 import { subscribeHands } from "@/lib/hand-tracking"
 import type { WatchLevel } from "@/lib/jarvis-client"
 import { useSpatial } from "@/lib/spatial-store"
 import { useJarvis } from "@/lib/store"
+import { useProject } from "@/lib/workshop/project/store"
 
 // Pairs of landmark indices that make up the hand skeleton.
 const BONES: [number, number][] = [
@@ -111,8 +114,6 @@ function initialLayout(): Layout {
 }
 
 interface CameraPreviewProps {
-  lookDisabled: boolean
-  onLook: () => void
   onToggleHands: () => void
   onSetWatch: (level: WatchLevel | null) => void
   onSnooze: () => void
@@ -133,8 +134,6 @@ interface CameraPreviewProps {
 // his state (listening, thinking, speaking) is in view without looking
 // away, and his replies run as captions along the bottom.
 export function CameraPreview({
-  lookDisabled,
-  onLook,
   onToggleHands,
   onSetWatch,
   onSnooze,
@@ -152,6 +151,12 @@ export function CameraPreview({
   const status = useJarvis((state) => state.status)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const sectionRef = useRef<HTMLElement>(null)
+  const tryingOn = useTryOn((state) => state.active)
+  const hasProject = useProject((state) => !!state.project)
+  // The camera going off ends the try-on; it does not wait to resume.
+  useEffect(() => {
+    if (!cameraOn) useTryOn.getState().stop()
+  }, [cameraOn])
 
   // Where it was left, else bottom-left above the command bar, where it
   // has always been. The console only renders in the browser, but the
@@ -166,6 +171,12 @@ export function CameraPreview({
       return false
     }
   })
+  // A try-on wants room: it fills the console while it runs.
+  const [wasTrying, setWasTrying] = useState(false)
+  if (tryingOn !== wasTrying) {
+    setWasTrying(tryingOn)
+    if (tryingOn) setFocused(true)
+  }
   const docked = workshopOpen && !focused
   // Jarvis is told when the camera covers the chat, so he puts what is
   // longer than a sentence in a window instead (lib/console-commands.ts).
@@ -426,6 +437,7 @@ export function CameraPreview({
           style={{ transform: layout.flipped ? undefined : "scaleX(-1)" }}
         />
         <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+        <TryOnLayer mirrored={!layout.flipped} fit={focused ? "contain" : "cover"} />
 
         {handsStatus === "tracking" && (
           <span
@@ -497,12 +509,14 @@ export function CameraPreview({
         <button
           type="button"
           className="btn flex flex-1 items-center justify-center"
-          onClick={onLook}
-          disabled={lookDisabled}
+          onClick={() => (tryingOn ? useTryOn.getState().stop() : useTryOn.getState().start())}
+          disabled={!hasProject && !tryingOn}
+          data-active={tryingOn}
+          aria-pressed={tryingOn}
           style={{ gap: 6, padding: "4px 8px" }}
-          title="Ask Jarvis what he sees"
+          title={hasProject ? "Wear the open project: a hologram of it on you, live" : "Open a project in the workshop to try it on"}
         >
-          <EyeIcon size={13} /> LOOK
+          <GlassesIcon size={13} /> TRY ON
         </button>
         <button
           type="button"

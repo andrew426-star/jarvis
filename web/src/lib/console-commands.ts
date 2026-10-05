@@ -7,8 +7,10 @@ import { useSpatial } from "@/lib/spatial-store"
 import { useJarvis, type TabKey } from "@/lib/store"
 import type { GeneratedModel } from "@/lib/workshop/models"
 import type { ItemMode } from "@/lib/workshop/scene"
+import { useTryOn } from "@/lib/ar/store"
+import { startCamera } from "@/lib/camera"
 import { projectState, useProject } from "@/lib/workshop/project/store"
-import type { Project, Report } from "@/lib/workshop/project/types"
+import type { Anchor, Project, Report } from "@/lib/workshop/project/types"
 import { applyInputs, setSimSpeed, startSim, stopSim } from "@/lib/workshop/sim/controller"
 
 // Jarvis operating the console. His `console` and `workshop` tools return a
@@ -34,11 +36,12 @@ export type WorkshopAction = {
   run?: boolean
   inputs?: Record<string, unknown>
   speed?: number
+  /** try_on: where to wear it. */
+  anchor?: Anchor
 }
 
 /** What the Workshop registers while its scene is up. */
 export interface WorkshopController {
-  spawn: (key: string) => void
   build: (model: GeneratedModel) => void
   discard: (target: string) => void
   setMode: (target: string, mode: ItemMode) => void
@@ -88,6 +91,16 @@ function runWorkshopAction(step: WorkshopAction) {
     useProject.getState().load(step.project, step.report ?? null)
     return
   }
+  if (step.action === "try_on") {
+    // The try-on is worn in the camera window: bring the camera up first.
+    void startCamera()
+      .then(() => {
+        useSpatial.getState().setCameraOn(true)
+        useTryOn.getState().start((step.target as Anchor | undefined) ?? step.anchor ?? null)
+      })
+      .catch(() => useJarvis.getState().notify("warning", "Try-on", "The camera could not start."))
+    return
+  }
   if (step.action === "gallery") {
     useProject.getState().setGalleryOpen(true)
     return
@@ -112,9 +125,6 @@ function runWorkshopAction(step: WorkshopAction) {
     return
   }
   switch (step.action) {
-    case "spawn":
-      if (step.target) workshop.spawn(step.target)
-      break
     case "build":
       if (step.model) workshop.build(step.model)
       break
@@ -240,6 +250,11 @@ export function consoleState() {
     showcase: showcaseState(),
     muted: sfx.isMuted(),
     last_scad_error: lastScadError,
-    project: projectState(),
+    project: projectState() && {
+      ...projectState(),
+      try_on: useTryOn.getState().active
+        ? { active: true, anchor: useTryOn.getState().anchor ?? useProject.getState().project?.wear?.anchor ?? "face", tracking: useTryOn.getState().status }
+        : null,
+    },
   }
 }

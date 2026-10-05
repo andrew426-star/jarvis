@@ -40,15 +40,15 @@ export function assemblyName(project: Project) {
   return `${project.name} (assembly)`
 }
 
-/** Build the assembly; printed parts are compiled by `compile` (the
- *  workshop's OpenSCAD worker). Failures come back to report, not throw.
- *  `bind` makes it the one the simulation animates (the stage's); the
- *  gallery and the folder's viewer build theirs unbound. */
-export async function buildAssembly(
+/** The project in its own design frame: millimetres, z up, the origin
+ *  where its layout and SCAD put it. `placedOnly` leaves out components
+ *  with no layout position (the camera try-on, where a part lined up in
+ *  front of the origin would float in mid-air). */
+export async function buildDesign(
   project: Project,
   compile: (code: string) => Promise<Uint8Array>,
-  { bind = true }: { bind?: boolean } = {}
-): Promise<{ item: BuiltItem; failures: { name: string; error: string }[] }> {
+  { placedOnly = false }: { placedOnly?: boolean } = {}
+): Promise<{ zUp: THREE.Group; bindings: Bindings; failures: { name: string; error: string }[] }> {
   const zUp = new THREE.Group()
   const bindings: Bindings = { glow: new Map(), horn: new Map(), spin: new Map() }
   const failures: { name: string; error: string }[] = []
@@ -60,6 +60,7 @@ export async function buildAssembly(
   let cursor = -rowWidth / 2
 
   for (const part of project.parts) {
+    if (placedOnly && !project.layout[part.id]) continue
     const model = componentModel(part)
     const spot = project.layout[part.id]
     if (spot) place(model, spot.pos, spot.rot)
@@ -105,6 +106,19 @@ export async function buildAssembly(
     }
   }
 
+  return { zUp, bindings, failures }
+}
+
+/** Build the assembly; printed parts are compiled by `compile` (the
+ *  workshop's OpenSCAD worker). Failures come back to report, not throw.
+ *  `bind` makes it the one the simulation animates (the stage's); the
+ *  gallery and the folder's viewer build theirs unbound. */
+export async function buildAssembly(
+  project: Project,
+  compile: (code: string) => Promise<Uint8Array>,
+  { bind = true }: { bind?: boolean } = {}
+): Promise<{ item: BuiltItem; failures: { name: string; error: string }[] }> {
+  const { zUp, bindings, failures } = await buildDesign(project, compile)
   // OpenSCAD's z up into the workshop's y up, sat on the floor and centred.
   zUp.rotation.x = -Math.PI / 2
   const turned = new THREE.Group()
