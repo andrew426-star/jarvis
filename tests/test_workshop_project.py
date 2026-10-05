@@ -189,3 +189,28 @@ def test_wear_and_try_on():
     assert wp.project_tool({"operation": "try_on", "anchor": "face"}, "abc")["actions"] == [{"action": "try_on", "anchor": "face"}]
     line = wp.state_line({"project": {"name": "Specs", "parts": 1, "try_on": {"active": True, "anchor": "face", "tracking": "tracking"}}})
     assert "TRY-ON showing in his camera on his face: tracking" in line
+
+
+def test_wear_actions_and_finishes():
+    p, problems = wp.normalize({
+        "wear": {
+            "anchor": "chest",
+            "actions": [
+                {"name": "Unibeam", "kind": "beam", "at": [0, -10, 0], "charge": 99, "color": "#9fdcff"},
+                {"name": "Visor", "kind": "deploy", "cue": "jaw", "at": [0, 0, 40], "turn": [-70, 0, 0], "targets": ["Faceplate"]},
+                {"name": "Nope", "kind": "deploy", "at": [0, 0, 0]},
+                {"name": "Bad", "kind": "laser", "at": [0, 0, 0]},
+            ],
+        },
+        "printed": [{"name": "Shell", "code": "cube(1);", "material": "silk", "color": "#a8201a"}, {"name": "X", "code": "cube(1);", "material": "gold"}],
+    })
+    beam, visor = p["wear"]["actions"]
+    assert beam == {"name": "Unibeam", "kind": "beam", "cue": "auto", "at": [0.0, -10.0, 0.0], "dir": [0.0, -1.0, 0.0], "color": "#9fdcff", "charge": 5.0}
+    assert visor["targets"] == ["Faceplate"] and visor["turn"] == [-70.0, 0.0, 0.0] and visor["cue"] == "jaw"
+    assert any("Nope" in x for x in problems) and any("Bad" in x for x in problems)
+    assert p["printed"][0]["material"] == "silk" and p["printed"][0]["color"] == "#a8201a"
+    assert "material" not in p["printed"][1]
+    fired = wp.project_tool({"operation": "try_on", "fire": "Unibeam"}, "abc")["actions"]
+    assert fired == [{"action": "try_on", "fire": "Unibeam"}]
+    line = wp.state_line({"project": {"name": "Reactor", "parts": 1, "try_on": {"active": True, "anchor": "chest", "tracking": "tracking", "actions": [{"name": "Unibeam"}], "last_fired": "Unibeam"}}})
+    assert "actions Unibeam" in line and "last fired Unibeam" in line

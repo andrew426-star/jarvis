@@ -1,32 +1,43 @@
 import * as THREE from "three"
 
+import { real } from "@/lib/workshop/project/materials"
 import { PARTS, prop, type Part } from "@/lib/workshop/project/types"
 
 // The catalog's components in 3D at their real size, in millimetres with z
 // up - the frame OpenSCAD uses - so a printed mount and the part it holds
 // line up in the assembly exactly as they will on the bench. Built from
-// primitives: recognisable, not photographic. Sizes come from parts.json;
-// the ones marked approx there are estimates to measure before a tight fit.
+// primitives, dressed in real materials (materials.ts): solder mask over
+// copper, brushed aluminium, tinned pins, clear LED epoxy. Sizes come from
+// parts.json; the ones marked approx there are estimates to measure
+// before a tight fit.
 //
 // What the simulation moves is tagged in userData: `glow` (an LED's
 // materials, one per channel), and named groups "horn" (a servo's output)
 // and "spin" (a motor shaft or a stepper's), turned about their z axis.
 
-const mat = {
-  pcbBlue: new THREE.MeshStandardMaterial({ color: 0x0f5e8c, roughness: 0.55, metalness: 0.1 }),
-  pcbGreen: new THREE.MeshStandardMaterial({ color: 0x1d5a2c, roughness: 0.55, metalness: 0.1 }),
-  pcbRed: new THREE.MeshStandardMaterial({ color: 0x8c1d1d, roughness: 0.55, metalness: 0.1 }),
-  black: new THREE.MeshStandardMaterial({ color: 0x17191c, roughness: 0.6, metalness: 0.05 }),
-  white: new THREE.MeshStandardMaterial({ color: 0xe8e6df, roughness: 0.7, metalness: 0 }),
-  blueCase: new THREE.MeshStandardMaterial({ color: 0x2556b8, roughness: 0.5, metalness: 0.05 }),
-  metal: new THREE.MeshStandardMaterial({ color: 0xb8bec6, roughness: 0.3, metalness: 0.9 }),
-  aluminum: new THREE.MeshStandardMaterial({ color: 0xc7ccd2, roughness: 0.35, metalness: 0.85 }),
-  dark: new THREE.MeshStandardMaterial({ color: 0x2b2f35, roughness: 0.45, metalness: 0.6 }),
-  gold: new THREE.MeshStandardMaterial({ color: 0xc9a13b, roughness: 0.3, metalness: 1 }),
-  rubber: new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9, metalness: 0 }),
-  tan: new THREE.MeshStandardMaterial({ color: 0xc8a97a, roughness: 0.7, metalness: 0 }),
-  silver: new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.25, metalness: 1 }),
+function makeMaterials() {
+  return {
+    pcbBlue: real.pcb(0x0d5a8a),
+    pcbGreen: real.pcb(0x1a5a2a),
+    pcbRed: real.pcb(0x8a1c1c),
+    black: real.plastic(0x16181b, 0.6),
+    white: real.plastic(0xe8e6df, 0.7),
+    blueCase: real.plastic(0x2556b8, 0.45),
+    metal: real.metal(0xc4c8cc, 0.28),
+    aluminum: real.metal(0xc9ced4, 0.38, { brushedScale: 6 }),
+    dark: real.metal(0x34383e, 0.45),
+    gold: real.metal(0xd8ac52, 0.22),
+    rubber: real.rubber(),
+    tan: real.ceramic(0xc8a97a),
+    silver: real.metal(0xe2e4e6, 0.18, { brushedScale: 3 }),
+  }
 }
+
+// Made the first time a model is built: the textures need a document.
+let made: ReturnType<typeof makeMaterials> | null = null
+const mat = new Proxy({} as ReturnType<typeof makeMaterials>, {
+  get: (_, key) => (made ??= makeMaterials())[key as keyof ReturnType<typeof makeMaterials>],
+})
 
 const LED_COLORS: Record<string, number> = { red: 0xff2a2a, green: 0x2aff5a, yellow: 0xffd02a, white: 0xffffff, blue: 0x3a7bff, ir: 0x6a2a8a }
 
@@ -83,14 +94,7 @@ function led(part: Part): THREE.Group {
   const g = new THREE.Group()
   const rgb = part.type === "rgb_led"
   const color = rgb ? 0xffffff : LED_COLORS[String(prop(part, "color", "red"))] ?? 0xff2a2a
-  const body = new THREE.MeshStandardMaterial({
-    color,
-    emissive: color,
-    emissiveIntensity: 0,
-    transparent: true,
-    opacity: 0.8,
-    roughness: 0.2,
-  })
+  const body = real.epoxy(color)
   const dome = new THREE.Mesh(new THREE.SphereGeometry(2.5, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), body)
   dome.rotation.x = Math.PI / 2
   dome.position.z = 8.6 - 2.5 + 0.0
@@ -236,6 +240,59 @@ function rodLike(length: number, d: number, material: THREE.Material): THREE.Gro
   return g
 }
 
+/** 6 x AA in a black holder: two layers of three, the top layer showing. */
+function battery6(): THREE.Group {
+  const g = new THREE.Group()
+  g.add(box(58, 47, 2, mat.black, [0, 0, 1]))
+  for (const y of [-23, 23]) g.add(box(58, 1.5, 29, mat.black, [0, y, 14.5]))
+  const label = real.plastic(0x2f7d3a, 0.4)
+  for (const z of [8.5, 21.5]) {
+    for (const y of [-14.5, 0, 14.5]) {
+      const cell = cyl(7.1, 50.5, label, [0, y, z], 28)
+      cell.rotation.set(0, Math.PI / 2, 0)
+      g.add(cell)
+      const cap = cyl(2.6, 1.2, mat.silver, [26, y, z], 16)
+      cap.rotation.set(0, Math.PI / 2, 0)
+      g.add(cap)
+    }
+  }
+  return g
+}
+
+function fan(): THREE.Group {
+  const g = new THREE.Group()
+  const frame = new THREE.Mesh(new THREE.TorusGeometry(23, 2.5, 8, 4, Math.PI * 2), mat.black)
+  frame.rotation.z = Math.PI / 4
+  frame.scale.set(1.25, 1.25, 1.8)
+  frame.position.z = 4.75
+  g.add(frame)
+  const spin = new THREE.Group()
+  spin.name = "spin"
+  spin.position.z = 4.75
+  spin.add(cyl(9, 6, mat.black, [0, 0, 0]))
+  for (let i = 0; i < 7; i += 1) {
+    const blade = box(14, 7, 1, mat.black, [16, 0, 0])
+    blade.rotation.x = 0.5
+    const arm = new THREE.Group()
+    arm.rotation.z = (i / 7) * Math.PI * 2
+    arm.add(blade)
+    spin.add(arm)
+  }
+  g.add(spin)
+  return g
+}
+
+function enclosure(x: number, y: number, z: number): THREE.Group {
+  const g = new THREE.Group()
+  const shell = real.plastic(0x202326, 0.5)
+  g.add(box(x, y, 2.5, shell, [0, 0, 1.25]))
+  for (const s of [-1, 1]) {
+    g.add(box(x, 2.5, z, shell, [0, s * (y / 2 - 1.25), z / 2]))
+    g.add(box(2.5, y, z, shell, [s * (x / 2 - 1.25), 0, z / 2]))
+  }
+  return g
+}
+
 function generic(part: Part): THREE.Group {
   const [x = 10, y = 10, z = 5] = (PARTS[part.type]?.size as number[] | undefined) ?? []
   const kind = PARTS[part.type]?.kind
@@ -273,6 +330,10 @@ export function componentModel(part: Part): THREE.Group {
     case "wheel": g = wheel(part); break
     case "bearing_608": g = (() => { const b = new THREE.Group(); b.add(cyl(11, 7, mat.silver)); b.add(cyl(4, 7.2, mat.dark, [0, 0, 3.5])); return b })(); break
     case "lm8uu": g = (() => { const b = new THREE.Group(); const c = cyl(7.5, 24, mat.silver, [0, 0, 7.5]); c.rotation.set(0, Math.PI / 2, 0); b.add(c); return b })(); break
+    case "battery_6aa": g = battery6(); break
+    case "fan": g = fan(); break
+    case "enclosure_3x2": g = enclosure(76.2, 50.8, 27.9); break
+    case "enclosure_5x2": g = enclosure(127, 63.5, 44.5); break
     default: g = generic(part)
   }
   // The stage gives every item its own clipping plane on its materials,

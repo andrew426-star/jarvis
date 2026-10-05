@@ -31,20 +31,45 @@ MAX_CODE_CHARS = 60_000
 STATUSES = ("idea", "design", "simulate", "build", "complete")
 # Where a project is worn or set for the camera try-on, and the frame its
 # design uses there (mm; see WEAR_GUIDE).
-ANCHORS = ("face", "wrist", "hand", "forearm", "desk")
+ANCHORS = ("face", "chest", "shoulder", "upper_arm", "forearm", "wrist", "hand", "desk")
 WEAR_GUIDE = (
-    "wear: how the camera try-on shows it on him, live: {anchor, group?, offset?, rot?, scale?}. "
+    "wear: how the camera try-on shows it on him, live: {anchor, group?, offset?, rot?, scale?, actions?}. "
     "Design worn things in the anchor's own frame, in mm, so they land on him at real size. "
-    "face: origin midway between the pupils, z up, the front faces -y (OpenSCAD's front view); "
-    "lenses about 12 mm in front (y = -12), nose bridge y = -8 to -12, temples run back to the ears "
-    "about 95 mm behind (y = +95) and 70 mm either side, head about 150 mm wide. "
+    "face: origin midway between the pupils, z up, the front faces -y (OpenSCAD's front view), "
+    "x to his left; lenses about 12 mm in front (y = -12), nose bridge y = -8 to -12, temples run "
+    "back to the ears about 95 mm behind (y = +95) and 70 mm either side, head about 150 mm wide. "
+    "chest: origin on his sternum's surface, a hand's width below the collarbones; z up, front -y, "
+    "x to his left; chest about 360 mm wide, an arc reactor sits at the origin facing -y. "
+    "shoulder: origin on top of his right shoulder (flip in the try-on: the left), same axes as "
+    "chest; a shoulder is about 120 mm across, the neck about 170 mm toward +x (his middle). "
+    "upper_arm: origin on the arm's axis midway shoulder to elbow, x down the arm toward the elbow, "
+    "z out of the outside of the arm; an upper arm is about 95 x 85 mm. "
     "wrist / forearm / hand: origin on the arm's axis (wrist joint; forearm: 100 mm up the arm "
     "from it; hand: palm centre), x along the arm toward the fingers, z out of the back of the "
-    "hand; a wrist is about 60 x 40 mm, a forearm 70 x 55, so a watch face sits near z = 22 and a "
-    "bracer's shell wraps the x axis. desk: origin on the desk surface, z up, front faces -y. "
+    "hand (the palm faces -z); a wrist is about 60 x 40 mm, a forearm 70 x 55, so a watch face "
+    "sits near z = 22, a bracer's shell wraps the x axis, and from the forearm origin the palm "
+    "centre is near x = 150, z = -20. desk: origin on the desk surface, z up, front faces -y. "
     "group shows only that sub-assembly; parts with no layout position are left out of the "
     "try-on. offset (mm) and rot (degrees) nudge the whole thing in the anchor frame."
 )
+ACTION_KINDS = ("repulsor", "beam", "projectile", "deploy", "glow")
+CUES = ("auto", "palm", "fist", "point", "thwip", "jaw", "raise", "button")
+ACTION_GUIDE = (
+    "actions: what it does, simulated live in the try-on, up to 4: "
+    "[{name, kind, cue?, at: [x,y,z] mm, dir?: [x,y,z], color?, charge?, burst?, targets?, move?, turn?}], "
+    "at and dir in the design frame like the layout (put at on the emitter part's layout position). "
+    "kind repulsor: charges while the cue is held (charge s, default 0.55) then fires a blast along dir; "
+    "beam: a continuous beam while held (charge = ramp-up s); projectile: shoots along dir - a missile, "
+    "tracer rounds when burst > 3 (charge = s between rounds), or a web/line strand when the name says "
+    "web, line, grapple or cable; deploy: targets (part ids, printed names or groups) turn by turn "
+    "(degrees) about at and slide by move (mm) - a visor flipping up, a blade sliding out - toggled by "
+    "the cue; glow: always on, pulsing, the cue surges it (an arc reactor, eyes). "
+    "cue: auto (face: jaw open; hand, wrist, forearm: open palm to the camera; chest, shoulder, arm: "
+    "a hand raised above the shoulder; desk: button), palm, fist, point, thwip (index and pinky out, "
+    "middle fingers in - a web shooter), jaw, raise, or button (only its button). color: CSS colour. "
+    "Without actions the try-on guesses from the name (repulsor, arc reactor, web, missile, gun)."
+)
+FILAMENTS = ("pla", "silk", "petg", "matte", "resin", "carbon", "metal", "clear")
 MAX_NOTES_CHARS = 4000
 ID_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,15}$")
 GROUND_SOURCES = {("uno", "GND")}
@@ -71,6 +96,53 @@ def _vec(value, n: int = 3) -> list[float]:
             out.append(v if math.isfinite(v) else 0.0)
         except (IndexError, TypeError, ValueError):
             out.append(0.0)
+    return out
+
+
+_COLOR_RE = re.compile(r"^\s*(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20})\s*$")
+
+
+def _num(value, lo: float, hi: float) -> float | None:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(lo, min(hi, v)) if math.isfinite(v) else None
+
+
+def _actions(raw, problems: list[str]) -> list[dict]:
+    """A wear's simulated actions (ACTION_GUIDE), bounded."""
+    out: list[dict] = []
+    for a in (raw if isinstance(raw, list) else [])[:4]:
+        if not isinstance(a, dict):
+            continue
+        kind = a.get("kind")
+        name = str(a.get("name") or "").strip()[:24] or str(kind or "").title()
+        if kind not in ACTION_KINDS:
+            problems.append(f"action {name or '?'}: kind must be one of {', '.join(ACTION_KINDS)}")
+            continue
+        direction = _vec(a.get("dir"))
+        action = {
+            "name": name,
+            "kind": kind,
+            "cue": a.get("cue") if a.get("cue") in CUES else "auto",
+            "at": _vec(a.get("at")),
+            "dir": direction if any(direction) else [0.0, -1.0, 0.0],
+        }
+        if _COLOR_RE.match(str(a.get("color") or "")):
+            action["color"] = str(a["color"]).strip()
+        for key, lo, hi in (("charge", 0.02, 5.0), ("burst", 1, 60)):
+            v = _num(a.get(key), lo, hi)
+            if v is not None:
+                action[key] = int(v) if key == "burst" else v
+        if kind == "deploy":
+            action["targets"] = [str(t)[:60] for t in (a.get("targets") or [])[:12] if str(t).strip()]
+            action["move"] = _vec(a.get("move"))
+            action["turn"] = _vec(a.get("turn"))
+            if not action["targets"]:
+                problems.append(f"action {name}: a deploy needs targets (part ids, printed names or groups)")
+                continue
+        out.append(action)
     return out
 
 
@@ -144,6 +216,10 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         entry = {"name": str(item.get("name") or "Part")[:60], "code": code, "notes": [str(n)[:60] for n in notes[:4]]}
         if str(item.get("group") or "").strip():
             entry["group"] = str(item["group"]).strip()[:40]
+        if item.get("material") in FILAMENTS:
+            entry["material"] = item["material"]
+        if _COLOR_RE.match(str(item.get("color") or "")):
+            entry["color"] = str(item["color"]).strip()
         printed.append(entry)
 
     layout = {}
@@ -175,6 +251,9 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
             wear["scale"] = max(0.2, min(5.0, float(w.get("scale") or 1)))
         except (TypeError, ValueError):
             wear["scale"] = 1.0
+        actions = _actions(w.get("actions"), problems)
+        if actions:
+            wear["actions"] = actions
     project = {
         "id": raw.get("id"),
         "name": str(raw.get("name") or "Untitled project")[:80],
@@ -799,9 +878,10 @@ PROJECT_SCHEMA = {
             "photoresistor light 0-1, thermistor temp C, ping distance cm, adxl335 [x,y,z] g). "
             "What it does comes back in CONSOLE_STATE on his next message (serial output, LED, "
             "servo and motor states, live warnings), not in this turn. "
-            "try_on: show the open project on him, live in his camera, as a hologram anchored to "
-            "his face, wrist, hand or forearm, or set on his desk (anchor overrides the project's "
-            "wear anchor; the camera comes on). "
+            "try_on: show the open project on him, live in his camera, in its real materials, worn "
+            "on his face, chest, shoulder, upper arm, forearm, wrist or hand, or set on his desk "
+            "(anchor overrides the project's wear anchor; the camera comes on); fire: an action's "
+            "name sets it off (his gestures and its button do too). "
             "gallery: show him the project gallery (every project's finished product as a "
             "hologram on a revolving ring). list: saved projects. delete: remove one (only when he asks). "
             "Part types (id it like LED1, R1, U1): " + _types_line() + ". "
@@ -850,6 +930,8 @@ PROJECT_SCHEMA = {
                             "code": {"type": "string", "description": "OpenSCAD, as for the workshop's scad action."},
                             "notes": {"type": "array", "items": {"type": "string"}},
                             "group": {"type": "string", "description": "Sub-assembly it belongs to."},
+                            "material": {"type": "string", "enum": list(FILAMENTS), "description": "What it is printed in, for how it renders: pla, silk (shiny, metallic sheen), petg (glossy), matte, resin (smooth), carbon (carbon-fibre fill), metal (plated or painted metal finish), clear."},
+                            "color": {"type": "string", "description": "CSS colour of the filament or finish, e.g. '#a8201a' (hot-rod red), '#c9a24a' (gold)."},
                         },
                         "required": ["name", "code"],
                     },
@@ -873,9 +955,31 @@ PROJECT_SCHEMA = {
                         "offset": {"type": "array", "items": {"type": "number"}},
                         "rot": {"type": "array", "items": {"type": "number"}},
                         "scale": {"type": "number"},
+                        "actions": {
+                            "type": "array",
+                            "description": ACTION_GUIDE,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "kind": {"type": "string", "enum": list(ACTION_KINDS)},
+                                    "cue": {"type": "string", "enum": list(CUES)},
+                                    "at": {"type": "array", "items": {"type": "number"}},
+                                    "dir": {"type": "array", "items": {"type": "number"}},
+                                    "color": {"type": "string"},
+                                    "charge": {"type": "number"},
+                                    "burst": {"type": "integer"},
+                                    "targets": {"type": "array", "items": {"type": "string"}},
+                                    "move": {"type": "array", "items": {"type": "number"}},
+                                    "turn": {"type": "array", "items": {"type": "number"}},
+                                },
+                                "required": ["name", "kind", "at"],
+                            },
+                        },
                     },
                 },
                 "anchor": {"type": "string", "enum": list(ANCHORS), "description": "try_on: where to show it."},
+                "fire": {"type": "string", "description": "try_on: the name of a wear action to set off."},
                 "run": {"type": "boolean", "description": "simulate: true to start, false to stop."},
                 "inputs": {"type": "object", "description": "simulate: {part id: value}, as above."},
                 "speed": {"type": "number", "description": "simulate: 0.1-1, slow motion below 1."},
@@ -919,6 +1023,8 @@ def project_tool(args: dict, open_id: str | None) -> dict:
             action = {"action": "try_on"}
             if args.get("anchor") in ANCHORS:
                 action["anchor"] = args["anchor"]
+            if str(args.get("fire") or "").strip():
+                action["fire"] = str(args["fire"]).strip()[:24]
             return {"ok": True, "actions": [action], "note": "Showing it in his camera; tracking results arrive in CONSOLE_STATE."}
 
         if op == "gallery":
@@ -1003,5 +1109,11 @@ def state_line(state: dict | None) -> str | None:
             parts.append("simulator error: " + str(sim["error"])[:300])
     tryon = p.get("try_on") if isinstance(p.get("try_on"), dict) else None
     if tryon and tryon.get("active"):
-        parts.append(f"TRY-ON showing in his camera on his {tryon.get('anchor')}: {tryon.get('tracking') or 'searching'}")
+        line = f"TRY-ON showing in his camera on his {tryon.get('anchor')}: {tryon.get('tracking') or 'searching'}"
+        acts = [a.get("name") for a in tryon.get("actions") or [] if isinstance(a, dict)]
+        if acts:
+            line += f"; actions {', '.join(str(a) for a in acts[:4])}"
+        if tryon.get("last_fired"):
+            line += f"; last fired {tryon['last_fired']}"
+        parts.append(line)
     return "; ".join(parts) + "."

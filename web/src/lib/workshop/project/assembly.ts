@@ -1,8 +1,10 @@
 import * as THREE from "three"
 import { STLLoader } from "three/addons/loaders/STLLoader.js"
+import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js"
 
 import type { BuiltItem } from "@/lib/workshop/models"
 import { componentModel } from "@/lib/workshop/project/components3d"
+import { filament } from "@/lib/workshop/project/materials"
 import { PARTS, type Project } from "@/lib/workshop/project/types"
 import type { SimSnapshot } from "@/lib/workshop/sim/runner"
 
@@ -72,6 +74,7 @@ export async function buildDesign(
       if (width > 200) model.position.x = cursor + w / 2
       cursor += w + 12
     }
+    model.userData.group = part.group
     zUp.add(model)
     if (model.userData.glow) {
       const materials = model.userData.glow as THREE.MeshStandardMaterial[]
@@ -87,15 +90,15 @@ export async function buildDesign(
   for (const printed of project.printed) {
     try {
       const stl = await compile(printed.code)
-      const geometry = loader.parse(stl.slice().buffer)
-      const mesh = new THREE.Mesh(
-        geometry,
-        new THREE.MeshStandardMaterial({ color: 0x4a5563, roughness: 0.62, metalness: 0.08, flatShading: true })
-      )
+      // An STL is flat facets: smooth across curves, sharp at real edges.
+      const geometry = toCreasedNormals(loader.parse(stl.slice().buffer), deg(32))
+      const mesh = new THREE.Mesh(geometry, filament(printed.material, printed.color))
       mesh.castShadow = mesh.receiveShadow = true
       // Marks it printable for the scene: feature-edge hologram, and STL
       // export of the compiler's own file.
       mesh.userData.printPart = slug(printed.name)
+      mesh.userData.printedName = printed.name
+      mesh.userData.group = printed.group
       mesh.userData.stl = stl
       mesh.userData.scad = printed.code
       const spot = project.layout[printed.name]

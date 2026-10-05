@@ -2,24 +2,47 @@
 
 import * as THREE from "three"
 
-import { accentHex } from "@/lib/core-events"
+import { resolveCue } from "@/lib/ar/actions"
 import { DepthField } from "@/lib/ar/depth"
+import { ActionRig } from "@/lib/ar/effects"
+import { CameraLighting } from "@/lib/ar/lighting"
 import { PoseFilter } from "@/lib/ar/one-euro"
-import { loadTracker, track, trackReference, unproject, VERTICAL_FOV, type AnchorPose } from "@/lib/ar/tracker"
+import {
+  anchorPose,
+  loadSensor,
+  readCues,
+  referenceOf,
+  sense,
+  sensorForCue,
+  sensorReady,
+  sensorsFor,
+  unproject,
+  VERTICAL_FOV,
+  type AnchorPose,
+  type Sensor,
+} from "@/lib/ar/tracker"
+import { accentHex } from "@/lib/core-events"
 import { hologram } from "@/lib/workshop/project/holo"
-import type { Anchor, Wear } from "@/lib/workshop/project/types"
+import type { Anchor, Cue, Wear, WearAction } from "@/lib/workshop/project/types"
 
 // A project shown on Andrew through his own camera: the model drawn at
-// real size over the live picture, held to his face, wrist, hand or
-// forearm by the tracker, or set on the desk in front of him. The canvas
-// is sized to the video and laid over it with the same fit and mirroring,
-// so the model sits on the right pixels.
+// real size over the live picture, held to his face, chest, shoulder, arm,
+// wrist or hand by the tracker, or set on the desk in front of him. The
+// canvas is sized to the video and laid over it with the same fit and
+// mirroring, so the model sits on the right pixels.
 //
-// What would be behind him is hidden two ways: invisible stand-ins for
-// his head and arm, always; and, with DEPTH on, the depth model's map of
-// the whole scene, written into the depth buffer before the model is
-// drawn, so a hand passing in front of the glasses, or a mug in front of
-// something on the desk, covers it as it would a real thing.
+// In its real materials it is lit by the room (lighting.ts) and casts a
+// soft shadow onto him: the invisible stand-ins for his head, torso and
+// arm that hide what passes behind him also catch its shadow, and the
+// desk has a catcher of its own. What it does - a repulsor firing, a
+// unibeam, a launcher - plays over it (effects.ts), set off by the
+// gesture each action listens for or its button.
+//
+// What would be behind him is hidden two ways: the stand-ins, always;
+// and, with DEPTH on, the depth model's map of the whole scene, written
+// into the depth buffer before the model is drawn, so a hand passing in
+// front of the glasses, or a mug in front of something on the desk,
+// covers it as it would a real thing.
 
 const LOST_MS = 400
 /** Real surfaces count as "in front" only by this much (cm), so the body
@@ -27,6 +50,9 @@ const LOST_MS = 400
 const OCCLUSION_MARGIN = 3
 const NEAR = 1
 const FAR = 2000
+/** Where the key light comes from, relative to what it lights: above, a
+ *  little to the side, toward the camera. */
+const KEY_FROM = new THREE.Vector3(0.35, 0.8, 0.5).normalize()
 
 /** A desk placement: cm from the camera (x, y, distance), degrees. */
 export interface DeskPlacement {
@@ -40,27 +66,56 @@ export const DEFAULT_DESK: DeskPlacement = { x: 0, y: -16, distance: 55, spin: 0
 
 export type TryOnStatus = "loading" | "searching" | "tracking" | "error"
 
-function occluder(anchor: Anchor): THREE.Object3D | null {
-  const material = new THREE.MeshBasicMaterial({ colorWrite: false })
+/** The stand-ins for his body: depth only, plus the model's shadow on them. */
+function standIn(anchor: Anchor, flip: boolean): THREE.Object3D {
+  const material = new THREE.ShadowMaterial({ opacity: 0.38 })
+  // Drawn first with the opaque things, so it hides what is behind him;
+  // where no shadow falls it writes nothing visible.
+  material.transparent = false
   const g = new THREE.Group()
+  const sphere = (sx: number, sy: number, sz: number, at: [number, number, number]) => {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 24), material)
+    m.scale.set(sx, sy, sz)
+    m.position.set(...at)
+    g.add(m)
+  }
+  /** A cylinder along `axis` (design frame). */
+  const limb = (r: number, length: number, axis: "x" | "z", at: [number, number, number], flatten = 1) => {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, length, 32), material)
+    if (axis === "x") m.rotation.z = Math.PI / 2
+    else m.rotation.x = Math.PI / 2
+    m.scale.z = flatten
+    m.position.set(...at)
+    g.add(m)
+  }
   // Shapes in the design frame (mm), where the body is.
   if (anchor === "face") {
-    const head = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 24), material)
-    head.scale.set(72, 100, 110)
-    head.position.set(0, 88, -20)
-    g.add(head)
-  } else if (anchor !== "desk") {
-    const radius = anchor === "forearm" ? 34 : 29
-    const arm = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 300, 32), material)
-    arm.rotation.z = Math.PI / 2
-    arm.scale.set(1, 1, 0.75)
-    arm.position.x = anchor === "hand" ? -190 : -130
-    g.add(arm)
-    if (anchor === "hand") g.add(new THREE.Mesh(new THREE.BoxGeometry(95, 85, 28), material))
+    sphere(72, 100, 110, [0, 88, -20])
+  } else if (anchor === "chest") {
+    sphere(185, 120, 300, [0, 120, -170])
+    limb(55, 160, "z", [0, 100, 190])
+  } else if (anchor === "shoulder") {
+    sphere(62, 62, 62, [0, 0, -55])
+    limb(46, 300, "z", [0, 0, -210])
+    // His torso, toward his middle from whichever shoulder it is.
+    sphere(160, 110, 260, [flip ? -180 : 180, 70, -180])
+  } else if (anchor === "upper_arm") {
+    limb(46, 330, "x", [0, 0, 0], 0.9)
+    sphere(60, 60, 60, [-170, 0, 0])
+  } else if (anchor === "desk") {
+    // The desk itself: catches the shadow, and hides what goes below it.
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(700, 700), new THREE.ShadowMaterial({ opacity: 0.45 }))
+    ;(plane.material as THREE.ShadowMaterial).transparent = false
+    g.add(plane)
   } else {
-    return null
+    const radius = anchor === "forearm" ? 34 : 29
+    limb(radius, 300, "x", [anchor === "hand" ? -190 : -130, 0, 0], 0.75)
+    if (anchor === "hand") g.add(new THREE.Mesh(new THREE.BoxGeometry(95, 85, 28), material))
   }
-  g.traverse((node) => (node.renderOrder = -1))
+  g.traverse((node) => {
+    node.renderOrder = -1
+    node.receiveShadow = true
+  })
   return g
 }
 
@@ -108,9 +163,14 @@ function occlusionPass() {
 export class TryOnScene {
   private readonly renderer: THREE.WebGLRenderer
   private readonly scene = new THREE.Scene()
+  /** Drawn last, over everything: light spilling across the picture. */
+  private readonly overlay = new THREE.Scene()
   private readonly camera = new THREE.PerspectiveCamera(VERTICAL_FOV, 16 / 9, NEAR, FAR)
   private readonly flat = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
   private readonly occlusion = occlusionPass()
+  private readonly sky = new THREE.HemisphereLight(0xdfefff, 0x202020, 1.2)
+  private readonly key = new THREE.DirectionalLight(0xffffff, 1.6)
+  private readonly lighting: CameraLighting
   /** Posed at the anchor (cm, camera space). */
   private readonly anchorRoot = new THREE.Group()
   /** The wear nudges, then millimetres to centimetres. */
@@ -122,8 +182,17 @@ export class TryOnScene {
   private flip = false
   private desk: DeskPlacement = { ...DEFAULT_DESK }
   private depth: DepthField | null = null
+  private actions: WearAction[] = []
+  private rig: ActionRig | null = null
+  private gestures = true
+  private pending: (string | undefined)[] = []
+  private cues = new Set<Cue>()
+  /** Sensors to run each frame: the anchor's, its extras, the cues'. */
+  private sensors = new Set<Sensor>()
+  private cueSensors = new Set<Sensor>()
   private lastSeen = 0
   private lastVideoTime = -1
+  private lastFrame = performance.now()
   private frameCount = 0
   private smoothed: AnchorPose | null = null
   private raf = 0
@@ -134,16 +203,28 @@ export class TryOnScene {
     private readonly canvas: HTMLCanvasElement,
     private readonly getVideo: () => HTMLVideoElement | null,
     private readonly onStatus: (status: TryOnStatus, detail?: string) => void,
-    private readonly onDepth: (text: string | null, ready: boolean, error?: boolean) => void
+    private readonly onDepth: (text: string | null, ready: boolean, error?: boolean) => void,
+    private readonly onAction: (name: string) => void = () => {}
   ) {
     this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
     this.renderer.setClearColor(0x000000, 0)
     this.renderer.autoClear = false
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.scene.add(new THREE.HemisphereLight(0xdfefff, 0x202020, 1.6))
-    const key = new THREE.DirectionalLight(0xffffff, 1.6)
-    key.position.set(30, 60, 80)
-    this.scene.add(key)
+    this.renderer.shadowMap.enabled = true
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
+    this.scene.add(this.sky)
+    this.key.castShadow = true
+    this.key.shadow.mapSize.set(1024, 1024)
+    const s = this.key.shadow.camera
+    s.left = s.bottom = -30
+    s.right = s.top = 30
+    s.near = 1
+    s.far = 300
+    this.key.shadow.bias = -0.0005
+    this.key.shadow.normalBias = 0.04
+    this.key.shadow.radius = 4
+    this.scene.add(this.key, this.key.target)
+    this.lighting = new CameraLighting(this.renderer, this.scene, this.sky, this.key)
     this.design.scale.setScalar(0.1)
     this.anchorRoot.add(this.design)
     this.scene.add(this.anchorRoot)
@@ -155,8 +236,9 @@ export class TryOnScene {
     if (this.model) this.design.remove(this.model)
     this.model = zUp
     if (mode === "holo") hologram(zUp, accentHex())
-    else hologram(zUp, accentHex(), { solid: true, opacity: 0.6 })
+    else zUp.traverse((node) => (node.castShadow = (node as THREE.Mesh).isMesh))
     this.design.add(zUp)
+    this.rebuildRig()
   }
 
   setWear(wear: Pick<Wear, "offset" | "rot" | "scale">) {
@@ -172,20 +254,65 @@ export class TryOnScene {
     this.anchor = anchor
     this.smoothed = null
     this.filter.reset()
-    if (this.stand) this.design.remove(this.stand)
-    this.stand = occluder(anchor)
-    if (this.stand) this.design.add(this.stand)
+    this.placeStand()
+    const { need, extra } = sensorsFor(anchor)
+    this.sensors = new Set([...need, ...extra, ...this.cueSensors])
+    this.rebuildRig()
     this.report("loading")
+    // Extras improve the fit; never wait for them, never fail on them.
+    for (const s of extra) void loadSensor(s).catch(() => {})
     try {
-      await loadTracker(anchor)
+      await Promise.all(need.map(loadSensor))
       if (!this.disposed) this.report(anchor === "desk" ? "tracking" : "searching")
     } catch (err) {
       this.report("error", err instanceof Error ? err.message : String(err))
     }
   }
 
+  /** What it does, and the gestures that set it off. */
+  setActions(actions: WearAction[]) {
+    this.actions = actions
+    this.cueSensors = new Set(
+      actions.flatMap((a) => {
+        const s = sensorForCue(resolveCue(a.cue, this.anchor))
+        return s ? [s] : []
+      })
+    )
+    for (const s of this.cueSensors) {
+      this.sensors.add(s)
+      void loadSensor(s).catch(() => {})
+    }
+    this.rebuildRig()
+  }
+
+  /** Gestures on or off (the buttons always work). */
+  setGestures(on: boolean) {
+    this.gestures = on
+  }
+
+  /** Fire an action by name (or the first), as its button does. */
+  press(name?: string) {
+    if (!this.rig) this.pending.push(name)
+    else this.rig.press(name)
+  }
+
+  private rebuildRig() {
+    this.rig?.dispose()
+    this.rig = null
+    if (!this.model || !this.actions.length) return
+    this.rig = new ActionRig(this.scene, this.overlay, this.model, this.actions, (cue) => resolveCue(cue, this.anchor), this.onAction)
+    for (const name of this.pending.splice(0)) this.rig.press(name)
+  }
+
   setFlip(flip: boolean) {
     this.flip = flip
+    if (this.anchor === "shoulder") this.placeStand()
+  }
+
+  private placeStand() {
+    if (this.stand) this.design.remove(this.stand)
+    this.stand = standIn(this.anchor, this.flip)
+    this.design.add(this.stand)
   }
 
   setDesk(desk: DeskPlacement) {
@@ -198,7 +325,10 @@ export class TryOnScene {
       this.depth = new DepthField(this.getVideo, (text, ready, error) => this.onDepth(text, ready, error))
       this.depth.start()
       // The desk has no body part of known size: the face is its yardstick.
-      if (this.anchor === "desk") void loadTracker("face").catch(() => {})
+      if (this.anchor === "desk") {
+        this.sensors.add("face")
+        void loadSensor("face").catch(() => {})
+      }
     } else if (!on && this.depth) {
       this.depth.stop()
       this.depth = null
@@ -229,6 +359,15 @@ export class TryOnScene {
     return { position: new THREE.Vector3(d.x, d.y, -d.distance), quaternion: upright.multiply(spin) }
   }
 
+  /** The sensors to run on this frame. */
+  private running(): Sensor[] {
+    const out = [...this.sensors].filter(sensorReady)
+    // At the desk the face is only the depth map's yardstick: every few
+    // frames is plenty, unless a gesture is read from it.
+    if (this.anchor === "desk" && !this.cueSensors.has("face") && this.frameCount++ % 4 !== 0) return out.filter((s) => s !== "face")
+    return out
+  }
+
   private frame = () => {
     if (this.disposed) return
     this.raf = requestAnimationFrame(this.frame)
@@ -239,34 +378,28 @@ export class TryOnScene {
       this.camera.aspect = video.videoWidth / video.videoHeight
       this.camera.updateProjectionMatrix()
     }
+    const now = performance.now()
+    const dt = Math.min(0.1, (now - this.lastFrame) / 1000)
+    this.lastFrame = now
+    this.lighting.update(video, now)
 
     let pose: AnchorPose | null = null
     const fresh = video.currentTime !== this.lastVideoTime
-    if (this.anchor === "desk") {
-      pose = this.deskPose()
-      // Every few frames, his face to keep the depth map in centimetres.
-      if (this.depth && fresh && this.frameCount++ % 4 === 0) {
-        try {
-          const ref = trackReference(video)
-          if (ref) this.depth.setReference(ref)
-        } catch {
-          // A missed reference just keeps the last scale.
-        }
-      }
-    } else if (this.status !== "loading" && this.status !== "error" && fresh) {
+    if (this.status !== "loading" && this.status !== "error" && fresh) {
       try {
-        const tracked = track(video, this.anchor, this.flip)
-        if (tracked) {
-          pose = tracked.pose
-          this.depth?.setReference(tracked.reference)
-        }
+        const senses = sense(video, this.running(), this.flip)
+        const tracked = anchorPose(senses, this.anchor, this.flip)
+        if (tracked) pose = tracked.pose
+        const ref = referenceOf(senses, tracked)
+        if (ref) this.depth?.setReference(ref)
+        this.cues = readCues(senses)
       } catch {
         pose = null
       }
     }
     if (fresh) this.lastVideoTime = video.currentTime
+    if (this.anchor === "desk") pose = this.deskPose()
 
-    const now = performance.now()
     if (pose) {
       this.lastSeen = now
       this.smoothed = this.anchor === "desk" ? pose : this.filter.apply(pose.position, pose.quaternion, now / 1000)
@@ -281,7 +414,12 @@ export class TryOnScene {
     if (this.smoothed) {
       this.anchorRoot.position.copy(this.smoothed.position)
       this.anchorRoot.quaternion.copy(this.smoothed.quaternion)
+      // The key light rides with the model, so its shadow map stays tight on it.
+      this.key.target.position.copy(this.smoothed.position)
+      this.key.position.copy(this.smoothed.position).addScaledVector(KEY_FROM, 120)
     }
+    this.anchorRoot.updateMatrixWorld(true)
+    this.rig?.update(dt, this.cues, this.gestures, visible, this.camera)
 
     this.renderer.clear()
     const depth = this.depth
@@ -291,12 +429,15 @@ export class TryOnScene {
       this.renderer.render(this.occlusion.scene, this.flat)
     }
     this.renderer.render(this.scene, this.camera)
+    this.renderer.render(this.overlay, this.flat)
   }
 
   dispose() {
     this.disposed = true
     cancelAnimationFrame(this.raf)
     this.depth?.stop()
+    this.rig?.dispose()
+    this.lighting.dispose()
     this.scene.traverse((node) => {
       const mesh = node as THREE.Mesh
       mesh.geometry?.dispose()

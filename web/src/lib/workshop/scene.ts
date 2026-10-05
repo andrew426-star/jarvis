@@ -240,7 +240,6 @@ export class WorkshopScene {
   private floor!: THREE.Mesh
   private floorGrid!: THREE.GridHelper
   private readonly hands: HandRig[] = []
-  private passthrough: THREE.VideoTexture | null = null
   private raf = 0
   private observer: ResizeObserver
 
@@ -832,32 +831,6 @@ export class WorkshopScene {
     })
   }
 
-  /** Show the live camera, mirrored and dimmed, behind the workshop. */
-  setPassthrough(video: HTMLVideoElement | null) {
-    this.passthrough?.dispose()
-    this.passthrough = null
-    const floorMaterial = this.floor.material as THREE.MeshStandardMaterial
-    if (video) {
-      const texture = new THREE.VideoTexture(video)
-      texture.colorSpace = THREE.SRGBColorSpace
-      texture.wrapS = THREE.RepeatWrapping
-      texture.repeat.x = -1 // selfie view, matching the camera preview
-      this.passthrough = texture
-      this.scene.background = texture
-      this.scene.backgroundIntensity = 0.4
-      this.scene.fog = null
-      floorMaterial.transparent = true
-      floorMaterial.opacity = 0.35
-    } else {
-      this.scene.background = new THREE.Color(0x02050a)
-      this.scene.backgroundIntensity = 1
-      this.scene.fog = new THREE.Fog(0x02050a, 14, 34)
-      floorMaterial.transparent = false
-      floorMaterial.opacity = 1
-    }
-    floorMaterial.needsUpdate = true
-  }
-
   zoom(factor: number) {
     this.radius = THREE.MathUtils.clamp(this.radius * factor, 3.5, 18)
   }
@@ -872,7 +845,6 @@ export class WorkshopScene {
 
   dispose() {
     cancelAnimationFrame(this.raf)
-    this.passthrough?.dispose()
     this.observer.disconnect()
     this.clear()
     this.scene.traverse((node) => {

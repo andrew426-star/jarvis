@@ -8,6 +8,9 @@ import { useJarvis, type TabKey } from "@/lib/store"
 import type { GeneratedModel } from "@/lib/workshop/models"
 import type { ItemMode } from "@/lib/workshop/scene"
 import { useTryOn } from "@/lib/ar/store"
+import { findMaterial } from "@/lib/workshop/lab/catalog"
+import { labState, useLab } from "@/lib/workshop/lab/store"
+import { TESTS, type LabTest } from "@/lib/workshop/lab/tests"
 import { startCamera } from "@/lib/camera"
 import { projectState, useProject } from "@/lib/workshop/project/store"
 import type { Anchor, Project, Report } from "@/lib/workshop/project/types"
@@ -38,6 +41,13 @@ export type WorkshopAction = {
   speed?: number
   /** try_on: where to wear it. */
   anchor?: Anchor
+  /** try_on: an action to set off (its name), once it is on. */
+  fire?: string
+  /** material_test: materials (ids or names), the test, its settings. */
+  materials?: string[]
+  test?: string
+  height?: number
+  max_temp?: number
 }
 
 /** What the Workshop registers while its scene is up. */
@@ -49,7 +59,6 @@ export interface WorkshopController {
   items: () => { name: string; mode: ItemMode }[]
   scad: (name: string, code: string, notes: string[]) => void
   exportStl: (target?: string) => void
-  snapshot: () => void
   render: (prompt?: string) => void
 }
 
@@ -96,9 +105,24 @@ function runWorkshopAction(step: WorkshopAction) {
     void startCamera()
       .then(() => {
         useSpatial.getState().setCameraOn(true)
-        useTryOn.getState().start((step.target as Anchor | undefined) ?? step.anchor ?? null)
+        const tryOn = useTryOn.getState()
+        // Already on: keep it as it is and just fire.
+        if (!tryOn.active || !step.fire) tryOn.start((step.target as Anchor | undefined) ?? step.anchor ?? null)
+        if (step.fire) useTryOn.getState().press(step.fire)
       })
       .catch(() => useJarvis.getState().notify("warning", "Try-on", "The camera could not start."))
+    return
+  }
+  if (step.action === "material_test") {
+    // The lab is an overlay with its own scene: it needs no stage.
+    const lab = useLab.getState()
+    const ids = (step.materials ?? []).map((name) => findMaterial(name)?.id).filter((id): id is string => !!id)
+    if (ids.length) lab.setMaterials(ids)
+    if (step.test && (TESTS as readonly string[]).includes(step.test)) lab.setTest(step.test as LabTest)
+    if (step.height) lab.setParams({ dropHeight: Math.min(3, Math.max(0.1, step.height)) })
+    if (step.max_temp) lab.setParams({ maxTemp: Math.min(1200, Math.max(100, step.max_temp)) })
+    lab.setOpen(true)
+    useLab.getState().start()
     return
   }
   if (step.action === "gallery") {
@@ -142,9 +166,6 @@ function runWorkshopAction(step: WorkshopAction) {
       break
     case "export_stl":
       workshop.exportStl(step.target)
-      break
-    case "snapshot":
-      workshop.snapshot()
       break
     case "render":
       workshop.render(step.prompt)
@@ -250,10 +271,17 @@ export function consoleState() {
     showcase: showcaseState(),
     muted: sfx.isMuted(),
     last_scad_error: lastScadError,
+    material_lab: labState(),
     project: projectState() && {
       ...projectState(),
       try_on: useTryOn.getState().active
-        ? { active: true, anchor: useTryOn.getState().anchor ?? useProject.getState().project?.wear?.anchor ?? "face", tracking: useTryOn.getState().status }
+        ? {
+            active: true,
+            anchor: useTryOn.getState().anchor ?? useProject.getState().project?.wear?.anchor ?? "face",
+            tracking: useTryOn.getState().status,
+            actions: useTryOn.getState().actions,
+            last_fired: useTryOn.getState().lastFired?.name ?? null,
+          }
         : null,
     },
   }

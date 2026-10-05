@@ -897,3 +897,25 @@ export async function saveProject(project: Project, token: string): Promise<Proj
   })
   return res.json()
 }
+
+// --- the phone camera link (lib/phone-camera.ts) -------------------------------
+
+const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+
+/** A code for the desktop to show; the phone types it in. */
+export async function openCameraLink(token: string): Promise<{ code: string; expires_in: number }> {
+  return (await jarvisFetch("/camera-link/open", token, { method: "POST" })).json()
+}
+
+export async function postCameraSdp(code: string, kind: "offer" | "answer", sdp: string, token: string): Promise<void> {
+  await jarvisFetch(`/camera-link/${encodeURIComponent(code)}/${kind}`, token, json({ sdp }))
+}
+
+export async function getCameraSdp(code: string, kind: "offer" | "answer", token: string): Promise<string | null> {
+  const res = await jarvisFetch(`/camera-link/${encodeURIComponent(code)}/${kind}`, token, { method: "GET", cache: "no-store" })
+  return ((await res.json()) as { sdp: string | null }).sdp
+}
+
+export async function closeCameraLink(code: string, token: string): Promise<void> {
+  await jarvisFetch(`/camera-link/${encodeURIComponent(code)}`, token, { method: "DELETE" })
+}

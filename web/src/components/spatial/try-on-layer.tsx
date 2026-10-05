@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { FlipHorizontal2Icon, Layers3Icon, MinusIcon, PlusIcon, XIcon } from "lucide-react"
+import { FlipHorizontal2Icon, HandIcon, Layers3Icon, MinusIcon, PlusIcon, XIcon, ZapIcon } from "lucide-react"
 
+import { resolveActions, resolveCue } from "@/lib/ar/actions"
 import { useTryOn } from "@/lib/ar/store"
 import type { TryOnScene } from "@/lib/ar/tryon-scene"
 import { getVideo } from "@/lib/camera"
@@ -14,16 +15,40 @@ import { ANCHORS, type Anchor } from "@/lib/workshop/project/types"
 
 // The try-on, inside the camera window: a canvas over the video, fitted
 // and mirrored exactly like it, with the open project worn on Andrew, and
-// a strip of controls - where to wear it, hologram or solid, size, and
-// for the desk, drag to move and the wheel to turn it.
+// a strip of controls - where to wear it, hologram or real materials,
+// size, and for the desk, drag to move and the wheel to turn it - and the
+// project's actions: a button each (Space fires the first), and whether
+// his gestures fire them.
 
-const ANCHOR_LABEL: Record<Anchor, string> = { face: "FACE", wrist: "WRIST", hand: "HAND", forearm: "FOREARM", desk: "DESK" }
+const ANCHOR_LABEL: Record<Anchor, string> = {
+  face: "FACE",
+  chest: "CHEST",
+  shoulder: "SHOULDER",
+  upper_arm: "ARM",
+  forearm: "FOREARM",
+  wrist: "WRIST",
+  hand: "HAND",
+  desk: "DESK",
+}
 const HINT: Record<Anchor, string> = {
   face: "FACE THE CAMERA",
+  chest: "STEP BACK SO YOUR SHOULDERS ARE IN VIEW",
+  shoulder: "STEP BACK SO YOUR SHOULDERS ARE IN VIEW",
+  upper_arm: "STEP BACK SO YOUR SHOULDER AND ELBOW ARE IN VIEW",
   wrist: "HOLD YOUR WRIST UP, BACK OF THE HAND TO THE CAMERA",
   hand: "HOLD YOUR HAND UP",
   forearm: "HOLD YOUR FOREARM IN VIEW, HAND OPEN",
   desk: "DRAG TO MOVE · WHEEL TO TURN · DEPTH ON: CLICK A SURFACE TO SET IT THERE",
+}
+/** What to do to fire, by cue. */
+const CUE_HINT: Record<string, string> = {
+  palm: "OPEN PALM TO THE CAMERA",
+  fist: "MAKE A FIST",
+  point: "POINT",
+  thwip: "INDEX + PINKY OUT, MIDDLE FINGERS IN",
+  jaw: "OPEN YOUR MOUTH",
+  raise: "RAISE A HAND ABOVE YOUR SHOULDER",
+  button: "BUTTON / SPACE",
 }
 
 export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" | "contain" }) {
@@ -40,9 +65,15 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
   const depthText = useTryOn((s) => s.depthText)
   const depthReady = useTryOn((s) => s.depthReady)
   const detail = useTryOn((s) => s.detail)
+  const actions = useTryOn((s) => s.actions)
+  const gestures = useTryOn((s) => s.gestures)
+  const fire = useTryOn((s) => s.fire)
+  const hot = useTryOn((s) => s.flash)
   const project = useProject((s) => s.project)
   const version = useProject((s) => s.version)
   const anchor: Anchor = chosen ?? project?.wear?.anchor ?? "face"
+  /** The last fire request the scene has had. */
+  const handled = useRef(0)
   const drag = useRef<{ x: number; y: number; desk: typeof desk } | null>(null)
 
   // The scene lives while the try-on is on, and gets a fresh model when
@@ -58,7 +89,8 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
         canvas,
         getVideo,
         (s, d) => useTryOn.getState().setStatus(s, d ?? null),
-        (text, ready) => useTryOn.getState().setDepthStatus(text, ready)
+        (text, ready) => useTryOn.getState().setDepthStatus(text, ready),
+        (name) => useTryOn.getState().fired(name)
       )
       sceneRef.current = scene
       const group = project.wear?.group
@@ -79,6 +111,14 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
       scene.setDesk(useTryOn.getState().desk)
       await scene.setAnchor(anchor)
       scene.setDepth(useTryOn.getState().depth)
+      const worn = resolveActions(project, anchor)
+      scene.setGestures(useTryOn.getState().gestures)
+      scene.setActions(worn)
+      useTryOn.getState().setActions(worn.map((a) => ({ name: a.name, cue: resolveCue(a.cue, anchor) })))
+      // A fire asked for while it was starting up (Jarvis: try it on and fire).
+      const asked = useTryOn.getState().fire
+      if (asked.seq > handled.current && Date.now() - asked.at < 10_000) scene.press(asked.name ?? undefined)
+      handled.current = asked.seq
     })
     return () => {
       disposed = true
@@ -96,6 +136,25 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
   useEffect(() => sceneRef.current?.setFlip(flip), [flip])
   useEffect(() => sceneRef.current?.setDesk(desk), [desk])
   useEffect(() => sceneRef.current?.setDepth(depth), [depth])
+  useEffect(() => sceneRef.current?.setGestures(gestures), [gestures])
+  useEffect(() => {
+    if (!fire.seq || !sceneRef.current) return
+    sceneRef.current.press(fire.name ?? undefined)
+    handled.current = fire.seq
+  }, [fire])
+  // Space fires the first action (not while typing).
+  useEffect(() => {
+    if (!active) return
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null
+      if (e.code !== "Space" || e.repeat || el?.closest("input, textarea, [contenteditable=true]")) return
+      if (!useTryOn.getState().actions.length) return
+      e.preventDefault()
+      useTryOn.getState().press(null)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [active])
 
   /** A pointer position as a point of the (unmirrored) picture, 0-1,
    *  through the canvas's own fit and mirroring. */
@@ -167,8 +226,8 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
           ))}
         </div>
         <div className="flex items-center" style={{ gap: 3, padding: 3, ...pill }}>
-          <button type="button" className="btn" data-active={mode === "holo"} style={{ padding: "2px 6px", fontSize: 10 }} onClick={() => set({ mode: mode === "holo" ? "solid" : "holo" })} title="Hologram or real materials">
-            {mode === "holo" ? "HOLO" : "SOLID"}
+          <button type="button" className="btn" data-active={mode === "holo"} style={{ padding: "2px 6px", fontSize: 10 }} onClick={() => set({ mode: mode === "holo" ? "solid" : "holo" })} title="Hologram, or real materials lit by your room">
+            {mode === "holo" ? "HOLO" : "REAL"}
           </button>
           <button type="button" className="btn" style={{ width: 20, height: 20, padding: 0 }} onClick={() => set({ scale: Math.max(0.5, +(scale - 0.05).toFixed(2)) })} aria-label="Smaller">
             <MinusIcon size={11} className="mx-auto" />
@@ -187,8 +246,8 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
           >
             <Layers3Icon size={10} /> DEPTH
           </button>
-          {anchor !== "face" && anchor !== "desk" && (
-            <button type="button" className="btn" data-active={flip} style={{ width: 20, height: 20, padding: 0 }} onClick={() => set({ flip: !flip })} title="On the wrong side of the hand? Flip it" aria-label="Flip to the other side">
+          {anchor !== "face" && anchor !== "desk" && anchor !== "chest" && (
+            <button type="button" className="btn" data-active={flip} style={{ width: 20, height: 20, padding: 0 }} onClick={() => set({ flip: !flip })} title={anchor === "shoulder" || anchor === "upper_arm" ? "Wear it on the other side" : "On the wrong side of the hand? Flip it"} aria-label="Flip to the other side">
               <FlipHorizontal2Icon size={11} className="mx-auto" />
             </button>
           )}
@@ -197,6 +256,43 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
           </button>
         </div>
       </div>
+
+      {actions.length > 0 && (
+        <div className="absolute flex flex-col items-end" style={{ right: 6, bottom: 6, gap: 4 }}>
+          <div className="flex items-center" style={{ gap: 3, padding: 3, ...pill }}>
+            <button
+              type="button"
+              className="btn flex items-center"
+              data-active={gestures}
+              style={{ gap: 3, padding: "2px 6px", fontSize: 10 }}
+              onClick={() => set({ gestures: !gestures })}
+              title="Fire the actions with gestures (the buttons and Space always work)"
+            >
+              <HandIcon size={10} /> GESTURES
+            </button>
+            {actions.map((a, i) => {
+              return (
+                <button
+                  key={a.name}
+                  type="button"
+                  className="btn flex items-center"
+                  data-active={hot === a.name}
+                  style={{ gap: 3, padding: "2px 6px", fontSize: 10 }}
+                  onClick={() => useTryOn.getState().press(a.name)}
+                  title={`${a.name}: ${gestures ? CUE_HINT[a.cue] ?? "BUTTON" : "BUTTON"}${i === 0 ? " · SPACE" : ""}`}
+                >
+                  <ZapIcon size={10} /> {a.name.toUpperCase()}
+                </button>
+              )
+            })}
+          </div>
+          {gestures && status === "tracking" && (
+            <span className="t-label pointer-events-none" style={{ padding: "2px 8px", color: "var(--accent)", ...pill }}>
+              {actions.map((a) => `${a.name.toUpperCase()}: ${CUE_HINT[a.cue] ?? "BUTTON"}`).join(" · ")}
+            </span>
+          )}
+        </div>
+      )}
 
       {depth && depthText && (
         <span className="t-label pointer-events-none absolute" style={{ left: 6, bottom: 6, padding: "2px 8px", color: depthReady ? "var(--accent)" : "var(--warning)", ...pill }}>

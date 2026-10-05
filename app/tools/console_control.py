@@ -4,6 +4,9 @@ from collections.abc import Callable
 from app.core.gemini import AllModelsExhausted, GeminiNotConfigured
 from app.integrations.gemini_scad import scad_from_frame
 
+# The material lab's tests (web/src/lib/workshop/lab/tests.ts).
+LAB_TESTS = ("tensile", "drop", "bend", "heat")
+
 # Jarvis driving his own console. These tools run on the server but act in
 # Andrew's browser: each one validates what the model asked for and returns
 # it as `actions`, which the console carries out, in order, the moment the
@@ -70,6 +73,16 @@ SCAD_GUIDE = (
     "CONSOLE_STATE shows last_scad_error, your previous part failed to compile: fix the code and "
     "send it again. "
     "export_stl: download an item's STL (and .scad) - target: its name, 'last' or 'all'. "
+    "material_test: run the workshop's material lab - up to six materials side by side, shown in "
+    "their real materials as they go through the test: tensile (pulled to failure: modulus, "
+    "yield, ultimate strength, elongation, toughness), drop (a 20 mm ball onto a steel anvil "
+    "from `height` m: shatters, dents or bounces, with peak force), bend (100 mm three-point "
+    "bend: stiffness, break load or whether it just yields) or heat (a loaded cantilever heated "
+    "to `max_temp` C: where it sags, softens, melts or chars). materials by name: natural "
+    "rubber, silicone, TPU, PLA, PETG, ABS, nylon, PLA carbon fibre, SLA resin, acrylic, "
+    "polycarbonate, soda-lime glass, tempered glass, aluminium 6061, mild steel, stainless 304, "
+    "titanium, copper, carbon fibre, oak, concrete. The results come back in CONSOLE_STATE "
+    "(material_lab) on his next message; use them to recommend a material. "
     "render: a photoreal image of the current workshop view, made by Gemini's image model and "
     "shown in the workshop; `prompt` is the art direction - materials, finish, colour, lighting, "
     "setting (e.g. 'matte black PLA on a walnut desk beside a monitor, warm evening lamp light'). "
@@ -84,8 +97,6 @@ SCAD_GUIDE = (
     "off, turn it on with the console tool and ask him to hold the object up. Size is judged "
     "from the frame unless he gives it, so say which dimensions are estimates and offer to "
     "adjust. "
-    "snapshot: save the view as a PNG to download - for Veras (EvolveLAB's renderer, which has "
-    "no API; he uploads it himself, and you can give him a Veras prompt) or anything else. "
 )
 
 CONSOLE_SCHEMA = {
@@ -183,7 +194,7 @@ WORKSHOP_SCHEMA = {
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["build", "scad", "capture", "export_stl", "render", "snapshot", "discard", "set_mode", "clear"],
+                                "enum": ["build", "scad", "capture", "export_stl", "render", "material_test", "discard", "set_mode", "clear"],
                             },
                             "target": {"type": "string"},
                             "name": {"type": "string", "description": "scad or capture: the part's name."},
@@ -191,6 +202,10 @@ WORKSHOP_SCHEMA = {
                             "notes": {"type": "array", "items": {"type": "string"}, "description": "scad: 2-4 key dimensions."},
                             "prompt": {"type": "string", "description": "render: art direction. capture: what to model from the camera."},
                             "mode": {"type": "string", "enum": ["holo", "solid"]},
+                            "materials": {"type": "array", "items": {"type": "string"}, "description": "material_test: up to 6 materials by name."},
+                            "test": {"type": "string", "enum": list(LAB_TESTS), "description": "material_test: which test."},
+                            "height": {"type": "number", "description": "material_test drop: metres, 0.1-3 (default 1)."},
+                            "max_temp": {"type": "number", "description": "material_test heat: top of the ramp, C, 100-1200 (default 800)."},
                             "model": {
                                 "type": "object",
                                 "properties": {
@@ -345,11 +360,18 @@ def workshop(args: dict, frame_b64: str | None = None, frame_type: str = "image/
                 problems.append(error)
                 continue
             actions.append(captured)
-        elif action == "snapshot":
-            actions.append({"action": "snapshot"})
         elif action == "render":
             prompt = str(raw.get("prompt") or "").strip()[:600]
             actions.append({"action": "render", "prompt": prompt} if prompt else {"action": "render"})
+        elif action == "material_test":
+            materials = [str(m).strip()[:40] for m in (raw.get("materials") or []) if str(m).strip()][:6]
+            test = raw.get("test") if raw.get("test") in LAB_TESTS else "tensile"
+            step = {"action": "material_test", "materials": materials, "test": test}
+            if raw.get("height") is not None:
+                step["height"] = _num(raw.get("height"), 1, 0.1, 3)
+            if raw.get("max_temp") is not None:
+                step["max_temp"] = _num(raw.get("max_temp"), 800, 100, 1200)
+            actions.append(step)
         elif action == "export_stl":
             actions.append({"action": "export_stl", "target": target or "last"})
         elif action == "discard":
@@ -381,6 +403,21 @@ CONSOLE_CONTROL_NOTE = (
     "say briefly what you did. You cannot touch other applications on his computer - only this "
     "console - so if he asks you to close something outside it, say so plainly."
 )
+
+
+def _lab_note(lab) -> str:
+    """The material lab's last run, for comparing and recommending."""
+    if not isinstance(lab, dict) or not lab.get("results"):
+        return ""
+    lines = []
+    for r in lab["results"][:6]:
+        if not isinstance(r, dict):
+            continue
+        figures = ", ".join(f"{k} {v}" for k, v in list((r.get("figures") or {}).items())[:6])
+        lines.append(f"{r.get('material')}: {r.get('verdict')} ({figures})")
+    params = lab.get("params") or {}
+    setting = f" from {params.get('dropHeight')} m" if lab.get("test") == "drop" else f" to {params.get('maxTemp')} C" if lab.get("test") == "heat" else ""
+    return f" MATERIAL LAB {'open' if lab.get('open') else 'closed'}, last run {lab.get('test')}{setting}: " + "; ".join(lines) + "."
 
 
 def state_note(state: dict | None) -> str | None:
@@ -418,6 +455,7 @@ def state_note(state: dict | None) -> str | None:
             if state.get("workshop_open") and state.get("camera_on")
             else ""
         )
+        + _lab_note(state.get("material_lab"))
         + (
             f" LAST OPENSCAD COMPILE FAILED for \"{(state.get('last_scad_error') or {}).get('name')}\": "
             f"{(state.get('last_scad_error') or {}).get('error', '')[:800]}"

@@ -4,19 +4,98 @@
 // tracking reads it, and a look captures from it, so all three share the
 // <video> element the preview registers rather than opening the camera
 // three times.
+//
+// The stream is the computer's own camera - whichever one he picked, which
+// may be a phone running as a USB webcam (Camo, Iriun) - or his iPhone's
+// camera arriving over the phone link (lib/phone-camera.ts), adopted here
+// so everything that reads the camera reads the phone's instead.
 
 let stream: MediaStream | null = null
 let video: HTMLVideoElement | null = null
+let source: "local" | "phone" = "local"
+let closeSource: (() => void) | null = null
+const listeners = new Set<() => void>()
+const DEVICE_KEY = "jarvis_camera_device"
+
+function changed() {
+  listeners.forEach((fn) => fn())
+}
+
+/** Where the camera comes from right now, for the UI to say. */
+export function cameraSource(): "local" | "phone" {
+  return source
+}
+
+export function subscribeCamera(fn: () => void): () => void {
+  listeners.add(fn)
+  return () => listeners.delete(fn)
+}
+
+/** The camera he picked on this computer (null: the default). */
+export function cameraDevice(): string | null {
+  try {
+    return window.localStorage.getItem(DEVICE_KEY)
+  } catch {
+    return null
+  }
+}
+
+/** Every camera this computer can open, by label once permission is given. */
+export async function listCameras(): Promise<MediaDeviceInfo[]> {
+  const devices = await navigator.mediaDevices.enumerateDevices()
+  return devices.filter((d) => d.kind === "videoinput")
+}
+
+/** Pick a camera; a running local stream switches to it straight away. */
+export async function setCameraDevice(deviceId: string | null) {
+  try {
+    if (deviceId) window.localStorage.setItem(DEVICE_KEY, deviceId)
+    else window.localStorage.removeItem(DEVICE_KEY)
+  } catch {}
+  if (stream && source === "local") {
+    stopCamera()
+    await startCamera()
+  }
+}
+
+async function openLocal(): Promise<MediaStream> {
+  const deviceId = cameraDevice()
+  // A phone-as-webcam can do better than 720p: ask for 1080p and take what comes.
+  const size = deviceId ? { width: { ideal: 1920 }, height: { ideal: 1080 } } : { width: { ideal: 1280 }, height: { ideal: 720 } }
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      video: deviceId ? { deviceId: { exact: deviceId }, ...size } : { ...size, facingMode: "user" },
+      audio: false,
+    })
+  } catch (err) {
+    // The picked camera is unplugged: fall back to the default.
+    if (deviceId && err instanceof DOMException && (err.name === "OverconstrainedError" || err.name === "NotFoundError")) {
+      return navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }, audio: false })
+    }
+    throw err
+  }
+}
 
 export async function startCamera(): Promise<MediaStream> {
   if (stream) return stream
   // The browser shows its permission prompt here the first time.
-  stream = await navigator.mediaDevices.getUserMedia({
-    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
-    audio: false,
-  })
+  stream = await openLocal()
+  source = "local"
   if (video) video.srcObject = stream
+  changed()
   return stream
+}
+
+/** Use a stream from elsewhere (the phone link) as the camera; `close`
+ *  ends that link when the camera is turned off. */
+export function adoptStream(external: MediaStream, close: () => void) {
+  stream?.getTracks().forEach((track) => track.stop())
+  closeSource?.()
+  stream = external
+  source = "phone"
+  closeSource = close
+  if (video) video.srcObject = stream
+  changed()
 }
 
 export function stopCamera() {
@@ -24,7 +103,12 @@ export function stopCamera() {
   // the reference alone would leave it recording.
   stream?.getTracks().forEach((track) => track.stop())
   stream = null
+  const close = closeSource
+  closeSource = null
+  source = "local"
+  close?.()
   if (video) video.srcObject = null
+  changed()
 }
 
 export function attachVideo(element: HTMLVideoElement | null) {

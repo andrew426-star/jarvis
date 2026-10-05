@@ -35,11 +35,18 @@ export interface Wire {
   color?: string
 }
 
+/** What a printed part is printed in, for how it renders. */
+export const FILAMENTS = ["pla", "silk", "petg", "matte", "resin", "carbon", "metal", "clear"] as const
+export type Filament = (typeof FILAMENTS)[number]
+
 export interface PrintedPart {
   name: string
   code: string
   notes: string[]
   group?: string
+  material?: Filament
+  /** CSS colour of the filament or finish. */
+  color?: string
 }
 
 export interface Placement {
@@ -47,8 +54,36 @@ export interface Placement {
   rot: number[]
 }
 
-export const ANCHORS = ["face", "wrist", "hand", "forearm", "desk"] as const
+export const ANCHORS = ["face", "chest", "shoulder", "upper_arm", "forearm", "wrist", "hand", "desk"] as const
 export type Anchor = (typeof ANCHORS)[number]
+/** Anchors found by the body-pose model rather than the face or hands. */
+export const BODY_ANCHORS: readonly Anchor[] = ["chest", "shoulder", "upper_arm"]
+
+export const ACTION_KINDS = ["repulsor", "beam", "projectile", "deploy", "glow"] as const
+export type ActionKind = (typeof ACTION_KINDS)[number]
+export const CUES = ["auto", "palm", "fist", "point", "thwip", "jaw", "raise", "button"] as const
+export type Cue = (typeof CUES)[number]
+
+/** Something a worn project does, simulated in the try-on
+ *  (app/tools/workshop_project.py ACTION_GUIDE). Points and directions are
+ *  in the design frame (mm), like the layout. */
+export interface WearAction {
+  name: string
+  kind: ActionKind
+  cue: Cue
+  /** Emitter, launcher or pivot. */
+  at: number[]
+  dir: number[]
+  color?: string
+  /** deploy: part ids, printed part names or groups that move. */
+  targets?: string[]
+  move?: number[]
+  turn?: number[]
+  /** Seconds to charge (repulsor, beam) or between shots (projectile). */
+  charge?: number
+  /** projectile: shots per trigger. */
+  burst?: number
+}
 
 /** How the camera try-on wears it (app/tools/workshop_project.py WEAR_GUIDE). */
 export interface Wear {
@@ -57,6 +92,7 @@ export interface Wear {
   offset: number[]
   rot: number[]
   scale?: number
+  actions?: WearAction[]
 }
 
 export interface Project {

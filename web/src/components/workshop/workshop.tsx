@@ -1,28 +1,29 @@
 "use client"
 
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import {
   BoxesIcon,
-  CameraIcon,
   DownloadIcon,
+  FlaskConicalIcon,
   HandIcon,
   ImageIcon,
   LayersIcon,
   Loader2Icon,
   MagnetIcon,
   RotateCcwIcon,
-  ScanEyeIcon,
   GlassesIcon,
   VideoIcon,
   VideoOffIcon,
+  SmartphoneIcon,
   SparklesIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react"
 
-import { getVideo, startCamera, stopCamera } from "@/lib/camera"
+import { cameraSource, startCamera, stopCamera, subscribeCamera } from "@/lib/camera"
 import { registerWorkshop, reportScadResult } from "@/lib/console-commands"
+import { PhoneCameraDialog } from "@/components/spatial/phone-camera-dialog"
 import { setSpatialHandler, startHands, stopHands, subscribeHands } from "@/lib/hand-tracking"
 import { sfx } from "@/lib/sfx"
 import { useSpatial } from "@/lib/spatial-store"
@@ -33,8 +34,10 @@ import { getGestures, KEYS, useGestures, type TapAction } from "@/lib/workshop/g
 import { GestureSettings } from "@/components/workshop/gesture-settings"
 import { LibraryDock, type StageItem } from "@/components/workshop/library-dock"
 import { PANEL_WIDTH, ProjectPanel } from "@/components/workshop/project-panel"
+import { MaterialLab } from "@/components/workshop/material-lab"
 import { ProjectGallery } from "@/components/workshop/project-gallery"
 import { buildAssembly, releaseAssembly } from "@/lib/workshop/project/assembly"
+import { useLab } from "@/lib/workshop/lab/store"
 import { useProject } from "@/lib/workshop/project/store"
 import { useTryOn } from "@/lib/ar/store"
 import { stopSim } from "@/lib/workshop/sim/controller"
@@ -131,7 +134,6 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
   const rotatingRef = useRef(false)
   const [focus, setFocus] = useState<Focus>(null)
   const [ready, setReady] = useState(false)
-  const [passthrough, setPassthrough] = useState(false)
   const [trackingError, setTrackingError] = useState<string | null>(null)
   const [bin, setBin] = useState<"idle" | "armed" | "discarded">("idle")
   const [compiling, setCompiling] = useState<string | null>(null)
@@ -143,16 +145,15 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
   const [gesturesOpen, setGesturesOpen] = useState(false)
   const inputMode = useSpatial((state) => state.inputMode)
   const gestures = useGestures()
-  // Jarvis's render and snapshot controls are registered once, with the
+  // Jarvis's render control is registered once, with the
   // scene, but must reach the current functions (and their state), so they
   // go through this ref, refreshed every render.
   const latest = useRef<{
-    takeSnapshot: () => Promise<void>
     renderNow: (prompt?: string) => Promise<void>
     runAction: (action: TapAction, itemId?: string) => void
   } | null>(null)
   useEffect(() => {
-    latest.current = { takeSnapshot, renderNow, runAction }
+    latest.current = { renderNow, runAction }
   })
   // Compile OpenSCAD and put the part on the stage, solid (it is a real
   // part); errors go to the log, a notification, and back to Jarvis.
@@ -183,6 +184,7 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
   const projectVersion = useProject((state) => state.version)
   const projectShown = useProject((state) => state.panelOpen && !!state.project)
   const galleryOpen = useProject((state) => state.galleryOpen)
+  const labOpen = useLab((state) => state.open)
   // The open project's 3D assembly on the stage, by the name it was given.
   const assemblyRef = useRef<string | null>(null)
 
@@ -320,8 +322,7 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
         scad: (name, code, notes) => void buildScad.current(name, code, notes),
         exportStl: (target) => download(scene.exportStl(target)),
         // Through a ref: this registration runs once, and must reach the
-        // current render and snapshot functions, not the first ones.
-        snapshot: () => void latest.current?.takeSnapshot(),
+        // current render function, not the first one.
         render: (prompt) => void latest.current?.renderNow(prompt),
       })
       setSpatialHandler({
@@ -363,13 +364,6 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
 
   const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")
 
-  async function takeSnapshot() {
-    const url = sceneRef.current?.snapshot()
-    if (!url) return
-    // Named for what it is for: an image to upload to Veras's web app.
-    download([{ name: `workshop-${stamp()}-veras.png`, blob: await (await fetch(url)).blob() }])
-  }
-
   // A photoreal render of the view, by Gemini's image models: a clean
   // snapshot goes up, the render comes back into the panel and is pinned
   // as a hologram too.
@@ -404,12 +398,14 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
   const cameraOn = useSpatial((state) => state.cameraOn)
   const hasProject = useProject((state) => !!state.project)
   const tryingOn = useTryOn((state) => state.active)
+  const source = useSyncExternalStore(subscribeCamera, cameraSource, () => "local" as const)
+  const [phoneOpen, setPhoneOpen] = useState(false)
+  const closePhone = useCallback(() => setPhoneOpen(false), [])
 
   async function setCamera(on: boolean) {
     const spatial = useSpatial.getState()
     if (!on) {
       useTryOn.getState().stop()
-      if (passthrough) togglePassthrough()
       stopHands()
       stopCamera()
       spatial.setCameraOn(false)
@@ -439,12 +435,6 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
       return
     }
     if (await setCamera(true)) useTryOn.getState().start()
-  }
-
-  function togglePassthrough() {
-    const next = !passthrough
-    sceneRef.current?.setPassthrough(next ? getVideo() : null)
-    setPassthrough(next)
   }
 
   // Gesture actions, from a hand gesture (as mapped), a button or a key.
@@ -562,6 +552,17 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
             type="button"
             className="btn flex items-center"
             style={{ gap: 6, padding: "4px 10px" }}
+            onClick={() => useLab.getState().setOpen(!labOpen)}
+            data-active={labOpen}
+            aria-pressed={labOpen}
+            title="Material lab: tensile, drop, bend and heat tests on rubber, glass, metals and filaments, side by side"
+          >
+            <FlaskConicalIcon size={12} /> MATERIALS
+          </button>
+          <button
+            type="button"
+            className="btn flex items-center"
+            style={{ gap: 6, padding: "4px 10px" }}
             onClick={() => sceneRef.current && download(sceneRef.current.exportStl())}
             disabled={!ready || !focus}
             title="Download the selected item as STL, in millimetres"
@@ -580,29 +581,6 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
           </button>
           <button
             type="button"
-            className="btn"
-            style={{ width: 28, height: 28, padding: 0 }}
-            onClick={() => void takeSnapshot()}
-            disabled={!ready}
-            aria-label="Save this view as a PNG"
-            title="Save this view as a PNG (for Veras or anywhere else)"
-          >
-            <CameraIcon className="mx-auto size-4" />
-          </button>
-          <button
-            type="button"
-            className="btn flex items-center"
-            style={{ gap: 6, padding: "4px 10px" }}
-            onClick={togglePassthrough}
-            data-active={passthrough}
-            aria-pressed={passthrough}
-            disabled={!ready || !handsOn}
-            title="Show the camera behind the workshop"
-          >
-            <ScanEyeIcon size={12} /> PASSTHROUGH
-          </button>
-          <button
-            type="button"
             className="btn flex items-center"
             style={{ gap: 6, padding: "4px 10px" }}
             onClick={() => void setCamera(!cameraOn)}
@@ -610,7 +588,18 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
             aria-pressed={cameraOn}
             title={cameraOn ? "Turn the camera off" : "Turn the camera on (with hand tracking)"}
           >
-            {cameraOn ? <VideoIcon size={12} /> : <VideoOffIcon size={12} />} CAMERA
+            {cameraOn ? <VideoIcon size={12} /> : <VideoOffIcon size={12} />} {cameraOn && source === "phone" ? "IPHONE CAM" : "CAMERA"}
+          </button>
+          <button
+            type="button"
+            className="btn flex items-center"
+            style={{ gap: 6, padding: "4px 10px" }}
+            onClick={() => setPhoneOpen(!phoneOpen)}
+            data-active={phoneOpen || source === "phone"}
+            aria-pressed={phoneOpen}
+            title="Use your iPhone (or another camera) as the console's camera"
+          >
+            <SmartphoneIcon size={12} /> IPHONE
           </button>
           <button
             type="button"
@@ -688,6 +677,7 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
           </button>
         </div>
       </header>
+      {phoneOpen && <PhoneCameraDialog token={token} onClose={closePhone} />}
 
       <div className="relative min-h-0 flex-1">
         <LibraryDock
@@ -717,6 +707,7 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
 
         <ProjectPanel />
         {galleryOpen && <ProjectGallery />}
+        {labOpen && <MaterialLab />}
 
         {/* Spec readout, positioned over the focused item by the scene. */}
         <div

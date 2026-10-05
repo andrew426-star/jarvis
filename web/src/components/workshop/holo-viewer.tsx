@@ -2,16 +2,19 @@
 
 import { useEffect, useRef, useState } from "react"
 import * as THREE from "three"
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js"
 
 import { accentHex } from "@/lib/core-events"
 import { compileScadCached } from "@/lib/workshop/openscad"
 import { buildAssembly } from "@/lib/workshop/project/assembly"
-import { fitTo, hologram } from "@/lib/workshop/project/holo"
+import { fitTo } from "@/lib/workshop/project/holo"
 import type { Project } from "@/lib/workshop/project/types"
 
 // The finished product, turning slowly on a pedestal in the project's
-// folder: the assembly with its real materials and its edges in light.
-// A small renderer of its own, so it works whatever is on the stage.
+// folder: the assembly in its real materials, lit like a product shot - a
+// studio environment for the reflections, a soft key light and the
+// shadow it casts on the pedestal. A small renderer of its own, so it
+// works whatever is on the stage.
 
 export function HoloViewer({ project, version }: { project: Project; version: number }) {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -30,13 +33,32 @@ export function HoloViewer({ project, version }: { project: Project; version: nu
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 0.95
+    renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFShadowMap
     renderer.domElement.style.display = "block"
     host.appendChild(renderer.domElement)
     const scene = new THREE.Scene()
-    scene.add(new THREE.HemisphereLight(0x9cc8ff, 0x101010, 1.4))
-    const key = new THREE.DirectionalLight(0xffffff, 2)
-    key.position.set(3, 5, 4)
+    const pmrem = new THREE.PMREMGenerator(renderer)
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+    scene.environmentIntensity = 0.8
+    scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x101010, 0.5))
+    const key = new THREE.DirectionalLight(0xffffff, 2.4)
+    key.position.set(2.5, 5, 3)
+    key.castShadow = true
+    key.shadow.mapSize.set(1024, 1024)
+    key.shadow.radius = 6
+    key.shadow.bias = -0.0005
+    const sc = key.shadow.camera
+    sc.left = sc.bottom = -1.2
+    sc.right = sc.top = 1.2
+    sc.near = 1
+    sc.far = 12
     scene.add(key)
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(1.2, 64), new THREE.ShadowMaterial({ opacity: 0.45 }))
+    floor.rotation.x = -Math.PI / 2
+    floor.receiveShadow = true
+    scene.add(floor)
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.95, 1.0, 64),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
@@ -70,10 +92,12 @@ export function HoloViewer({ project, version }: { project: Project; version: nu
     }
     frame()
 
-    void buildAssembly(project, compileScadCached, { bind: false })
+    // A worn project shows what is worn (its wear group), not the pack on his belt.
+    const group = project.wear?.group
+    const shown = group ? { ...project, parts: project.parts.filter((p) => p.group === group), printed: project.printed.filter((p) => p.group === group) } : project
+    void buildAssembly(shown, compileScadCached, { bind: false })
       .then(({ item }) => {
         if (disposed) return
-        hologram(item.object, color, { solid: true })
         turntable.add(fitTo(item.object, 1.5))
         setState("ready")
       })
@@ -89,6 +113,8 @@ export function HoloViewer({ project, version }: { project: Project; version: nu
         const material = mesh.material as THREE.Material | undefined
         material?.dispose?.()
       })
+      scene.environment?.dispose()
+      pmrem.dispose()
       renderer.dispose()
       renderer.domElement.remove()
     }

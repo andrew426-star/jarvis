@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import {
   ArrowUpIcon,
+  CameraIcon,
   GridIcon,
   InboxIcon,
   Loader2Icon,
@@ -21,6 +22,7 @@ import { GlobalEffects } from "@/components/hud/global-effects"
 import { HolographicGrid } from "@/components/hud/holographic-grid"
 import { InboxPanel } from "@/components/inbox/inbox-panel"
 import { PinGate } from "@/components/lock/pin-gate"
+import { PhoneCameraSender } from "@/components/mobile/phone-camera-sender"
 import { MicButton, type MicButtonHandle } from "@/components/mic-button"
 import { ReplyCards } from "@/components/reply-cards"
 import { ThinkingIndicator } from "@/components/thinking-indicator"
@@ -312,6 +314,9 @@ function MobileChat({
   const [listening, setListening] = useState(false)
   const [typing, setTyping] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  // The phone as the desktop's camera; a link with ?camera=CODE opens it ready to go.
+  const [cameraCode] = useState(() => new URLSearchParams(window.location.search).get("camera"))
+  const [cameraLink, setCameraLink] = useState(() => !!cameraCode)
   const [speech, setSpeech] = useState<SpeechMode>(() => readStorage<SpeechMode>(SPEECH_KEY, "voice"))
   const [arrived, setArrived] = useState<InboxItem[] | null>(null)
   const inboxOpen = useInbox((state) => state.open)
@@ -517,6 +522,7 @@ function MobileChat({
         style={{ opacity: boot.chrome ? 1 : 0, transition: "opacity 400ms ease" }}
       >
         <StatusStrip onMenu={() => setMenuOpen((open) => !open)} menuOpen={menuOpen} />
+        {cameraLink && <PhoneCameraSender token={token} initialCode={cameraCode} onClose={() => setCameraLink(false)} />}
 
         {arrived && arrived.length > 0 && !inboxOpen && (
           <button
@@ -625,6 +631,14 @@ function MobileChat({
                 }}
                 icon={<InboxIcon size={16} />}
                 label={waiting ? `Inbox · ${waiting} waiting` : "Inbox"}
+              />
+              <MenuItem
+                onClick={() => {
+                  setMenuOpen(false)
+                  setCameraLink(true)
+                }}
+                icon={<CameraIcon size={16} />}
+                label="Use as camera"
               />
               <MenuItem onClick={newConversation} icon={<RotateCcwIcon size={16} />} label="New conversation" />
               <MenuItem onClick={() => setView("desktop")} icon={<MonitorIcon size={16} />} label="Desktop console" />
