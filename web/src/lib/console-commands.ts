@@ -7,6 +7,9 @@ import { useSpatial } from "@/lib/spatial-store"
 import { useJarvis, type TabKey } from "@/lib/store"
 import type { GeneratedModel } from "@/lib/workshop/models"
 import type { ItemMode } from "@/lib/workshop/scene"
+import { projectState, useProject } from "@/lib/workshop/project/store"
+import type { Project, Report } from "@/lib/workshop/project/types"
+import { applyInputs, setSimSpeed, startSim, stopSim } from "@/lib/workshop/sim/controller"
 
 // Jarvis operating the console. His `console` and `workshop` tools return a
 // list of actions (app/tools/console_control.py); this carries them out,
@@ -24,6 +27,13 @@ export type WorkshopAction = {
   code?: string
   notes?: string[]
   prompt?: string
+  /** project_load: the project and the server's report on it. */
+  project?: Project
+  report?: Report
+  /** sim: start or stop, inputs to set, speed (0.1-1). */
+  run?: boolean
+  inputs?: Record<string, unknown>
+  speed?: number
 }
 
 /** What the Workshop registers while its scene is up. */
@@ -72,6 +82,27 @@ export function registerWorkshop(controller: WorkshopController | null) {
 }
 
 function runWorkshopAction(step: WorkshopAction) {
+  // Projects live in their own store, not the scene, so they need not wait
+  // for it; the scene picks the project up when it registers.
+  if (step.action === "project_load" && step.project) {
+    useProject.getState().load(step.project, step.report ?? null)
+    return
+  }
+  if (step.action === "project_close") {
+    stopSim()
+    useProject.getState().close()
+    return
+  }
+  if (step.action === "sim") {
+    if (step.speed) setSimSpeed(step.speed)
+    if (step.inputs) applyInputs(step.inputs)
+    if (step.run === false) stopSim()
+    else {
+      useProject.getState().setTab("sim")
+      startSim()
+    }
+    return
+  }
   if (!workshop) {
     pending.push(step)
     return
@@ -205,5 +236,6 @@ export function consoleState() {
     showcase: showcaseState(),
     muted: sfx.isMuted(),
     last_scad_error: lastScadError,
+    project: projectState(),
   }
 }

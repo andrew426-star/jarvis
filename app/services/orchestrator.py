@@ -33,6 +33,8 @@ from app.tools.console_control import (
 )
 from app.tools.schemas import DISPATCH, TOOL_SCHEMAS
 from app.tools.showcase import SHOWCASE_NOTE, SHOWCASE_SCHEMA, make_showcase, state_line
+from app.tools.workshop_project import PROJECT_SCHEMA, make_project
+from app.tools.workshop_project import state_line as project_state_line
 
 MAX_ITERATIONS = 6
 
@@ -66,6 +68,7 @@ _TOOL_STATUS = {
     "notes": "Opening your notes",
     "kivaro_pipeline": "Checking the lead engine",
     "parts_catalog": "Checking the parts list",
+    "project": "Working on the project",
     "history": "Checking the log",
 }
 
@@ -74,7 +77,7 @@ _TOOL_STATUS = {
 TOOL_RESULT_CHAR_CAP = 4000
 # Except where the content IS the point: a source file cut at 4000
 # characters cannot be reviewed, and a lead list cut short hides leads.
-_TOOL_CAPS = {"files": 24_000, "browser": 24_000, "notes": 24_000, "history": 24_000, "kivaro_pipeline": 16_000}
+_TOOL_CAPS = {"files": 24_000, "browser": 24_000, "notes": 24_000, "history": 24_000, "kivaro_pipeline": 16_000, "project": 12_000}
 
 # Separate, independent pool from FastAPI/Starlette's own threadpool (which
 # is what actually runs this sync route across concurrent requests) — this
@@ -185,7 +188,9 @@ SYSTEM_PROMPT = (
     "Louisiana Tech store or vending machines stock, naming each part with its price and "
     "where it is (store, or the machine and slot), and total the bill with tax at about 1.13x. "
     "Only reach beyond the catalog when nothing in it fits, and say so. Size printed parts "
-    "around those exact components.\n\n"
+    "around those exact components. In the console, a build he means to make is a workshop "
+    "project (the project tool): parts, wiring, the UNO sketch, printed parts and their 3D "
+    "layout together, checked, compiled, priced and simulated before he buys anything.\n\n"
     "REPORTING ACTIONS: never say you did something — removed, deleted, updated, sent, logged, "
     "created, scheduled — unless a tool call in this turn did it and its result says it "
     "succeeded. If no tool can do it, say so plainly. If the tool failed, or the result shows it "
@@ -285,7 +290,12 @@ def _declaration(schema: dict) -> types.FunctionDeclaration:
 # the prompt's "plan multi-step requests first" sent it there.
 _DECLARATIONS = [_declaration(schema) for schema in TOOL_SCHEMAS if schema["function"]["name"] != "think"]
 _CAMERA_DECLARATION = _declaration(CAMERA_LOOK_SCHEMA)
-_CONSOLE_DECLARATIONS = [_declaration(CONSOLE_SCHEMA), _declaration(WORKSHOP_SCHEMA), _declaration(SHOWCASE_SCHEMA)]
+_CONSOLE_DECLARATIONS = [
+    _declaration(CONSOLE_SCHEMA),
+    _declaration(WORKSHOP_SCHEMA),
+    _declaration(SHOWCASE_SCHEMA),
+    _declaration(PROJECT_SCHEMA),
+]
 
 
 def _execute_tool_call(call: types.FunctionCall, handlers: dict = DISPATCH) -> tuple[str, dict, dict, int]:
@@ -337,6 +347,14 @@ def _model_view(result: dict) -> dict:
     # A chart's bars are for the panel; the model reads the summary beside them.
     if isinstance(result, dict) and "candles" in result:
         result = {k: v for k, v in result.items() if k != "candles"}
+    # A project's full contents (sketch, HEX, SCAD) are for the console;
+    # the model reads the report beside them.
+    if isinstance(result, dict) and isinstance(result.get("actions"), list):
+        actions = [
+            {"action": a["action"], "project": "(sent to the console)"} if isinstance(a, dict) and a.get("action") == "project_load" else a
+            for a in result["actions"]
+        ]
+        result = {**result, "actions": actions}
     showing = result.get("showcase") if isinstance(result, dict) else None
     if isinstance(showing, dict):
         return {**result, "showcase": {k: v for k, v in showing.items() if k not in ("image_data", "content")}}
@@ -585,6 +603,7 @@ def stream_invoke(
             "console": console,
             "workshop": make_workshop(image, image_type),
             "showcase": make_showcase(image, image_type),
+            "project": make_project(console_state),
         }
         system.append(CONSOLE_CONTROL_NOTE)
         system.append(SHOWCASE_NOTE)
@@ -594,6 +613,9 @@ def stream_invoke(
         showing = state_line(console_state)
         if showing:
             system.append(showing)
+        building = project_state_line(console_state)
+        if building:
+            system.append(building)
     if tool_override is not None:
         declarations = [_declaration(schema) for schema in tool_override[0]]
         handlers = tool_override[1]

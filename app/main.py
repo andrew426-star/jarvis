@@ -24,6 +24,7 @@ from app.api.routes.unlock import router as unlock_router
 from app.api.routes.updates import router as updates_router
 from app.api.routes.verify import router as verify_router
 from app.api.routes.watch import router as watch_router
+from app.api.routes.workshop import router as workshop_router
 from app.api.routes.zoho_auth import router as zoho_auth_router
 from app.core.config import get_settings
 
@@ -66,6 +67,7 @@ app.include_router(transcribe_router)
 app.include_router(unlock_router)
 app.include_router(updates_router)
 app.include_router(zoho_auth_router)
+app.include_router(workshop_router)
 
 
 @app.get("/health")

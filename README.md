@@ -45,6 +45,24 @@ on :8000, and :3000 is already in the CORS allowlist (`app/main.py`).
 If `web/out/` has never been built, the static mount is simply skipped
 and :8000 serves the API alone.
 
+## Workshop projects
+
+Real builds: parts from Louisiana Tech's catalog (`app/data/latech_*.psv`,
+searched by the `parts_catalog` tool), their wiring, an Arduino UNO
+sketch, printed OpenSCAD parts and a 3D layout, made by Jarvis's
+`project` tool and shown in the workshop's project panel. The server
+checks the wiring against the sketch, prices the parts and compiles the
+sketch (`app/tools/workshop_project.py`, `app/services/arduino.py`); the
+browser runs it on an emulated UNO (avr8js) against a DC circuit solver
+(`web/src/lib/workshop/sim/`). Part types, pins and sizes live in one file
+both sides read: `web/src/lib/workshop/parts.json`.
+
+Compiling needs `arduino-cli` with the `arduino:avr` core (the Docker
+image has it). Locally, install them, or point `ARDUINO_CLI` at the
+binary; without one, projects still save and check, but sketches don't
+compile and the simulation can't run. Projects are stored in
+`jarvis_workshop_projects` (`supabase/migrations/0014_...`).
+
 ## On a phone
 
 Phones get a separate, lightweight view of the console (chat, voice in

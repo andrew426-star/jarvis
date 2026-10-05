@@ -1,5 +1,6 @@
 import { useLock, type Unlock } from "@/lib/lock-state"
 import { useJarvis } from "@/lib/store"
+import type { Project, ProjectSummary, Report } from "@/lib/workshop/project/types"
 
 // Empty string = same origin, which is the production shape: FastAPI
 // serves this bundle and the API off one port, so "/invoke" is already
@@ -866,4 +867,28 @@ export async function enrollFace(pin: string, descriptors: number[][], sessionTo
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ pin, descriptors }),
   })
+}
+
+// --- Workshop projects (app/api/routes/workshop.py) ---
+
+export type ProjectSaved = { ok: true; project: Project; report: Report } | { ok: false; error: string }
+
+export async function listProjects(token: string): Promise<{ ok: boolean; projects?: ProjectSummary[]; error?: string }> {
+  const res = await jarvisFetch("/workshop/projects", token, { method: "GET" })
+  return res.json()
+}
+
+export async function openProject(id: string, token: string): Promise<ProjectSaved> {
+  const res = await jarvisFetch(`/workshop/projects/${encodeURIComponent(id)}`, token, { method: "GET" })
+  return res.json()
+}
+
+/** Save (and check, compile and price) a project; the server's copy comes back. */
+export async function saveProject(project: Project, token: string): Promise<ProjectSaved> {
+  const res = await jarvisFetch("/workshop/projects", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project }),
+  })
+  return res.json()
 }

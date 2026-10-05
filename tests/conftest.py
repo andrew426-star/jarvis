@@ -140,6 +140,7 @@ def db(monkeypatch):
         "app.services.market_updates",
         "app.tools.checklist",
         "app.tools.trade_signals",
+        "app.tools.workshop_project",
         "app.api.routes.unlock",
     ]:
         mod = importlib.import_module(module)

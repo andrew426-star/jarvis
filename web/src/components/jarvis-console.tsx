@@ -374,7 +374,7 @@ function Shell({
         if (entry.name === "console") {
           void runConsoleActions(control.actions as ConsoleAction[], { setCamera, setHands, setWatch, snoozeWatch: snooze, closeConsole })
         }
-        if (entry.name === "workshop") runWorkshopActions(control.actions as WorkshopAction[])
+        if (entry.name === "workshop" || entry.name === "project") runWorkshopActions(control.actions as WorkshopAction[])
       }
       // Something Jarvis put on screen: it opens in the showcase window.
       const shown = entry.result as { ok?: boolean; showcase?: Omit<ShowcaseItem, "id" | "time"> } | null
@@ -390,7 +390,7 @@ function Shell({
       const mapped = TOOL_PANEL_MAP[entry.name]
       // A panel Jarvis opened or closed on purpose wins over the automatic
       // "show the data behind that answer" switch.
-      if (entry.name === "console" || entry.name === "workshop") {
+      if (entry.name === "console" || entry.name === "workshop" || entry.name === "project") {
         pushLog("OK", `Jarvis ran ${entry.name}`)
         continue
       }

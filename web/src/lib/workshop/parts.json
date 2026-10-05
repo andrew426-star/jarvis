@@ -1,0 +1,190 @@
+{
+  "_about": "The workshop's component library, shared by the browser (simulator, schematic, 3D) and the server (app/tools/workshop_project.py: checks, bill of materials). Each type: label, kind, the catalog item it is bought as (exact names from app/data/latech_*.psv), pins (name -> role), props with defaults, size in mm [x, y, z] (z up), and the electrical figures the checks use. need: pins that must be wired for the part to work. draw_ma: typical current from its supply pin. Sizes marked approx should be measured before a tight print.",
+  "types": {
+    "uno": {
+      "label": "Arduino UNO Rev3",
+      "kind": "mcu",
+      "catalog": "Arduino UNO Rev3",
+      "pins": {
+        "D0": "io", "D1": "io", "D2": "io", "D3": "io", "D4": "io", "D5": "io", "D6": "io", "D7": "io",
+        "D8": "io", "D9": "io", "D10": "io", "D11": "io", "D12": "io", "D13": "io",
+        "A0": "io", "A1": "io", "A2": "io", "A3": "io", "A4": "io", "A5": "io",
+        "5V": "out5v", "3V3": "out3v3", "VIN": "vin", "GND": "gnd"
+      },
+      "pwm": ["D3", "D5", "D6", "D9", "D10", "D11"],
+      "size": [68.6, 53.4, 15],
+      "pin_max_ma": 20,
+      "pin_abs_ma": 40,
+      "usb_ma": 500
+    },
+    "resistor": {
+      "label": "Resistor", "kind": "passive",
+      "catalog_by_ohms": {"100": "100 Ohm resistor", "1000": "1 kOhm resistor", "10000": "10 kOhm resistor"},
+      "pins": {"1": "passive", "2": "passive"}, "need": ["1", "2"],
+      "props": {"ohms": 1000}, "size": [10, 2.5, 2.5]
+    },
+    "pot": {
+      "label": "Potentiometer", "kind": "input", "catalog": "Potentiometer: 200 ohm",
+      "pins": {"1": "passive", "W": "passive", "2": "passive"}, "need": ["1", "W", "2"],
+      "props": {"ohms": 200, "value": 0.5}, "size": [16, 16, 20], "approx": true
+    },
+    "photoresistor": {
+      "label": "Photoresistor", "kind": "input", "catalog": "Photoresistor",
+      "pins": {"1": "passive", "2": "passive"}, "need": ["1", "2"],
+      "props": {"light": 0.5, "dark_ohms": 1000000, "bright_ohms": 1000}, "size": [5, 4, 6]
+    },
+    "thermistor": {
+      "label": "10k thermistor", "kind": "input", "catalog": "10 kOhm thermistor",
+      "pins": {"1": "passive", "2": "passive"}, "need": ["1", "2"],
+      "props": {"temp_c": 25, "r25": 10000, "beta": 3950}, "size": [5, 3, 6]
+    },
+    "button": {
+      "label": "Push button", "kind": "input", "catalog": "Push-button switch (ENGR 120)",
+      "pins": {"1": "passive", "2": "passive"}, "need": ["1", "2"],
+      "props": {"pressed": false}, "size": [6, 6, 5]
+    },
+    "switch": {
+      "label": "Toggle switch", "kind": "input", "catalog": "Switch: toggle on/off, red base",
+      "pins": {"1": "passive", "2": "passive"}, "need": ["1", "2"],
+      "props": {"on": false}, "size": [13, 13, 25], "approx": true
+    },
+    "limit_switch": {
+      "label": "Mini limit switch", "kind": "input", "catalog": "Mini limit switch (MEEN 321, ENGT 220/321)",
+      "pins": {"COM": "passive", "NO": "passive", "NC": "passive"}, "need": ["COM"],
+      "props": {"pressed": false}, "size": [20, 6.5, 10], "approx": true
+    },
+    "diode": {
+      "label": "Diode", "kind": "passive", "catalog": "Diodes",
+      "pins": {"A": "anode", "K": "cathode"}, "need": ["A", "K"], "vf": 0.7, "size": [7, 2.5, 2.5]
+    },
+    "led": {
+      "label": "LED", "kind": "output",
+      "catalog_by_color": {"red": "LED - red", "green": "LED - green", "yellow": "LED - yellow", "white": "LED - white", "ir": "LED - IR"},
+      "pins": {"A": "anode", "K": "cathode"}, "need": ["A", "K"],
+      "props": {"color": "red"},
+      "vf_by_color": {"red": 2.0, "yellow": 2.1, "green": 2.2, "white": 3.0, "blue": 3.0, "ir": 1.3},
+      "max_ma": 20, "abs_ma": 30, "size": [5, 5, 8.6]
+    },
+    "rgb_led": {
+      "label": "RGB LED (common cathode)", "kind": "output", "catalog": "LED - RGB",
+      "pins": {"R": "anode", "G": "anode", "B": "anode", "COM": "cathode"}, "need": ["COM"],
+      "vf_by_pin": {"R": 2.0, "G": 3.0, "B": 3.0},
+      "max_ma": 20, "abs_ma": 30, "size": [5, 5, 8.6],
+      "note": "The vending machine's RGB LED does not say common cathode or anode; check with a meter."
+    },
+    "piezo": {
+      "label": "Piezo speaker", "kind": "output", "catalog": "Piezospeaker",
+      "pins": {"+": "signal_in", "-": "gnd"}, "need": ["+", "-"], "size": [12, 12, 9.5]
+    },
+    "servo": {
+      "label": "Continuous-rotation micro servo (FS90R)", "kind": "output",
+      "catalog": "Servo: continuous rotation (FEETECH FS90R analog)",
+      "pins": {"SIG": "signal_in", "V+": "supply", "GND": "gnd"}, "need": ["SIG", "V+", "GND"],
+      "props": {"continuous": true}, "supply_v": [4.8, 6], "draw_ma": 150, "stall_ma": 650,
+      "rpm": 130, "size": [23.2, 12.5, 22], "tab": 32.3,
+      "note": "Every servo Tech stocks is continuous rotation: write(90) stops it, below 90 turns one way, above the other. A positional (0-180 degree) servo is not stocked."
+    },
+    "dc_motor": {
+      "label": "N20 mini gear motor", "kind": "output", "catalog": "Motor: mini gear motor, N20, metal gears",
+      "pins": {"+": "load", "-": "load"}, "need": ["+", "-"], "ohms": 30, "rated_v": 6, "rpm": 200,
+      "draw_ma": 120, "stall_ma": 600, "size": [12, 10, 24], "shaft": [3, 10], "approx": true
+    },
+    "fan": {
+      "label": "2 in. 12V fan", "kind": "output", "catalog": "Fan, 2\" square; 12VDC x 3/8\"; T&T box fan",
+      "pins": {"+": "load", "-": "load"}, "need": ["+", "-"], "ohms": 120, "rated_v": 12,
+      "draw_ma": 100, "size": [50, 50, 9.5], "approx": true
+    },
+    "stepper": {
+      "label": "NEMA 17 stepper motor", "kind": "output",
+      "catalog": "Motor: NEMA 17 stepper motor (no motor controller)",
+      "pins": {"A+": "coil", "A-": "coil", "B+": "coil", "B-": "coil"}, "need": ["A+", "A-", "B+", "B-"],
+      "step_deg": 1.8, "size": [42.3, 42.3, 40], "shaft": [5, 24], "hole_spacing": 31
+    },
+    "relay": {
+      "label": "SPST relay, 5V coil", "kind": "output", "catalog": "Relay: SPST, 4-pin, 3A contact, 5V coil @ 40mA",
+      "pins": {"C1": "coil", "C2": "coil", "COM": "passive", "NO": "passive"}, "need": ["C1", "C2"],
+      "coil_ohms": 125, "pull_in_ma": 30, "size": [19, 15.5, 15], "approx": true
+    },
+    "l298n": {
+      "label": "L298N dual H-bridge module", "kind": "driver", "catalog": "L298N motor driver",
+      "pins": {
+        "IN1": "signal_in", "IN2": "signal_in", "IN3": "signal_in", "IN4": "signal_in",
+        "ENA": "signal_in", "ENB": "signal_in",
+        "OUT1": "drive", "OUT2": "drive", "OUT3": "drive", "OUT4": "drive",
+        "12V": "supply", "GND": "gnd", "5V": "out5v"
+      },
+      "need": ["12V", "GND"],
+      "props": {"ena_jumper": true, "enb_jumper": true},
+      "supply_v": [7, 35], "drop_v": 1.4, "draw_ma": 36, "size": [43, 43, 27]
+    },
+    "a4988": {
+      "label": "A4988 stepper driver", "kind": "driver",
+      "catalog": "A4988 motor driver (ENGR 122 & NEMA stepper motor)",
+      "pins": {
+        "STEP": "signal_in", "DIR": "signal_in", "EN": "signal_in", "SLP": "signal_in", "RST": "signal_in",
+        "VMOT": "supply", "VDD": "supply", "GND": "gnd",
+        "1A": "drive", "1B": "drive", "2A": "drive", "2B": "drive"
+      },
+      "need": ["STEP", "DIR", "VMOT", "VDD", "GND"],
+      "supply_v": [8, 35], "size": [20.3, 15.2, 12]
+    },
+    "npn": {
+      "label": "NPN transistor", "kind": "driver", "catalog": "NPN transistor",
+      "pins": {"B": "passive", "C": "passive", "E": "passive"}, "need": ["B", "C", "E"], "size": [5, 4, 5]
+    },
+    "mosfet": {
+      "label": "MOSFET, 2.8A logic level", "kind": "driver", "catalog": "MOSFET transistor, 2.8A (ENGR 121)",
+      "pins": {"G": "passive", "D": "passive", "S": "passive"}, "need": ["G", "D", "S"],
+      "vth": 2.0, "size": [5, 4, 5], "approx": true
+    },
+    "ping": {
+      "label": "PING))) ultrasonic sensor", "kind": "sensor",
+      "catalog": "PING))) ultrasonic distance sensor (ENGR 122)",
+      "pins": {"SIG": "signal_out", "5V": "supply", "GND": "gnd"}, "need": ["SIG", "5V", "GND"],
+      "props": {"distance_cm": 50}, "supply_v": [4.5, 5.5], "draw_ma": 30, "size": [45.7, 21.3, 16]
+    },
+    "hall": {
+      "label": "Digital hall sensor (open collector)", "kind": "sensor",
+      "catalog": "Hall effect sensor (non-latching digital, unipolar, incl magnet)",
+      "pins": {"VCC": "supply", "GND": "gnd", "OUT": "signal_out"}, "need": ["VCC", "GND", "OUT"],
+      "props": {"magnet": false}, "supply_v": [3.8, 24], "draw_ma": 5, "size": [4, 1.5, 15], "approx": true,
+      "note": "OUT only pulls low when the magnet is near; it needs a pull-up (INPUT_PULLUP or a 10k to 5V)."
+    },
+    "adxl335": {
+      "label": "ADXL335 3-axis accelerometer", "kind": "sensor",
+      "catalog": "3-axis accelerometer, unsoldered (ENGR 122)",
+      "pins": {"VCC": "supply", "X": "signal_out", "Y": "signal_out", "Z": "signal_out", "GND": "gnd"},
+      "need": ["VCC", "GND"], "props": {"x_g": 0, "y_g": 0, "z_g": 1},
+      "supply_v": [1.8, 3.6], "draw_ma": 1, "size": [20, 20, 3], "approx": true,
+      "note": "Runs on 3.3V (the UNO's 3V3 pin), not 5V. Outputs about 1.65V at 0 g, 0.33V per g."
+    },
+    "battery_6aa": {
+      "label": "6xAA battery pack, barrel plug (9V)", "kind": "power",
+      "catalog": "Battery holder: 6AA + 2.1 mm barrel plug (soldered, 2020)",
+      "pins": {"+": "source", "-": "gnd"}, "need": ["+", "-"], "volts": 9, "size": [58, 47, 29], "approx": true
+    },
+    "supply_9v": {
+      "label": "9V 1A wall supply", "kind": "power", "catalog": "Power supply: 9VDC 1A",
+      "pins": {"+": "source", "-": "gnd"}, "need": ["+", "-"], "volts": 9, "max_ma": 1000, "size": [60, 40, 30], "approx": true
+    },
+    "supply_12v": {
+      "label": "12V 2A wall supply", "kind": "power", "catalog": "Power supply: 12VDC 2A",
+      "pins": {"+": "source", "-": "gnd"}, "need": ["+", "-"], "volts": 12, "max_ma": 2000, "size": [60, 40, 30], "approx": true
+    },
+    "breadboard_170": {"label": "Breadboard, 170 tie-point", "kind": "mech", "catalog": "170pt breadboard", "size": [47, 35, 8.5]},
+    "breadboard_400": {"label": "Breadboard, 400 tie-point", "kind": "mech", "catalog": "Breadboard: 400 tie-point (120 robot; may incl mounting holes)", "size": [82, 55, 8.5]},
+    "breadboard_830": {"label": "Breadboard, 830 tie-point", "kind": "mech", "catalog": "Breadboard: 830 tie-point", "size": [165, 55, 8.5]},
+    "extrusion_2020": {"label": "2020 aluminum extrusion", "kind": "mech", "catalog": "Extruded Aluminum, 2020: 0.5 meter section, precut", "props": {"length": 500}, "size": [20, 20, 500]},
+    "extrusion_2040": {"label": "2040 aluminum extrusion", "kind": "mech", "catalog": "Extruded Aluminum, 2040: 0.5 meter section, precut (ENGR 220)", "props": {"length": 500}, "size": [20, 40, 500]},
+    "wheel": {"label": "Robot wheel and rubber tire", "kind": "mech", "catalog": "Robot: wheel & rubber tire, single", "props": {"diameter": 60, "width": 8}, "size": [60, 8, 60], "approx": true},
+    "ball_caster": {"label": "Ball caster, 1 in.", "kind": "mech", "catalog": "Ball caster w/ 1\" plastic ball and plastic rollers", "size": [30, 30, 28], "approx": true},
+    "bearing_608": {"label": "608 bearing", "kind": "mech", "catalog": "Roller bearing (608)", "size": [22, 22, 7]},
+    "lm8uu": {"label": "LM8UU linear bearing", "kind": "mech", "catalog": "Linear bearing, 8mm", "size": [15, 15, 24]},
+    "rod_8mm": {"label": "8 mm hardened steel rod", "kind": "mech", "catalog": "Hardened Steel Rod: 8mm OD, 1000mm length", "props": {"length": 300}, "size": [8, 8, 300]},
+    "lead_screw": {"label": "T8x2 lead screw and nut", "kind": "mech", "catalog": "Lead screw (threaded rod) with T8x2 nut, 300mm", "props": {"length": 300}, "size": [8, 8, 300]},
+    "coupler_5x8": {"label": "Flexible coupler, 5 to 8 mm", "kind": "mech", "catalog": "Coupler: Flexible plum shaft aluminum (5x8mm)", "size": [19, 19, 25], "approx": true},
+    "enclosure_3x2": {"label": "Plastic enclosure, 3 x 2 x 1.1 in.", "kind": "mech", "catalog": "Enclosure: 3\" x 2\" x 1.1\" black plastic", "size": [76.2, 50.8, 27.9]},
+    "enclosure_5x2": {"label": "Plastic enclosure, 5 x 2.5 x 1.75 in.", "kind": "mech", "catalog": "Enclosure: 5\" x 2.5\" x 1.75\" black plastic", "size": [127, 63.5, 44.5]},
+    "aluminum_sheet": {"label": "Aluminum chassis sheet, 4 x 6 in.", "kind": "mech", "catalog": "Robot chassis: aluminum sheet, 4\" x 6\"", "size": [152.4, 101.6, 1.6], "approx": true}
+  }
+}

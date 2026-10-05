@@ -28,6 +28,10 @@ import { buildGenerated, type ItemSpec } from "@/lib/workshop/models"
 import { getGestures, KEYS, useGestures, type TapAction } from "@/lib/workshop/gestures"
 import { GestureSettings } from "@/components/workshop/gesture-settings"
 import { LibraryDock, type StageItem } from "@/components/workshop/library-dock"
+import { PANEL_WIDTH, ProjectPanel } from "@/components/workshop/project-panel"
+import { buildAssembly, releaseAssembly } from "@/lib/workshop/project/assembly"
+import { useProject } from "@/lib/workshop/project/store"
+import { stopSim } from "@/lib/workshop/sim/controller"
 import { ScadError, compileScad, scadItem } from "@/lib/workshop/openscad"
 import { useJarvis } from "@/lib/store"
 
@@ -170,6 +174,53 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
   const binRef = useRef<HTMLDivElement>(null)
   const handsStatus = useSpatial((state) => state.handsStatus)
   const handsOn = handsStatus === "tracking"
+  const projectVersion = useProject((state) => state.version)
+  const projectShown = useProject((state) => state.panelOpen && !!state.project)
+  // The open project's 3D assembly on the stage, by the name it was given.
+  const assemblyRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    useProject.getState().setToken(token)
+  }, [token])
+
+  // The simulation pauses when the workshop closes.
+  useEffect(() => () => stopSim(), [])
+
+  // Rebuild the assembly whenever a new copy of the project arrives: in
+  // place of the old one, keeping where he put it and how he turned it.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!ready || !scene) return
+    const project = useProject.getState().project
+    if (!project || (!project.parts.length && !project.printed.length)) {
+      if (assemblyRef.current) scene.removeWhere(assemblyRef.current)
+      assemblyRef.current = null
+      releaseAssembly()
+      return
+    }
+    let cancelled = false
+    void Promise.resolve()
+      .then(() => {
+        if (project.printed.length && !cancelled) setCompiling(`${project.name} printed parts`)
+        return buildAssembly(project, compileScad)
+      })
+      .then(({ item, failures }) => {
+        const live = sceneRef.current
+        if (cancelled || !live) return
+        live.replaceBuilt(assemblyRef.current, item)
+        live.setModeWhere(item.spec.name, "solid")
+        assemblyRef.current = item.spec.name
+        for (const failure of failures) {
+          reportScadResult(failure.name, failure.error)
+          useJarvis.getState().notify("warning", `${failure.name} did not compile`, failure.error.split("\n")[0].slice(0, 160))
+        }
+        if (!failures.length && project.printed.length) reportScadResult(project.printed[0].name, null)
+      })
+      .finally(() => !cancelled && setCompiling(null))
+    return () => {
+      cancelled = true
+    }
+  }, [ready, projectVersion])
 
   // Native tracking: the workshop brings up the camera and hands itself,
   // and on the way out puts back only what it switched on - a camera that
@@ -278,8 +329,9 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
         snapshot: () => void latest.current?.takeSnapshot(),
         render: (prompt) => void latest.current?.renderNow(prompt),
       })
-      // Something to hold on arrival: the reactor as a hologram.
-      if (!queued) scene.spawn("reactor")
+      // Something to hold on arrival: the reactor as a hologram (unless a
+      // project is open; its assembly is what belongs on the stage).
+      if (!queued && !useProject.getState().project) scene.spawn("reactor")
       setSpatialHandler({
         down: (id, x, y) => scene.down(id, x, y),
         move: (id, x, y) => scene.move(id, x, y),
@@ -595,6 +647,8 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
 
         {gesturesOpen && <GestureSettings onClose={() => setGesturesOpen(false)} />}
 
+        <ProjectPanel />
+
         {/* Spec readout, positioned over the focused item by the scene. */}
         <div
           ref={labelRef}
@@ -619,7 +673,7 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
 
         {/* The latest render, top right, until dismissed. */}
         {render && (
-          <div className="holo-card" style={{ position: "absolute", top: 12, right: 12, width: 360, zIndex: 2 }}>
+          <div className="holo-card" style={{ position: "absolute", top: 12, right: projectShown ? PANEL_WIDTH + 24 : 12, width: 360, zIndex: 2 }}>
             <header className="holo-card-header">
               <span className="t-label truncate-1 flex items-center" style={{ gap: 6 }}>
                 <ImageIcon size={12} /> RENDER · {render.model.replace("gemini-", "").toUpperCase()}
@@ -658,7 +712,7 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
           ref={binRef}
           className="workshop-bin pointer-events-none absolute"
           data-state={bin}
-          style={{ right: 28, bottom: 44 }}
+          style={{ right: projectShown ? PANEL_WIDTH + 40 : 28, bottom: 44 }}
           aria-hidden
         >
           <Trash2Icon size={26} />

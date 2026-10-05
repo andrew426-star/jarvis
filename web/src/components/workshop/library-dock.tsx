@@ -99,7 +99,7 @@ export function LibraryDock(props: LibraryDockProps) {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto" style={{ padding: "var(--sp-2)" }}>
-        <Section title="PROJECTS">
+        <Section title="SHOWPIECES">
           <div className="grid grid-cols-2" style={{ gap: 6 }}>
             {CATALOGUE.map((entry) => (
               <ProjectCard

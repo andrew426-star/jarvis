@@ -390,6 +390,41 @@ export class WorkshopScene {
     this.emitItems()
   }
 
+  /** Swap the item named `name` for a rebuilt one in the same spot, pose
+   *  and mode, with no break-apart - a project's assembly when the project
+   *  changes. With nothing by that name it is simply spawned. */
+  replaceBuilt(name: string | null, built: BuiltItem) {
+    const old = name ? this.live().find((item) => item.spec.name === name) : undefined
+    this.spawnBuilt(built)
+    if (!old) return
+    const fresh = this.items[this.items.length - 1]
+    fresh.root.position.copy(old.root.position)
+    fresh.model.rotation.copy(old.model.rotation)
+    fresh.posed = old.posed
+    fresh.spin = old.spin
+    fresh.scale = old.scale
+    fresh.mode = old.mode
+    fresh.solidity = old.solidity
+    fresh.born = old.born
+    this.removeItem(old)
+  }
+
+  /** Take an item off the stage at once, without the discard effect. */
+  removeWhere(name: string) {
+    const old = this.live().find((item) => item.spec.name === name)
+    if (old) this.removeItem(old)
+  }
+
+  private removeItem(item: Item) {
+    for (const [id, grip] of this.grips) if (grip.kind !== "orbit" && grip.item === item) this.grips.delete(id)
+    if (this.twoHand?.item === item) this.twoHand = null
+    if (this.hovered === item) this.hovered = null
+    if (this.focused === item) this.focus(null)
+    this.items.splice(this.items.indexOf(item), 1)
+    this.disposeItem(item)
+    this.emitItems()
+  }
+
   private emitItems() {
     this.callbacks.onItems?.(this.live().map((item) => ({ id: item.id, name: item.spec.name, mode: item.mode })))
   }
