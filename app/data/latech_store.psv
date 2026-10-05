@@ -1,0 +1,201 @@
+# Louisiana Tech engineering store, 2024-25 public price list (QR code list).
+# Columns: class used | item | supplier | part # | packaging | actual sale price (USD)
+# Prices are the sale price; the store estimates the total at about 1.13x (11% tax + 2% card fees).
+# Prototyping Lab services (3D print, laser cut, etc.) are priced per project by Lab staff: they
+# quote it, you pay at the office, and get a receipt.
+|7-Segment LED Display - red, 1", common anode|Circuit Specialists|e1-1100AHR1|each|1.50
+MEEN 382|Accelerometer/Gyroscope|||each|5.00
+|Accelerometer - Triple-Axis, uses ADXL335 chip (SOLDERED)|Sparkfun|SEN-09269|each|17.00
+ENGR 120|Alligator-to-Breadboard Clips, red/black pair|||pair|1.50
+MEEN 382|Aluminum bar, 8" precut|||each|1.50
+|Arduino Pro Mini (custom side pin)|Sparkfun|DEV-11113|each|18.00
+|Arduino stackable header (6-pin)|Sparkfun|PRT-09280|each|2.00
+|Arduino stackable header (8-pin)|Sparkfun|PRT-09279|each|2.00
+ENGR 120|Arduino UNO Rev3|store-usa.arduino.cc||each|20.00
+ENGR 120 W21|A-Star 32U4 Prime SV (Arduino) microcontroller|Pololu|3113|each|15.00
+|Audio FX Sound Board - SOLDERED|Adafruit|2133|each|25.00
+ENGR 120|Ball caster w/ 1" plastic ball and plastic rollers|Pololu|2691|bag each|5.00
+MEEN 382|Barrel plug 2.1mm x 5.5mm (fits Arduino Uno) (unsoldered)|Newark Element|JR8306-1.5M|each|2.00
+MEEN 382|Battery holder: 6AA (unsoldered)|Pololu|1155|each|2.00
+ENGR 120|Battery holder: 6AA + 2.1 mm barrel plug (soldered, 2020)|combo||each|5.00
+|Breadboard: 170 tie-point color mini|Amazon||5 breadboards|2.00
+ENGR 120, 121|Breadboard: 400 tie-point (120 robot; may incl mounting holes)|Pololu|4000|each|3.00
+ENGR 121, MEEN 382, ENGR 220|Breadboard: 830 tie-point|Omnitron|WB-102|each|3.50
+|Breadboard: Prototyping (no headers)|MPJA|32891 PB|pack of 3|2.00
+|Buttons: Various|||group of 3|2.00
+|Canned air (10oz)|Office Depot|110284|pack of 6|4.50
+MEEN 382|Capacitor: 0.1uF|||each|1.00
+ENGR 220 (F21)|Clevis Pin: Stainless Steel, 1 in L, 5/16 in Pin Dia.|Grainger|2XAK1|pack of 5|2.00
+ENGT 322|Coupler: Flexible plum shaft aluminum (5x8mm)|Zyltech|HW-CP-ALU-5x8|each|3.50
+|Deburring tool (Steel)|MSC|5751433|each|6.50
+ENGR 120|Dial caliper 6 inch|MSC|76367069|each|23.00
+|Electrode (multipurpose electronic monitoring; single use)|Amazon|820140019027|pack of 100|2.00
+|Enclosure: 3" x 2" x 1.1" black plastic|MPJA|15522 BX|each|2.00
+|Enclosure: 5" x 2.5" x 1.75" black plastic|MPJA|15518 BX|each|3.50
+ENGR 120|ENGR 120 electrical bag|||each|2.00
+ENGR 120|ENGR 120 FULL kit (tool + robot)|||each|120.00
+ENGR 120|ENGR 120 hardware bag|||each|2.00
+ENGR 120|ENGR 120 Robot kit|||each|60.00
+ENGR 120|ENGR 120 pump kit|||each|5.00
+ENGR 120|ENGR 120 Tool kit|||each|75.00
+ENGR 121|ENGR 121 Canister Oven Kit|||each|23.00
+ENGR 121|ENGR 121 Film Canister (with lid)|Walmart||pack of 30|2.00
+ENGR 121|ENGR 121 Linear Actuator Kit|||each|20.00
+ENGR 121|ENGR 121 COMPLETE kit|||each|33.00
+ENGR 122|ENGR 122 aluminum piece replacement|Zyltech|EXT-2020-REG-1000-10X|10|2.00
+ENGR 122|ENGR 122 hardware bag only (no individual pieces)||||8.00
+ENGR 220|ENGR 220 acrylic plate replacement||||1.50
+ENGR 122|Extruded Aluminum, 2020: 0.5 meter section, precut|Zyltech|EXT-2020-REG-1000-10X|10|4.00
+|Extruded Aluminum, 2020: 1 meter section|Zyltech|EXT-2020-REG-1000-10X|10|10.00
+|Extruded Aluminum, 2020: 1.2 meter section|Zyltech|EXT-2020-REG-1200|each|11.00
+|Extruded Aluminum, 2020: 2 meter section|Zyltech|EXT-2020-REG-2000|each|20.00
+|Extruded Aluminum, 2020: 1 meter section, black|Zyltech|EXT-2020-BLK-1000-10X|10|11.00
+|Extruded Aluminum, 2020: misc cut pieces (varying sizes, sold by inch)|Zyltech|EXT-2020-REG|per inch|0.50
+|Extruded Aluminum, 2020: L-bracket, metal|Zyltech|HW-2020-LBRKT|each|3.00
+|Extruded Aluminum, 2020: L-bracket, acrylic|cut by IESB Prototyping||each|1.50
+|Extruded Aluminum, 2020: T-bracket, metal|Zyltech|HW-2020-TBRKT|each|3.00
+|Extruded Aluminum, 2020: T-bracket, acrylic|cut by IESB Prototyping||each|1.50
+ENGR 220|Extruded Aluminum, 2040: 0.5 meter section, precut (ENGR 220)|Zyltech|EXT-2040-REG-1000-10X|each|7.50
+|Extruded Aluminum, 2040: 1 meter section|Zyltech|EXT-2040-REG-1000|each|11.50
+|Extruded Aluminum: 3-way corner bracket (rounded)|Zyltech|HW-ANGBR-3WAY-P|each|5.00
+|Extruded Aluminum: 90 degree triangle bracket (12 pack)|Zyltech|HW-2020ANGBR-ALU-90DEG-SM-12x|12|4.00
+|Extruded Aluminum: end cap (hard plastic, press-fit insert)|Zyltech|HW-2020-CAP|10|5.00
+|Extruded Aluminum: end cap (soft rubber, slide-on cover style)|Zyltech|HW-20SLD-FTBLK|4|1.50
+|Extruded Aluminum: M5 10mm machine screws, Torx, black oxide|Fastener Superstore|557855|5|1.00
+|Extruded Aluminum: M5 5mm machine screws, Torx, zinc|Fastener Superstore|541021|5|1.00
+|Extruded Aluminum: M5 5mm machine screws, Torx, stainless steel|Fastener Superstore|549425|5|1.50
+|Extruded Aluminum: T-slot hammer nut M4|Zyltech|HW-M4-HAMMER-100PK|5|2.00
+|Extruded Aluminum: T-slot hammer nut M5|Zyltech|HW-M5-HAMMER-100PK|5|2.00
+|Extruded Aluminum: T-slot spring hammer nut, M5|Zyltech|HW-M5-SPRNG-T-NUT-100PK|5|2.50
+|Extruded Aluminum: Torx head key, T25, 3-3/4" length|MSC|63615637|each|2.00
+ENGR 121|Fan, 2" square; 12VDC x 3/8"; T&T box fan|MPJA|12773 FN|each|2.00
+ENGT 222|Fan, 40x20mm; 12V|Amazon|KDE1204PKV3|each|12.00
+ENGR 121|Fan housing, 3D printed (1.5 hour print time)|||each|2.00
+|Filament: 1kg roll, Build Series PLA, 1.75mm, glossy black|Matterhackers|M-Y6C-YEZM|each|28.00
+|Filament: 1kg roll, Build Series PLA, 1.75mm, blue/red/white|Matterhackers||each|28.00
+|Flux (Petroleum paste, no. 70)|MSC|08489643 (box says 08489650)|2 oz tin|2.00
+|Flux (Rosin paste, no. 135)|SRA|FLS135|2 oz tin|2.00
+|GT2 pulley set (8ft timing belt, 2x pulley, 2x idler, 4x tensioner)|Zyltech|HW-BE-Set|set|6.00
+MEEN 382|Hall effect sensor|||each|3.50
+|Hall effect sensor (linear, programmable, incl ceramic capacitor)|Digikey|MLX90215EVA-AAA-106-BU-ND|each|8.00
+|Hall effect sensor (linear, voltage changes with magnetic field, incl magnet)|Digikey|480-2005-ND|each|7.00
+|Hall effect sensor (Melexis 90217; incl magnet)|Parallax|605-00005|each|8.00
+|Hall effect sensor (non-latching digital, unipolar, incl magnet)|Digikey|TLE4905LE6433INCT-ND|each|5.00
+|Hard Hat, white|Discount Safety Gear|VGFT|each|20.00
+ENGR 220 (F21)|Hardened Steel Rod: 8mm OD, 1000mm length|Zyltech|HW-RO-8mm-OD-1000|each|21.00
+MEEN 382|Header, stackable (Arduino, set of 4 multi size)|Sparkfun|PRT-11417|kit|2.00
+|Jumper wire: 3-pin, F/F with pins, 11"|||each|2.00
+ENGR 121|Jumper wire: 3-pin, M/F JST to breadboard (Sparkfun LCD screen)|Sparkfun|CAB-13685|each|3.00
+|Jumper wire: extension, 3-pin, M/F, 6"|||group of 3|2.00
+|Jumper wire: pull-apart, F/F, 5.5"|||group of 10|2.00
+|Jumper wire: pull-apart, F/F, 7.75"|||group of 10|2.00
+|Jumper wire: pull-apart, M/M, 8"|||group of 10|2.00
+ENGR 120|Jumper wire: Red/Black M/M 15cm|Amazon||pack of 100|1.00
+ENGR 120|Jumper wires: pack of 140|MPJA|27027 TE|each|3.50
+ENGR 121|Jumper wires; male to female; 6" long|MPJA|31218 PL|pack of 40|2.50
+|LCD: 4x20 serial, backlit (Parallax)|Parallax|27979|each|40.00
+|LCD: 4x20 serial, backlit (Sparkfun)|Sparkfun|LCD-09568|each|35.00
+ENGR 220 (F21)|Lead screw (threaded rod) with T8x2 nut, 150mm|Zyltech|HW-SC-T8x2-150|each|4.50
+|Lead screw (threaded rod) with T8x2 nut, 250mm|Zyltech|HW-SC-T8x2-250|each|4.50
+|Lead screw (threaded rod) with T8x2 nut, 300mm|Zyltech|HW-SC-T8x2-300|each|5.00
+|Lead screw (threaded rod) with T8x2 nut, 2000mm|Zyltech|HW-SC-T8x2-2000|each|30.00
+ENGT 322|Lead screw nut (T8x2)|Zyltech|HW-SC-T8x2-NUT|each|2.00
+ENGT 322|Linear bearing, 12mm|Zyltech|HW-LM12UU-LNBR-12mm-SHT|each|2.50
+ENGR 220 (F21)|Linear bearing, 8mm|Zyltech|HW-LM8UU-LNBR-8mm-SHT|each|2.00
+ENGR 220|Load cell (10kg)|Adafruit|4542|each|5.00
+ENGR 220 (F21)|Machinist's dial indicator, 1"|Harbor Freight|063521|each|20.00
+|Magnet: COES made in-house|||each|2.00
+MEEN 382|MEEN 382 kit (Basic Measurements; 2020)|||each|40.00
+MEEN 382|Microphone|||each|1.50
+ENGR 120, ENGR 121|Motor: mini gear motor, N20, metal gears|Zyltech||each|3.00
+|Motor: mini vibrating disk|RobotShop|316040001|each|5.00
+|Motor: shaftless vibration|Pololu|1637|each|5.00
+|Motor: vibrating motor, 1.5-4.5VDC|allelectronics.com|DCM-478|each|3.00
+|Motor: NEMA 17 stepper motor (no motor controller)|Zyltech|MO-N17-40-22B|5|12.00
+|Motor: NEMA 17 stepper motor (incl A4988 motor controller)|Zyltech|MO-N17-40-22B / MO-DRIV-A4988|package|14.00
+|Motor mount: NEMA 17 stepper motor L-bracket|Zyltech|HW-MT-N17|each|2.00
+|Motor mount: NEMA 17 stepper motor straight bracket|Zyltech|HW-2020NM17-PLT|each|2.00
+ENGR 220|Motor controller/driver: L298N with H-bridge|MPJA|34652 MP|each|5.00
+|Motor controller/driver: A4988|Zyltech|MO-DRIV-A4988-5x|5|2.50
+|Motor driver (dual): ROB-14451 (soldered)|Sparkfun|ROB-14451|each|6.00
+ENGR 120|Multimeter leads with clips|Omnitron|TL-12|each|5.50
+ENGR 120|Multimeter: Innova 3320 auto-ranging|J&B Tools|3320|each|22.50
+|MusicMaker MP3 Shield for Arduino - UNSOLDERED|Adafruit|1790|each|35.00
+|MusicMaker MP3 Shield for Arduino - SOLDERED|Adafruit|1790|each|38.00
+ENGR 120|Needle nose pliers (long nose plier) - 2020|Wholesale Tool|6550-0270|each|2.50
+MEEN 382|Operational amplifier (op amp)|||each|1.00
+ENGT 222|Peltier cooler, ceramic, 40mm square, with adhesive + heatsink|||each|10.00
+ENGR 121|Piezospeaker (Kobitone Audio Co)|Jameco|2098523|each|3.00
+|Piezo film Vibra Tab - vibration sensor|Parallax|605-00004|each|4.50
+MEEN 382|Potentiometer: 200 ohm|||each|2.50
+ENGR 121|Power supply: 9VDC 1A|Pololu|1470|each|7.00
+ENGR 121|Power supply: 12VDC 2A|Amazon||each|10.00
+ENGT 222|Power supply: 12VDC 2.5A||CYSC32-12050|each|14.00
+ENGR 220|Power supply: 12VDC 3A|||each|10.00
+ICET 300 series|Power supply: 12VDC 5A (brick + cord)|Zyltech||each|10.00
+ENGR 120|Precision cutters (Hakko)|Hakko|CHP-170|each|4.00
+ENGR 120|Precision screwdriver (Phillips, 261PH1 x 60)|MSC|2571461|each|4.50
+ICET 301|Precision screwdriver (flat, 2.5mm x 150mm)|MSC|40074080|each|4.50
+MEEN 382 / ENGT 220|Push button (momentary), multi color|||each|1.50
+|Relay: DPDT, 8-pin, 1A contact, 5V coil @ 125mA|MPJA|18474 RL|each|3.00
+|Relay: DPDT, 8-pin, 3A contact, 5V coil @ 30mA|Digikey|PB383-ND|each|3.00
+|Relay: SPDT, 5-pin, 5A contact, 5V coil @ 80mA|Digikey|PB890-ND|each|3.00
+ENGR 121|Relay: SPST, 4-pin, 3A contact, 5V coil @ 40mA|Digikey|PB370-ND|each|3.00
+ENGR 120|Robot chassis: aluminum sheet, 4" x 6"|PCS||each|3.00
+ENGR 120|Robot competition package (ducks, mat)|||each|32.00
+ENGR 120|Rubber ducks|Oriental Trading|IN-5/810|pack of 2|2.50
+ENGR 120|Robot competition: grate|Lowe's||each|8.00
+ENGR 120|Robot competition: mats|Rapid Signs|13oz scrim banner|each|45.00
+ENGR 120|Robot: wheel & rubber tire, pair|Pololu|2819|each (pair)|4.00
+ENGR 120|Robot: wheel & rubber tire, single|Pololu|2819|each|2.00
+ENGT 322|Roller bearing (608)|Zyltech|HW-BR-608|each|1.50
+|Safety glasses: Pyramex Intruder, clear uncoated lens|MCD Supply|S4110SUC|each (from pack of 300)|3.00
+|Safety glasses: Radians Chief OTG safety eyewear (clear)|aboloxsafety.com|RAD360-C|each|3.00
+ENGR 120|Screwdrivers (phillips & slotted)|Kole Imports|DM056|pair|3.00
+MEEN 382|SD card: micro, 32GB|||each|7.50
+|Servo: continuous rotation (FEETECH FS90R analog)|Pololu|2820|each|4.00
+ENGR 120|Servo: continuous rotation (FEETECH FT90R digital) - 120 robot|Pololu|2817|each|6.50
+|Servo: continuous rotation (S35, large)|Parallax|900-00008|each|15.00
+|Solder (0.031", 0.8mm) spool|Grainger|331867|spool|4.00
+|Solder tool kit (6 pcs)|Newark|68Y6539|each|3.00
+|Solder vacuum (Teenitor)|Amazon|TNT582|3 pack|3.50
+|Sparkfun load cell amplifier (HX711)|Sparkfun|HX711|each|12.00
+MEEN 382|Sparkfun MicroSD shield|Sparkfun|DEV-12761|each|17.00
+|Sparkfun microSD transflash breakout|Sparkfun|BOB-00544|each|6.50
+|Sparkfun RedBoard (similar to Arduino UNO Rev3)|Sparkfun|DEV-13975|each|22.00
+|Sparkfun RedBoard + USB Mini-B cable|Sparkfun||each|26.00
+|Sparkfun SD card breakout|Sparkfun|BOB-12941|each|14.00
+|Sparkfun USB Mini-B cable (6ft)|Sparkfun|CAB-11301|each|4.00
+ENGR 120|Steel ruler, 6"|MSC|59625095|each|3.50
+MEEN 382|Strain gage (1x axis)|||each|6.00
+|Switch package: box, switch, cover|||each|15.00
+ENGR 220|Switches, push-button, SPST, tactile, pack of 4 (green/red/white/black)|MPJA||pack of 4|2.00
+|Switch, snap action, limit, lever, SPDT, 15A, .187 quick connect, 40gf|Digikey|EG4527-ND|each|2.00
+ICET 301|Switch: momentary, SPDT 12V, green|MPJA|34156 SW|each|2.50
+ICET 301|Switch: momentary, SPDT 12V, red|MPJA|34155 SW|each|2.50
+IET 301|Switch: latching emergency STOP, mushroom top|MPJA|34740 SW|each|10.00
+|Switch: rocker, SPST (round)|Sparkfun|COM-11138|each|2.00
+|Switch: UL sub-mini toggle (3/16" hole), SPST, 1A @ 250VAC|MPJA|32850 SW|each|2.00
+|Switches: cover for fishtank switch|Wholesale Electric|70955|each|2.00
+|Switches: double switch for fishtank (Cooper 15A 271W)|Wholesale Electric||each|7.00
+|Switches: metal box for fishtank switch|Wholesale Electric|70967|each|3.00
+MEEN 382|Switch: on/off mini slider, Comax|||each|1.50
+ENGR 121|Switch: toggle on/off, red base|Allied Electronics|70792066|each|2.00
+|Teflon tape, 3-mil|Tape Jungle|8603A-0050-1000-520-WH|each|2.00
+|Terminal blocks (121 fishtank)|Digikey|A98514-ND|each|2.00
+ENGR 121|Thermometer - Avatemp digital, 5" probe|Webstaurant Store|914DRT450A|each|8.00
+ENGT 222|Tin canister, 2-1/2" with lid|||each|4.00
+|Tool bag (TV-20214VP, McGuire-Nicholas, handles) only|McGuire-Nicholas|TV-20214VP|each|5.00
+ENGR 120 (F21)|Tool bag (Westward, no handles) only|Grainger|32PJ43|pack of 3|5.00
+|Tweezers - precision, stainless steel|Newark|71C3133|each|3.50
+ENGR 120 W21|USB 2.0 A male to micro B sync/charge cable (Anker, 1ft)|Amazon||6 cables|3.00
+ENGR 120|USB 2.0 male A to male B (3ft)|Cable Leader|U2102-C103|each|2.00
+|USB Ethernet to USB C|Amazon||each|16.50
+ICET 301|Voltage regulator LM317|MPJA|LM317|each|4.00
+|WEMOS microcontroller with ESP32|Zyltech||each|9.00
+ENGT 322|Wheel bearing (black)|Zyltech|HW-20WHL-BLK|each|2.00
+|Wire crimper - Hanlong Tools HT-202A-R|Jameco|99443|each|8.00
+|Wire stripper - 20-30 AWG|Pololu|1923|each|5.00
+MEEN 382|Wire: pair AWG22, 18" length|||each|3.50
+|Wire: any length - up to 2 ft total free; 2-10 ft $2; over 10 ft $2 + $0.10/ft||||2.00
+ENGR 220|Zyltech 20 series wheel/pulley/bearing|Zyltech|HW-20WHL-BLK|each|2.00

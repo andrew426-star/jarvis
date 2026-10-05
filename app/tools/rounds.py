@@ -40,6 +40,7 @@ READ_ONLY: dict[str, set[str] | None] = {
     "kivaro_pipeline": {"status", "find"},
     "calculator": None,
     "trade_signals": None,
+    "parts_catalog": None,
 }
 
 # What a proposal may ask to run once approved: any of his ordinary tools

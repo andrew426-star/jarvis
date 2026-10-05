@@ -1,0 +1,75 @@
+# Louisiana Tech engineering vending machines, 2024-25.
+# "Anne Droid" is the machine on the RIGHT; "Buttons" is the machine on the LEFT.
+# The card terminal places a temporary $25.00 hold, which settles to the real amount in a few
+# business days.
+# Columns: location | item | qty in package | price (USD)
+Anne Droid, A0|Multimeter leads (pair)|1|5.00
+Anne Droid, A2|Safety glasses (STD)|1|3.00
+Anne Droid, A4|Safety glasses (STD)|1|3.00
+Anne Droid, A6|Safety glasses (OTG)|1|3.00
+Anne Droid, A8|Safety glasses (OTG)|1|3.00
+Anne Droid, B0|Molex pin housing (ICET300 series)|1|2.00
+Anne Droid, B2|Molex sleeve housing (ICET300 series)|1|2.00
+Anne Droid, B4|Molex pins "male" (ICET300 series)|4|1.00
+Anne Droid, B6|Molex sleeves "female" (ICET300 series)|4|1.00
+Anne Droid, B8|L298N motor driver|1|5.00
+Anne Droid, C0|Mini limit switch (MEEN 321, ENGT 220/321)|1|1.50
+Anne Droid, C1|Push-button switch (ENGR 120)|2|1.00
+Anne Droid, C2|Push-button switch (ENGR 220, MEEN 321)|2|1.50
+Anne Droid, C3|Momentary flip switch (ENGR 121)|1|1.50
+Anne Droid, C4|Mini gear motor (ENGR 121)|1|3.00
+Anne Droid, C5|PING))) ultrasonic distance sensor (ENGR 122)|1|5.00
+Anne Droid, C6|3-axis accelerometer, unsoldered (ENGR 122)|1|2.50
+Anne Droid, C7|Bluetooth module (ENGR 122)|1|4.00
+Anne Droid, C8|Servo (120 robot)|1|7.00
+Anne Droid, C9|A4988 motor driver (ENGR 122 & NEMA stepper motor)|1|2.50
+Anne Droid, D0|315 mA fuse|1|1.00
+Anne Droid, D1|Single-pole single-throw (SPST) relay|1|3.00
+Anne Droid, D2|NPN transistor|1|0.25
+Anne Droid, D3|MOSFET transistor, 2.8A (ENGR 121)|1|0.75
+Anne Droid, D4|MOSFET transistor, 20.3A (ENGT 222)|1|1.00
+Anne Droid, D5|Diodes|4|0.50
+Anne Droid, D6|Unsoldered barrel jack|1|1.50
+Anne Droid, D7|Piezospeaker|1|3.00
+Anne Droid, D8|Alligator-to-breadboard pair|1|1.00
+Anne Droid, D9|Super glue|1|2.00
+Anne Droid, E0|170pt breadboard|1|2.00
+Anne Droid, E2|400pt breadboard|1|3.00
+Anne Droid, E4|800pt breadboard|1|5.00
+Anne Droid, E6|9V power supply|1|7.00
+Anne Droid, E8|12V power supply (5A)|1|7.00
+Buttons, A0|Arduino UNO|1|25.00
+Buttons, A2|Arduino UNO|1|25.00
+Buttons, A4|Arduino UNO cable|1|2.00
+Buttons, A6|Arduino UNO cable|1|2.00
+Buttons, A8|Torx head key, T25|1|2.00
+Buttons, B0|ENGR 120 6-AA battery pack|1|5.00
+Buttons, B2|22 gauge wire bundle (multicolor, roughly 8 ft total)|1|2.00
+Buttons, B4|Clear film canister (ENGR 121)|1|1.00
+Buttons, B6|Soldering practice kits (items vary)|1|1.50
+Buttons, B8|Aluminum brackets - 90 degree|6|2.00
+Buttons, C0|1W resistor (blue, 121)|1|0.75
+Buttons, C1|Photoresistor|1|1.00
+Buttons, C2|10 kOhm resistor|4|0.50
+Buttons, C3|1 kOhm resistor|4|0.50
+Buttons, C4|100 Ohm resistor|4|0.50
+Buttons, C5|10 kOhm thermistor|1|1.00
+Buttons, C6|Dupont connectors, socket (MEEN 321)|5|0.50
+Buttons, C7|Dupont covers, black (MEEN 321)|5|0.50
+Buttons, C8|Aluminum bolts - M5 x 8mm|5|1.50
+Buttons, C9|Aluminum nuts - M5|5|2.00
+Buttons, D0|Cut wire kits (ENGR 120)|1|1.50
+Buttons, D1|ENGR 120 hardware kit|1|1.50
+Buttons, D2|ENGR 120 electrical kit|1|1.50
+Buttons, D3|LED - white|1|1.00
+Buttons, D4|LED - yellow|2|0.75
+Buttons, D5|LED - green|2|0.75
+Buttons, D6|LED - red|2|0.75
+Buttons, D7|LED - RGB|1|1.00
+Buttons, D8|LED - IR|1|0.75
+Buttons, D9|IR sensor|1|1.00
+Buttons, E0|121 thermometer|1|7.00
+Buttons, E2|Jumper wires (10pk)|1|2.00
+Buttons, E4|2" fan|1|2.00
+Buttons, E6|4" zip ties|2|0.25
+Buttons, E8|8" zip ties|2|0.25

@@ -18,6 +18,7 @@ from app.tools.market_analysis import market_analysis
 from app.tools.market_history import MARKET_HISTORY_SCHEMA, market_history
 from app.tools.news_feed import NEWS_FEED_SCHEMA, news_feed
 from app.tools.notes import NOTES_SCHEMA, notes
+from app.tools.parts_catalog import PARTS_CATALOG_SCHEMA, parts_catalog
 from app.tools.portfolio import portfolio
 from app.tools.spotify import spotify
 from app.tools.think import think
@@ -589,6 +590,7 @@ TOOL_SCHEMAS = [
     CHECKLIST_SCHEMA,
     INBOX_SCHEMA,
     TRADE_SIGNALS_SCHEMA,
+    PARTS_CATALOG_SCHEMA,
 ]
 
 DISPATCH = {
@@ -618,4 +620,5 @@ DISPATCH = {
     "checklist": checklist,
     "inbox": inbox,
     "trade_signals": trade_signals,
+    "parts_catalog": parts_catalog,
 }

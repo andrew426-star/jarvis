@@ -65,6 +65,7 @@ _TOOL_STATUS = {
     "showcase": "Preparing the display",
     "notes": "Opening your notes",
     "kivaro_pipeline": "Checking the lead engine",
+    "parts_catalog": "Checking the parts list",
     "history": "Checking the log",
 }
 
@@ -179,6 +180,12 @@ SYSTEM_PROMPT = (
     "rather than answering from memory. When he asks to remove, drop or clear a lead, call "
     "kivaro_pipeline remove with its exact name in the same turn; if it finds nothing, show him "
     "the similar names and ask which, and if it removes it, say from which tabs.\n\n"
+    "BUILDING THINGS: when Andrew plans or designs a project with electronics or hardware, "
+    "build it from parts he can actually get: search parts_catalog first and prefer what the "
+    "Louisiana Tech store or vending machines stock, naming each part with its price and "
+    "where it is (store, or the machine and slot), and total the bill with tax at about 1.13x. "
+    "Only reach beyond the catalog when nothing in it fits, and say so. Size printed parts "
+    "around those exact components.\n\n"
     "REPORTING ACTIONS: never say you did something — removed, deleted, updated, sent, logged, "
     "created, scheduled — unless a tool call in this turn did it and its result says it "
     "succeeded. If no tool can do it, say so plainly. If the tool failed, or the result shows it "
@@ -194,7 +201,9 @@ SYSTEM_PROMPT = (
     "market_history (historical daily price bars for a single equity/ETF symbol, for chart-type "
     "questions), portfolio (Andrew's Alpaca investment account, read-only), company_financials (Kivaro AI's "
     "Stripe balance/activity, read-only), kivaro_pipeline (Kivaro AI's Autonomous Lead Engine "
-    "spreadsheets and client list — status, find a company, remove a company), launch_tracker (the launch plan's scoreboard, "
+    "spreadsheets and client list — status, find a company, remove a company), parts_catalog (what he can buy on "
+    "campus at Louisiana Tech's engineering store and its two vending machines, with prices, "
+    "part numbers and vending slots), launch_tracker (the launch plan's scoreboard, "
     "and the place to log real conversations, pilots, commitments, publicity and content), "
     "kiv_tasks (his K.I.V. task board: list, update, create), habits (daily practice check-ins "
     "and streaks), italian (his flashcard tutor with spaced repetition), speech_coach (measures a "

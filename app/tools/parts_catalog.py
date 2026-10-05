@@ -1,0 +1,108 @@
+import re
+from functools import cache
+from pathlib import Path
+
+# The electronics and hardware Andrew can buy on campus at Louisiana Tech:
+# the engineering store's 2024-25 price list and the two vending machines.
+# Transcribed from the store's public QR-code PDF into app/data/*.psv
+# (pipe-separated, # comments); edit those files when the list changes.
+DATA = Path(__file__).resolve().parent.parent / "data"
+TAX_FACTOR = 1.13  # the store's own estimate: 11% tax + 2% card fees
+MAX_RESULTS = 40
+
+PARTS_CATALOG_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "parts_catalog",
+        "description": (
+            "The electronics, hardware and tools Andrew can buy on campus at Louisiana Tech: the "
+            "engineering store's 2024-25 price list (Arduino UNO, A-Star, ESP32, sensors, motors, "
+            "servos, drivers, relays, switches, breadboards, 2020/2040 extrusion, lead screws, "
+            "bearings, power supplies, filament, course kits...) and the two vending machines, "
+            "Anne Droid (right) and Buttons (left), with slot locations. search finds parts by "
+            "words in the name, part number, supplier or course; course lists one class's parts; "
+            "max_price filters. Prices are pre-tax; the store estimates about 1.13x at the till."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Words to match, e.g. 'servo', 'hall effect', 'nema 17', '12V supply'. "
+                    "Omit with a course to list that course's parts.",
+                },
+                "course": {"type": "string", "description": "e.g. 'ENGR 120', 'MEEN 382'."},
+                "source": {"type": "string", "enum": ["all", "store", "vending"], "description": "Default all."},
+                "max_price": {"type": "number", "description": "Only items at or under this price (USD)."},
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def _rows(name: str) -> list[list[str]]:
+    lines = (DATA / name).read_text(encoding="utf-8").splitlines()
+    return [line.split("|") for line in lines if line.strip() and not line.startswith("#")]
+
+
+@cache
+def catalog() -> list[dict]:
+    items = [
+        {
+            "source": "store",
+            "item": item,
+            "course": course,
+            "supplier": supplier,
+            "part_number": part,
+            "packaging": packaging,
+            "price": float(price),
+        }
+        for course, item, supplier, part, packaging, price in _rows("latech_store.psv")
+    ]
+    items += [
+        {"source": "vending", "item": item, "location": location, "quantity": int(qty), "price": float(price)}
+        for location, item, qty, price in _rows("latech_vending.psv")
+    ]
+    return items
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9.]+", text.lower())
+
+
+def _haystack(item: dict) -> str:
+    return " ".join(str(v) for k, v in item.items() if k != "price").lower()
+
+
+def parts_catalog(args: dict) -> dict:
+    query = _words(args.get("query") or "")
+    course = " ".join(_words(args.get("course") or ""))
+    source = args.get("source") or "all"
+    max_price = args.get("max_price")
+    if not query and not course:
+        return {"ok": False, "error": "Give a query or a course."}
+
+    matches = []
+    for item in catalog():
+        if source != "all" and item["source"] != source:
+            continue
+        if max_price is not None and item["price"] > float(max_price):
+            continue
+        hay = _haystack(item)
+        # Plurals in the query still match: "servos" finds "Servo".
+        if any(w not in hay and w.rstrip("s") not in hay for w in query):
+            continue
+        if course and course not in " ".join(_words(item.get("course") or item["item"])):
+            continue
+        matches.append(item)
+
+    return {
+        "ok": True,
+        "count": len(matches),
+        "items": matches[:MAX_RESULTS],
+        "truncated": len(matches) > MAX_RESULTS,
+        "note": f"Prices are pre-tax; budget about {TAX_FACTOR}x. Vending machines place a temporary "
+        "$25 card hold. Prototyping Lab services (3D printing, laser cutting) are quoted per project "
+        "by Lab staff.",
+    }

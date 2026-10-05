@@ -25,6 +25,7 @@ const TOOL_LABELS: Record<string, string> = {
   showcase: "Display",
   checklist: "Checklist",
   trade_signals: "Trades",
+  parts_catalog: "Parts",
   inbox: "Inbox",
 }
 
