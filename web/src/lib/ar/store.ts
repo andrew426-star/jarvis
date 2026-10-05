@@ -19,11 +19,16 @@ interface TryOnState {
   /** The other side of the hand, if the tracker picked the wrong one. */
   flip: boolean
   desk: DeskPlacement
+  /** Scene depth from the depth model: occlusion and surface placement. */
+  depth: boolean
+  depthText: string | null
+  depthReady: boolean
   status: TryOnStatus
   detail: string | null
   start: (anchor?: Anchor | null) => void
   stop: () => void
-  set: (patch: Partial<Pick<TryOnState, "anchor" | "mode" | "scale" | "flip" | "desk">>) => void
+  set: (patch: Partial<Pick<TryOnState, "anchor" | "mode" | "scale" | "flip" | "desk" | "depth">>) => void
+  setDepthStatus: (text: string | null, ready: boolean) => void
   setStatus: (status: TryOnStatus, detail?: string | null) => void
 }
 
@@ -34,10 +39,14 @@ export const useTryOn = create<TryOnState>((set) => ({
   scale: 1,
   flip: false,
   desk: { ...DEFAULT_DESK },
+  depth: false,
+  depthText: null,
+  depthReady: false,
   status: "loading",
   detail: null,
   start: (anchor = null) => set({ active: true, anchor, scale: 1, flip: false, status: "loading", detail: null }),
   stop: () => set({ active: false }),
   set: (patch) => set(patch),
   setStatus: (status, detail = null) => set({ status, detail }),
+  setDepthStatus: (depthText, depthReady) => set({ depthText, depthReady }),
 }))

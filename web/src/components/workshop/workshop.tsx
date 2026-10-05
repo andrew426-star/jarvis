@@ -13,6 +13,9 @@ import {
   MagnetIcon,
   RotateCcwIcon,
   ScanEyeIcon,
+  GlassesIcon,
+  VideoIcon,
+  VideoOffIcon,
   SparklesIcon,
   Trash2Icon,
   XIcon,
@@ -33,6 +36,7 @@ import { PANEL_WIDTH, ProjectPanel } from "@/components/workshop/project-panel"
 import { ProjectGallery } from "@/components/workshop/project-gallery"
 import { buildAssembly, releaseAssembly } from "@/lib/workshop/project/assembly"
 import { useProject } from "@/lib/workshop/project/store"
+import { useTryOn } from "@/lib/ar/store"
 import { stopSim } from "@/lib/workshop/sim/controller"
 import { ScadError, compileScad, scadItem } from "@/lib/workshop/openscad"
 import { useJarvis } from "@/lib/store"
@@ -394,6 +398,49 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
     }
   }
 
+  // The camera from inside the workshop, so closing its window never means
+  // a trip back to the console for it: on brings hand tracking with it,
+  // as opening the workshop does.
+  const cameraOn = useSpatial((state) => state.cameraOn)
+  const hasProject = useProject((state) => !!state.project)
+  const tryingOn = useTryOn((state) => state.active)
+
+  async function setCamera(on: boolean) {
+    const spatial = useSpatial.getState()
+    if (!on) {
+      useTryOn.getState().stop()
+      if (passthrough) togglePassthrough()
+      stopHands()
+      stopCamera()
+      spatial.setCameraOn(false)
+      return true
+    }
+    if (spatial.cameraOn) return true
+    try {
+      await startCamera()
+      useSpatial.getState().setCameraOn(true)
+      setTrackingError(null)
+      if (useSpatial.getState().handsStatus !== "tracking") void startHands().catch(() => {})
+      return true
+    } catch (err) {
+      const denied = err instanceof DOMException && err.name === "NotAllowedError"
+      useJarvis.getState().notify(
+        "warning",
+        denied ? "Camera blocked" : "Camera unavailable",
+        denied ? "Allow camera access for this site in the address bar, then try again." : "No camera could be opened."
+      )
+      return false
+    }
+  }
+
+  async function toggleTryOn() {
+    if (useTryOn.getState().active) {
+      useTryOn.getState().stop()
+      return
+    }
+    if (await setCamera(true)) useTryOn.getState().start()
+  }
+
   function togglePassthrough() {
     const next = !passthrough
     sceneRef.current?.setPassthrough(next ? getVideo() : null)
@@ -553,6 +600,29 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
             title="Show the camera behind the workshop"
           >
             <ScanEyeIcon size={12} /> PASSTHROUGH
+          </button>
+          <button
+            type="button"
+            className="btn flex items-center"
+            style={{ gap: 6, padding: "4px 10px" }}
+            onClick={() => void setCamera(!cameraOn)}
+            data-active={cameraOn}
+            aria-pressed={cameraOn}
+            title={cameraOn ? "Turn the camera off" : "Turn the camera on (with hand tracking)"}
+          >
+            {cameraOn ? <VideoIcon size={12} /> : <VideoOffIcon size={12} />} CAMERA
+          </button>
+          <button
+            type="button"
+            className="btn flex items-center"
+            style={{ gap: 6, padding: "4px 10px" }}
+            onClick={() => void toggleTryOn()}
+            data-active={tryingOn}
+            aria-pressed={tryingOn}
+            disabled={!hasProject && !tryingOn}
+            title={hasProject ? "Wear the open project, live in the camera" : "Open a project to try it on"}
+          >
+            <GlassesIcon size={12} /> TRY ON
           </button>
           <button
             type="button"

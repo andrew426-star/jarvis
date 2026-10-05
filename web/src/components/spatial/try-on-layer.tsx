@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { FlipHorizontal2Icon, MinusIcon, PlusIcon, XIcon } from "lucide-react"
+import { FlipHorizontal2Icon, Layers3Icon, MinusIcon, PlusIcon, XIcon } from "lucide-react"
 
 import { useTryOn } from "@/lib/ar/store"
 import type { TryOnScene } from "@/lib/ar/tryon-scene"
@@ -23,7 +23,7 @@ const HINT: Record<Anchor, string> = {
   wrist: "HOLD YOUR WRIST UP, BACK OF THE HAND TO THE CAMERA",
   hand: "HOLD YOUR HAND UP",
   forearm: "HOLD YOUR FOREARM IN VIEW, HAND OPEN",
-  desk: "DRAG TO MOVE · WHEEL TO TURN",
+  desk: "DRAG TO MOVE · WHEEL TO TURN · DEPTH ON: CLICK A SURFACE TO SET IT THERE",
 }
 
 export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" | "contain" }) {
@@ -36,6 +36,9 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
   const flip = useTryOn((s) => s.flip)
   const desk = useTryOn((s) => s.desk)
   const status = useTryOn((s) => s.status)
+  const depth = useTryOn((s) => s.depth)
+  const depthText = useTryOn((s) => s.depthText)
+  const depthReady = useTryOn((s) => s.depthReady)
   const detail = useTryOn((s) => s.detail)
   const project = useProject((s) => s.project)
   const version = useProject((s) => s.version)
@@ -51,7 +54,12 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
     let scene: TryOnScene | null = null
     import("@/lib/ar/tryon-scene").then(async ({ TryOnScene }) => {
       if (disposed) return
-      scene = new TryOnScene(canvas, getVideo, (s, d) => useTryOn.getState().setStatus(s, d ?? null))
+      scene = new TryOnScene(
+        canvas,
+        getVideo,
+        (s, d) => useTryOn.getState().setStatus(s, d ?? null),
+        (text, ready) => useTryOn.getState().setDepthStatus(text, ready)
+      )
       sceneRef.current = scene
       const group = project.wear?.group
       const shown = group
@@ -70,6 +78,7 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
       scene.setFlip(useTryOn.getState().flip)
       scene.setDesk(useTryOn.getState().desk)
       await scene.setAnchor(anchor)
+      scene.setDepth(useTryOn.getState().depth)
     })
     return () => {
       disposed = true
@@ -86,6 +95,23 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
   }, [scale, project?.wear])
   useEffect(() => sceneRef.current?.setFlip(flip), [flip])
   useEffect(() => sceneRef.current?.setDesk(desk), [desk])
+  useEffect(() => sceneRef.current?.setDepth(depth), [depth])
+
+  /** A pointer position as a point of the (unmirrored) picture, 0-1,
+   *  through the canvas's own fit and mirroring. */
+  function pictureAt(event: React.PointerEvent<HTMLCanvasElement>) {
+    const el = event.currentTarget
+    const rect = el.getBoundingClientRect()
+    const W = el.width || 1
+    const H = el.height || 1
+    const scale = fit === "cover" ? Math.max(rect.width / W, rect.height / H) : Math.min(rect.width / W, rect.height / H)
+    const left = rect.left + (rect.width - W * scale) / 2
+    const top = rect.top + (rect.height - H * scale) / 2
+    let u = (event.clientX - left) / (W * scale)
+    const v = (event.clientY - top) / (H * scale)
+    if (mirrored) u = 1 - u
+    return { u, v }
+  }
 
   if (!active) return null
   const set = useTryOn.getState().set
@@ -111,7 +137,15 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
           const dy = (e.clientY - start.y) * perPx
           set({ desk: { ...start.desk, x: start.desk.x + dx, distance: Math.max(20, Math.min(150, start.desk.distance + dy * 2)) } })
         }}
-        onPointerUp={() => (drag.current = null)}
+        onPointerUp={(e) => {
+          const start = drag.current
+          drag.current = null
+          // A click (no drag) with depth on: set it on the surface there.
+          if (!start || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 5) return
+          const { u, v } = pictureAt(e)
+          const spot = sceneRef.current?.surfaceAt(u, v)
+          if (spot) set({ desk: spot })
+        }}
         onWheel={(e) => set({ desk: { ...desk, spin: desk.spin + (e.deltaY > 0 ? 10 : -10) } })}
       />
 
@@ -143,6 +177,16 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
           <button type="button" className="btn" style={{ width: 20, height: 20, padding: 0 }} onClick={() => set({ scale: Math.min(2, +(scale + 0.05).toFixed(2)) })} aria-label="Bigger">
             <PlusIcon size={11} className="mx-auto" />
           </button>
+          <button
+            type="button"
+            className="btn flex items-center"
+            data-active={depth}
+            style={{ gap: 3, padding: "2px 6px", fontSize: 10 }}
+            onClick={() => set({ depth: !depth })}
+            title="Scene depth (Depth Anything V2, in your browser): real things in front hide the hologram, and desk items sit on real surfaces. First use downloads the model (~50 MB)."
+          >
+            <Layers3Icon size={10} /> DEPTH
+          </button>
           {anchor !== "face" && anchor !== "desk" && (
             <button type="button" className="btn" data-active={flip} style={{ width: 20, height: 20, padding: 0 }} onClick={() => set({ flip: !flip })} title="On the wrong side of the hand? Flip it" aria-label="Flip to the other side">
               <FlipHorizontal2Icon size={11} className="mx-auto" />
@@ -153,6 +197,12 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
           </button>
         </div>
       </div>
+
+      {depth && depthText && (
+        <span className="t-label pointer-events-none absolute" style={{ left: 6, bottom: 6, padding: "2px 8px", color: depthReady ? "var(--accent)" : "var(--warning)", ...pill }}>
+          {depthText}
+        </span>
+      )}
 
       {status !== "tracking" || anchor === "desk" ? (
         <span className="t-label pointer-events-none absolute" style={{ left: "50%", top: 8, transform: "translateX(-50%)", padding: "2px 8px", color: status === "error" ? "var(--warning)" : "var(--accent)", ...pill }}>

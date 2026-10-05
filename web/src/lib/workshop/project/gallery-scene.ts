@@ -79,7 +79,8 @@ export class GalleryScene {
 
     this.composer = new EffectComposer(this.renderer)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.9, 0.5, 0.1)
+    // Soft: a glow on the brightest edges, not a haze over everything.
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.3, 0.35, 0.6)
     this.composer.addPass(this.bloom)
     this.composer.addPass(new OutputPass())
 
@@ -244,11 +245,11 @@ export class GalleryScene {
       slot.holo.position.y = 0.25 + Math.sin(t * 1.4 + i) * 0.04
       const scale = slot.root.scale.x + ((front ? 1 : 0.78) - slot.root.scale.x) * Math.min(1, dt * 6)
       slot.root.scale.setScalar(scale)
-      const flicker = 0.92 + Math.sin(t * 23 + i * 3) * 0.04 + Math.sin(t * 7.3) * 0.04
-      if (slot.materials.line) slot.materials.line.opacity = 0.85 * focus * flicker
-      if (slot.materials.fill) (slot.materials.fill as THREE.MeshBasicMaterial).opacity = 0.07 * focus
-      slot.materials.ring.opacity = (front ? 0.9 : 0.3) * flicker
-      slot.materials.beam.opacity = front ? 0.07 : 0.025
+      const flicker = 0.95 + Math.sin(t * 23 + i * 3) * 0.025 + Math.sin(t * 7.3) * 0.025
+      if (slot.materials.line) slot.materials.line.opacity = 0.5 * focus * flicker
+      if (slot.materials.fill) (slot.materials.fill as THREE.MeshBasicMaterial).opacity = 0.035 * focus
+      slot.materials.ring.opacity = (front ? 0.5 : 0.18) * flicker
+      slot.materials.beam.opacity = front ? 0.03 : 0.012
       if (slot.loading) slot.loading.rotation.z -= dt * 4
     })
     this.composer.render()
