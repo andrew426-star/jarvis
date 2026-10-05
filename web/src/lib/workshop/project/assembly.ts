@@ -5,6 +5,7 @@ import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js"
 import type { BuiltItem } from "@/lib/workshop/models"
 import { componentModel } from "@/lib/workshop/project/components3d"
 import { filament } from "@/lib/workshop/project/materials"
+import { buildCables } from "@/lib/workshop/project/wires3d"
 import { PARTS, type Project } from "@/lib/workshop/project/types"
 import type { SimSnapshot } from "@/lib/workshop/sim/runner"
 
@@ -61,9 +62,11 @@ export async function buildDesign(
   const rowWidth = unplaced.reduce((sum, p) => sum + Math.min(200, Number(PARTS[p.type]?.size?.[0] ?? 10)) + 12, 0)
   let cursor = -rowWidth / 2
 
+  const placed = new Map<string, THREE.Object3D>()
   for (const part of project.parts) {
     if (placedOnly && !project.layout[part.id]) continue
     const model = componentModel(part)
+    placed.set(part.id, model)
     const spot = project.layout[part.id]
     if (spot) place(model, spot.pos, spot.rot)
     else {
@@ -86,13 +89,16 @@ export async function buildDesign(
     if (spin) bindings.spin.set(part.id, spin)
   }
 
+  // The wiring, as real cables between the real pins.
+  if (project.wires.length) zUp.add(buildCables(project.parts, project.wires, placed))
+
   const loader = new STLLoader()
   for (const printed of project.printed) {
     try {
       const stl = await compile(printed.code)
       // An STL is flat facets: smooth across curves, sharp at real edges.
       const geometry = toCreasedNormals(loader.parse(stl.slice().buffer), deg(32))
-      const mesh = new THREE.Mesh(geometry, filament(printed.material, printed.color))
+      const mesh = new THREE.Mesh(geometry, filament(printed.material, printed.color, { color2: printed.color2, texture: printed.texture }))
       mesh.castShadow = mesh.receiveShadow = true
       // Marks it printable for the scene: feature-edge hologram, and STL
       // export of the compiler's own file.

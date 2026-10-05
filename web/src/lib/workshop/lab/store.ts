@@ -22,6 +22,10 @@ interface LabState {
   ranTest: LabTest
   /** Bumped to start the animation. */
   run: number
+  /** The room: light 1 (bright), 0.3 (dim) or 0.02 (dark), and the UV lamp. */
+  light: number
+  uv: boolean
+  setRoom: (patch: Partial<Pick<LabState, "light" | "uv">>) => void
   setOpen: (open: boolean) => void
   toggle: (id: string) => void
   setMaterials: (ids: string[]) => void
@@ -39,6 +43,9 @@ export const useLab = create<LabState>((set, get) => ({
   results: [],
   ranTest: "tensile",
   run: 0,
+  light: 1,
+  uv: false,
+  setRoom: (patch) => set(patch),
   setOpen: (open) => set({ open }),
   toggle: (id) =>
     set((s) => ({

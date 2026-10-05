@@ -16,7 +16,7 @@ export type Behaviour = "ductile" | "brittle" | "elastomer"
 export interface LabMaterial {
   id: string
   name: string
-  family: "Elastomer" | "Printed polymer" | "Polymer" | "Glass" | "Metal" | "Composite" | "Natural" | "Ceramic"
+  family: "Elastomer" | "Printed polymer" | "Specialty filament" | "Polymer" | "Glass" | "Metal" | "Composite" | "Natural" | "Ceramic"
   behaviour: Behaviour
   E: number
   yield?: number
@@ -45,6 +45,13 @@ export const MATERIALS: LabMaterial[] = [
   { id: "nylon", name: "Nylon PA12", family: "Printed polymer", behaviour: "ductile", E: 1.7, yield: 45, uts: 50, elongation: 50, density: 1010, poisson: 0.39, bounce: 0.55, soften: 95, melt: 178, filament: "matte" },
   { id: "pla_cf", name: "PLA carbon fibre", family: "Printed polymer", behaviour: "brittle", E: 6, uts: 65, elongation: 2, density: 1300, poisson: 0.35, bounce: 0.45, soften: 60, melt: 175, filament: "carbon" },
   { id: "resin", name: "SLA resin (standard)", family: "Printed polymer", behaviour: "brittle", E: 2.5, uts: 55, elongation: 6, density: 1180, poisson: 0.36, bounce: 0.5, soften: 60, melt: 300, meltWord: "decomposes", filament: "resin" },
+  { id: "silk_pla", name: "Silk PLA (dual colour)", family: "Specialty filament", behaviour: "ductile", E: 2.8, yield: 40, uts: 45, elongation: 8, density: 1240, poisson: 0.36, bounce: 0.5, soften: 57, melt: 170, filament: "dual_silk", note: "Silk additives trade strength for shine: a little weaker and more flexible than plain PLA." },
+  { id: "marble_pla", name: "Marble PLA", family: "Specialty filament", behaviour: "ductile", E: 3.3, yield: 50, uts: 55, elongation: 5, density: 1260, poisson: 0.36, bounce: 0.5, soften: 58, melt: 175, filament: "marble" },
+  { id: "wood_pla", name: "Wood-fill PLA", family: "Specialty filament", behaviour: "brittle", E: 3, uts: 40, elongation: 1.3, density: 1150, poisson: 0.35, bounce: 0.4, soften: 55, melt: 175, filament: "wood", note: "About 30% wood fibre: lighter and more brittle than PLA, and it sands and stains like wood." },
+  { id: "glitter_pla", name: "Glitter PLA", family: "Specialty filament", behaviour: "ductile", E: 3.4, yield: 52, uts: 56, elongation: 5, density: 1260, poisson: 0.36, bounce: 0.5, soften: 58, melt: 175, filament: "glitter" },
+  { id: "glow_pla", name: "Glow-in-the-dark PLA", family: "Specialty filament", behaviour: "ductile", E: 3.2, yield: 44, uts: 48, elongation: 4, density: 1350, poisson: 0.36, bounce: 0.45, soften: 58, melt: 175, filament: "glow", note: "Strontium aluminate charges in light and glows for hours in the dark; it is abrasive, so print it with a hardened nozzle." },
+  { id: "thermo_pla", name: "Thermochromic PLA", family: "Specialty filament", behaviour: "ductile", E: 3.3, yield: 50, uts: 55, elongation: 5, density: 1240, poisson: 0.36, bounce: 0.5, soften: 58, melt: 175, filament: "thermo", note: "Changes colour at about 31 C - a warm hand on it is enough." },
+  { id: "uv_petg", name: "UV-reactive PETG", family: "Specialty filament", behaviour: "ductile", E: 2.1, yield: 50, uts: 53, elongation: 25, density: 1270, poisson: 0.38, bounce: 0.55, soften: 78, melt: 240, filament: "uv", note: "Pale in daylight; fluoresces bright under a UV (blacklight) lamp." },
   { id: "acrylic", name: "Acrylic (PMMA)", family: "Polymer", behaviour: "brittle", E: 3.2, uts: 70, elongation: 4, density: 1180, poisson: 0.37, bounce: 0.6, soften: 105, melt: 160, meltWord: "softens to flow" },
   { id: "polycarbonate", name: "Polycarbonate", family: "Polymer", behaviour: "ductile", E: 2.4, yield: 62, uts: 66, elongation: 110, density: 1200, poisson: 0.37, bounce: 0.6, soften: 140, melt: 260 },
   { id: "glass", name: "Soda-lime glass", family: "Glass", behaviour: "brittle", E: 70, uts: 50, elongation: 0.07, density: 2500, poisson: 0.22, bounce: 0.9, soften: 720, melt: 1000, meltWord: "softens to flow", note: "Strength is set by surface flaws: a scratched pane is far weaker." },
@@ -63,7 +70,23 @@ export const BY_ID = new Map(MATERIALS.map((m) => [m.id, m]))
 
 /** A printed part's filament as a lab material. */
 export function forFilament(kind: Filament | undefined): LabMaterial {
-  const map: Record<Filament, string> = { pla: "pla", silk: "pla", matte: "pla", petg: "petg", resin: "resin", carbon: "pla_cf", metal: "pla", clear: "petg" }
+  const map: Record<Filament, string> = {
+    pla: "pla",
+    silk: "silk_pla",
+    matte: "pla",
+    petg: "petg",
+    resin: "resin",
+    carbon: "pla_cf",
+    metal: "pla",
+    clear: "petg",
+    marble: "marble_pla",
+    wood: "wood_pla",
+    glitter: "glitter_pla",
+    dual_silk: "silk_pla",
+    glow: "glow_pla",
+    thermo: "thermo_pla",
+    uv: "uv_petg",
+  }
   return BY_ID.get(map[kind ?? "pla"])!
 }
 
@@ -104,6 +127,14 @@ export function labMaterial(m: LabMaterial): THREE.MeshPhysicalMaterial {
       return real.ceramic(0x9b7246)
     case "concrete":
       return Object.assign(real.plastic(0x9a9893, 0.95), { bumpScale: 0.6 })
+    case "silk_pla":
+    case "marble_pla":
+    case "wood_pla":
+    case "glitter_pla":
+    case "glow_pla":
+    case "thermo_pla":
+    case "uv_petg":
+      return filament(m.filament)
     case "pla":
       return filament("pla", "#d9dde2")
     case "petg":

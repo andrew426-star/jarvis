@@ -69,7 +69,8 @@ ACTION_GUIDE = (
     "middle fingers in - a web shooter), jaw, raise, or button (only its button). color: CSS colour. "
     "Without actions the try-on guesses from the name (repulsor, arc reactor, web, missile, gun)."
 )
-FILAMENTS = ("pla", "silk", "petg", "matte", "resin", "carbon", "metal", "clear")
+FILAMENTS = ("pla", "silk", "petg", "matte", "resin", "carbon", "metal", "clear", "marble", "wood", "glitter", "dual_silk", "glow", "thermo", "uv")
+TEXTURES = ("layers", "fuzzy", "smooth")
 MAX_NOTES_CHARS = 4000
 ID_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,15}$")
 GROUND_SOURCES = {("uno", "GND")}
@@ -218,8 +219,11 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
             entry["group"] = str(item["group"]).strip()[:40]
         if item.get("material") in FILAMENTS:
             entry["material"] = item["material"]
-        if _COLOR_RE.match(str(item.get("color") or "")):
-            entry["color"] = str(item["color"]).strip()
+        for key in ("color", "color2"):
+            if _COLOR_RE.match(str(item.get(key) or "")):
+                entry[key] = str(item[key]).strip()
+        if item.get("texture") in TEXTURES:
+            entry["texture"] = item["texture"]
         printed.append(entry)
 
     layout = {}
@@ -930,7 +934,9 @@ PROJECT_SCHEMA = {
                             "code": {"type": "string", "description": "OpenSCAD, as for the workshop's scad action."},
                             "notes": {"type": "array", "items": {"type": "string"}},
                             "group": {"type": "string", "description": "Sub-assembly it belongs to."},
-                            "material": {"type": "string", "enum": list(FILAMENTS), "description": "What it is printed in, for how it renders: pla, silk (shiny, metallic sheen), petg (glossy), matte, resin (smooth), carbon (carbon-fibre fill), metal (plated or painted metal finish), clear."},
+                            "material": {"type": "string", "enum": list(FILAMENTS), "description": "What it is printed in, for how it renders: pla, silk (shiny, metallic sheen), petg (glossy), matte, resin (smooth), carbon (carbon-fibre fill), metal (plated or painted metal finish), clear, marble (veined; color2 the veins), wood (wood-fill, rings and grain), glitter (sparkling flakes; color2 the flakes), dual_silk (two-colour silk, color and color2 on its two faces), glow (glow-in-the-dark; color2 the glow), thermo (thermochromic: turns color2 at about 31 C), uv (UV-reactive: fluoresces color2 under a blacklight)."},
+                            "color2": {"type": "string", "description": "The filament's second colour where it has one (see material)."},
+                            "texture": {"type": "string", "enum": list(TEXTURES), "description": "layers (as printed, the default), fuzzy (fuzzy skin), smooth (sanded or ironed)."},
                             "color": {"type": "string", "description": "CSS colour of the filament or finish, e.g. '#a8201a' (hot-rod red), '#c9a24a' (gold)."},
                         },
                         "required": ["name", "code"],

@@ -214,3 +214,13 @@ def test_wear_actions_and_finishes():
     assert fired == [{"action": "try_on", "fire": "Unibeam"}]
     line = wp.state_line({"project": {"name": "Reactor", "parts": 1, "try_on": {"active": True, "anchor": "chest", "tracking": "tracking", "actions": [{"name": "Unibeam"}], "last_fired": "Unibeam"}}})
     assert "actions Unibeam" in line and "last fired Unibeam" in line
+
+
+def test_specialty_filaments():
+    p, _ = wp.normalize({"printed": [
+        {"name": "Visor", "code": "cube(1);", "material": "dual_silk", "color": "#c9a24a", "color2": "#b33a3a", "texture": "smooth"},
+        {"name": "Badge", "code": "cube(1);", "material": "glow", "texture": "sandpaper"},
+    ]})
+    visor, badge = p["printed"]
+    assert visor["material"] == "dual_silk" and visor["color2"] == "#b33a3a" and visor["texture"] == "smooth"
+    assert badge["material"] == "glow" and "texture" not in badge

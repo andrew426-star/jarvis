@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { FlaskConicalIcon, PlayIcon, XIcon } from "lucide-react"
+import { FlaskConicalIcon, LampIcon, PlayIcon, SunMoonIcon, XIcon } from "lucide-react"
 
 import { forFilament, MATERIALS, type LabMaterial } from "@/lib/workshop/lab/catalog"
 import type { LabScene } from "@/lib/workshop/lab/lab-scene"
@@ -31,6 +31,10 @@ export function MaterialLab() {
   const project = useProject((s) => s.project)
   const [progress, setProgress] = useState(1)
   const [log, setLog] = useState(true)
+  const light = useLab((s) => s.light)
+  const uv = useLab((s) => s.uv)
+  const setRoom = useLab((s) => s.setRoom)
+  useEffect(() => sceneRef.current?.setLighting(light, uv), [light, uv])
 
   useEffect(() => {
     const host = hostRef.current
@@ -39,6 +43,7 @@ export function MaterialLab() {
     import("@/lib/workshop/lab/lab-scene").then(({ LabScene }) => {
       if (disposed) return
       sceneRef.current = new LabScene(host)
+      sceneRef.current.setLighting(useLab.getState().light, useLab.getState().uv)
       const { results: last, ranTest: lastTest } = useLab.getState()
       if (last.length) {
         sceneRef.current.load(lastTest, last)
@@ -118,6 +123,18 @@ export function MaterialLab() {
               <span className="t-time">{params.maxTemp} C</span>
             </label>
           )}
+          <button
+            type="button"
+            className="btn flex items-center"
+            style={{ gap: 6, padding: "4px 10px" }}
+            onClick={() => setRoom({ light: light > 0.5 ? 0.3 : light > 0.1 ? 0.02 : 1 })}
+            title="Room light: bright, dim, dark (glow-in-the-dark filament shows in the dark)"
+          >
+            <SunMoonIcon size={12} /> {light > 0.5 ? "BRIGHT" : light > 0.1 ? "DIM" : "DARK"}
+          </button>
+          <button type="button" className="btn flex items-center" style={{ gap: 6, padding: "4px 10px" }} data-active={uv} onClick={() => setRoom({ uv: !uv })} title="A UV (blacklight) lamp over the bench: UV-reactive filament fluoresces">
+            <LampIcon size={12} /> UV LAMP
+          </button>
           <button type="button" className="btn flex items-center" style={{ gap: 6, padding: "4px 14px" }} disabled={!materials.length} onClick={start} title="Run the test on every material on the bench">
             <PlayIcon size={12} /> RUN
           </button>

@@ -2,6 +2,8 @@
 
 import * as THREE from "three"
 
+import { setAmbient } from "@/lib/workshop/project/materials"
+
 // The try-on lit by the room it is shown in. Twice a second the camera's
 // own picture becomes the scene's environment - blurred, mirrored into a
 // seamless panorama, run through PMREM - so metal and gloss reflect the
@@ -90,9 +92,13 @@ export class CameraLighting {
     this.key.color.copy(tint(top))
     this.key.intensity = 0.8 + this.level * 2
     this.scene.environmentIntensity = 0.45 + this.level * 0.9
+    // Reactive filaments respond to the real room: glow-in-the-dark glows
+    // when he turns the lights off.
+    setAmbient({ light: this.level })
   }
 
   dispose() {
+    setAmbient({ light: 0.85 })
     this.target?.dispose()
     this.pmrem.dispose()
     this.texture.dispose()

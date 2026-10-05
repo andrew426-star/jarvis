@@ -737,7 +737,7 @@ export class WorkshopScene {
    *  one group), each pushed out along the line from the centre to it. */
   private explodeParts(object: THREE.Object3D): Item["parts"] {
     const isPart = (node: THREE.Object3D) =>
-      !(node as THREE.Light).isLight && !node.userData.holoLines && ((node as THREE.Mesh).isMesh || (node as THREE.Group).isGroup)
+      !(node as THREE.Light).isLight && !node.userData.holoLines && !node.userData.cables && ((node as THREE.Mesh).isMesh || (node as THREE.Group).isGroup)
     let level = object
     for (let depth = 0; depth < 4; depth += 1) {
       const children = level.children.filter(isPart)
@@ -1126,6 +1126,10 @@ export class WorkshopScene {
       if (Math.abs(this.explodeT - explodeTarget) < 0.002) this.explodeT = explodeTarget
       for (const item of this.items) {
         for (const part of item.parts) part.node.position.copy(part.base).addScaledVector(part.offset, this.explodeT)
+        // Cables run between parts that are flying apart: hide them meanwhile.
+        item.model.traverse((node) => {
+          if (node.userData.cables) node.visible = this.explodeT < 0.02
+        })
       }
     }
 

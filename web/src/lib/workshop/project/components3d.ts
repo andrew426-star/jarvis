@@ -71,12 +71,33 @@ function uno(): THREE.Group {
   // USB-B and the barrel jack hang over the left edge.
   g.add(box(16, 12, 11, mat.metal, [-34.3 + 6.5, 53.4 / 2 - 12 - 6, 1.6 + 5.5]))
   g.add(box(14, 9, 11, mat.black, [-34.3 + 5.5, -53.4 / 2 + 8, 1.6 + 5.5]))
-  g.add(header(10, [5, 53.4 / 2 - 2.5, 1.6]))
-  g.add(header(8, [-14, 53.4 / 2 - 2.5, 1.6]))
-  g.add(header(8, [-6, -53.4 / 2 + 2.5, 1.6]))
-  g.add(header(6, [16, -53.4 / 2 + 2.5, 1.6]))
-  g.add(box(35, 7.5, 3.5, mat.black, [8, -2, 1.6 + 1.75]))
-  g.add(box(12, 12, 1.5, mat.black, [-10, 2, 1.6 + 0.75]))
+  // The four female headers, where the R3 has them (wires3d.ts plugs into
+  // the same sockets): digital along the top, power and analog along the
+  // bottom, mm from the board's lower-left corner.
+  const at = (x0: number, x1: number, y: number): [number, number, number] => [(x0 + x1) / 2 - 34.3, y - 26.7, 1.6]
+  g.add(header(10, at(18.8, 41.66, 50.8)))
+  g.add(header(8, at(45.72, 63.5, 50.8)))
+  g.add(header(8, at(27.94, 45.72, 2.54)))
+  g.add(header(6, at(50.8, 63.5, 2.54)))
+  // ATmega328P in its DIP socket, legs along both sides.
+  g.add(box(36, 8.5, 1.2, mat.black, [13, -11.7, 1.6 + 0.6]))
+  g.add(box(35, 7.5, 3.5, mat.black, [13, -11.7, 1.6 + 1.2 + 1.75]))
+  for (let i = 0; i < 14; i += 1) {
+    for (const y of [-11.7 - 4.1, -11.7 + 4.1]) g.add(box(0.5, 1.2, 2.2, mat.silver, [13 - 16.5 + i * 2.54, y, 1.6 + 1.6]))
+  }
+  // Crystal, reset button, the two electrolytics by the jack, the regulator.
+  g.add(box(11, 4.5, 3.5, mat.silver, [-6, 6, 1.6 + 1.75]))
+  g.add(box(6, 6, 3.5, mat.metal, [-27, 22, 1.6 + 1.75]))
+  g.add(cyl(1.8, 1.2, mat.black, [-27, 22, 1.6 + 4.1], 16))
+  for (const x of [-19, -13]) {
+    g.add(cyl(3.15, 7, mat.black, [x, -20, 1.6 + 3.5], 24))
+    g.add(cyl(3.0, 0.4, mat.silver, [x, -20, 1.6 + 7.2], 24))
+  }
+  g.add(box(6.5, 6, 2.3, mat.black, [-22, -10, 1.6 + 1.15]))
+  g.add(box(6.5, 1.2, 4, mat.metal, [-22, -6.4, 1.6 + 2]))
+  // The ICSP header at the right end.
+  g.add(box(2.5 * 3, 2.5 * 2, 8.5, mat.black, [31, 0, 1.6 + 4.25]))
+  // Mounting holes, tinned.
   for (const [x, y] of [[-34.3 + 15.2, -53.4 / 2 + 2.5], [-34.3 + 66.1, -53.4 / 2 + 7.6], [-34.3 + 66.1, -53.4 / 2 + 35.5], [-34.3 + 13.9, -53.4 / 2 + 50.8]]) {
     g.add(cyl(1.6, 1.7, mat.gold, [x, y, 0.85], 16))
   }
@@ -110,7 +131,7 @@ function led(part: Part): THREE.Group {
 function resistor(): THREE.Group {
   const g = new THREE.Group()
   const body = cyl(1.2, 6, mat.tan, [0, 0, 1.2])
-  body.rotation.set(0, Math.PI / 2, 0)
+  body.rotation.set(0, 0, Math.PI / 2)
   g.add(body)
   const lead = box(10, 0.5, 0.5, mat.metal, [0, 0, 1.2])
   g.add(lead)
@@ -235,7 +256,7 @@ function wheel(part: Part): THREE.Group {
 function rodLike(length: number, d: number, material: THREE.Material): THREE.Group {
   const g = new THREE.Group()
   const rod = cyl(d / 2, length, material, [0, 0, d / 2], 20)
-  rod.rotation.set(0, Math.PI / 2, 0)
+  rod.rotation.set(0, 0, Math.PI / 2)
   g.add(rod)
   return g
 }
@@ -249,10 +270,10 @@ function battery6(): THREE.Group {
   for (const z of [8.5, 21.5]) {
     for (const y of [-14.5, 0, 14.5]) {
       const cell = cyl(7.1, 50.5, label, [0, y, z], 28)
-      cell.rotation.set(0, Math.PI / 2, 0)
+      cell.rotation.set(0, 0, Math.PI / 2)
       g.add(cell)
       const cap = cyl(2.6, 1.2, mat.silver, [26, y, z], 16)
-      cap.rotation.set(0, Math.PI / 2, 0)
+      cap.rotation.set(0, 0, Math.PI / 2)
       g.add(cap)
     }
   }
@@ -329,7 +350,7 @@ export function componentModel(part: Part): THREE.Group {
     case "lead_screw": g = rodLike(Number(prop(part, "length", 300)), 8, mat.gold); break
     case "wheel": g = wheel(part); break
     case "bearing_608": g = (() => { const b = new THREE.Group(); b.add(cyl(11, 7, mat.silver)); b.add(cyl(4, 7.2, mat.dark, [0, 0, 3.5])); return b })(); break
-    case "lm8uu": g = (() => { const b = new THREE.Group(); const c = cyl(7.5, 24, mat.silver, [0, 0, 7.5]); c.rotation.set(0, Math.PI / 2, 0); b.add(c); return b })(); break
+    case "lm8uu": g = (() => { const b = new THREE.Group(); const c = cyl(7.5, 24, mat.silver, [0, 0, 7.5]); c.rotation.set(0, 0, Math.PI / 2); b.add(c); return b })(); break
     case "battery_6aa": g = battery6(); break
     case "fan": g = fan(); break
     case "enclosure_3x2": g = enclosure(76.2, 50.8, 27.9); break
@@ -348,5 +369,6 @@ export function componentModel(part: Part): THREE.Group {
   })
   if (g.userData.glow) g.userData.glow = (g.userData.glow as THREE.Material[]).map((m) => copies.get(m) ?? m)
   g.userData.partId = part.id
+  g.userData.partType = part.type
   return g
 }

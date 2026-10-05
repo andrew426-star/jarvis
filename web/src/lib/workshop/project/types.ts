@@ -36,7 +36,8 @@ export interface Wire {
 }
 
 /** What a printed part is printed in, for how it renders. */
-export const FILAMENTS = ["pla", "silk", "petg", "matte", "resin", "carbon", "metal", "clear"] as const
+export const FILAMENTS = ["pla", "silk", "petg", "matte", "resin", "carbon", "metal", "clear", "marble", "wood", "glitter", "dual_silk", "glow", "thermo", "uv"] as const
+export const TEXTURES = ["layers", "fuzzy", "smooth"] as const
 export type Filament = (typeof FILAMENTS)[number]
 
 export interface PrintedPart {
@@ -47,6 +48,11 @@ export interface PrintedPart {
   material?: Filament
   /** CSS colour of the filament or finish. */
   color?: string
+  /** The second colour: marble veins, a dual silk's other face, what a
+   *  thermochromic turns, the glow or fluorescence. */
+  color2?: string
+  /** As printed (layer lines), fuzzy skin, or sanded/ironed smooth. */
+  texture?: (typeof TEXTURES)[number]
 }
 
 export interface Placement {

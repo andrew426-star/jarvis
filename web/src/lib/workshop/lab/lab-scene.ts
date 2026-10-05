@@ -4,6 +4,7 @@ import * as THREE from "three"
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js"
 
 import { labMaterial } from "@/lib/workshop/lab/catalog"
+import { setAmbient, setTemperature } from "@/lib/workshop/project/materials"
 import type { LabResult, LabTest } from "@/lib/workshop/lab/tests"
 
 // The material lab's bench: one lane per material, each specimen in its
@@ -62,6 +63,10 @@ export class LabScene {
   private yaw = 0
   private targetYaw = 0
   private test: LabTest = "tensile"
+  private readonly sky = new THREE.HemisphereLight(0xdfe8ff, 0x101010, 0.4)
+  private readonly key = new THREE.DirectionalLight(0xffffff, 2.2)
+  /** A blacklight over the bench, for UV-reactive and glow filaments. */
+  private readonly uvLamp = new THREE.PointLight(0x7a3cff, 0, 40, 1.2)
 
   constructor(private readonly host: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true })
@@ -76,8 +81,8 @@ export class LabScene {
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
     pmrem.dispose()
     this.scene.environmentIntensity = 0.7
-    this.scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x101010, 0.4))
-    const key = new THREE.DirectionalLight(0xffffff, 2.2)
+    this.scene.add(this.sky)
+    const key = this.key
     key.position.set(6, 14, 10)
     key.castShadow = true
     key.shadow.mapSize.set(2048, 2048)
@@ -87,6 +92,8 @@ export class LabScene {
     key.shadow.radius = 5
     key.shadow.bias = -0.0004
     this.scene.add(key)
+    this.uvLamp.position.set(0, 9, 6)
+    this.scene.add(this.uvLamp)
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 40), new THREE.MeshPhysicalMaterial({ color: 0x15191f, roughness: 0.8, metalness: 0.2 }))
     floor.rotation.x = -Math.PI / 2
     floor.receiveShadow = true
@@ -116,6 +123,16 @@ export class LabScene {
     const r = fit + 4
     this.camera.position.set(Math.sin(this.yaw) * r, height * 0.55 + r * 0.18, Math.cos(this.yaw) * r)
     this.camera.lookAt(0, height * 0.42, 0)
+  }
+
+  /** The room: its light (1 bright - 0 dark) and the UV lamp. Glow
+   *  filaments show as it goes dark; UV-reactive ones under the lamp. */
+  setLighting(light: number, uv: boolean) {
+    setAmbient({ light, uv: uv ? 1 : 0 })
+    this.key.intensity = 2.2 * light
+    this.sky.intensity = 0.4 * light + 0.015
+    this.scene.environmentIntensity = 0.7 * light + 0.02
+    this.uvLamp.intensity = uv ? 60 : 0
   }
 
   /** Turn the bench (drag). */
@@ -318,6 +335,7 @@ export class LabScene {
       puddle.visible = pose.broken && !chars
       weight.position.set(-1.3 + len, pose.broken ? 0.18 : 1.5 - sag - 0.2, 0)
       // Hot metal and glass glow; polymers and wood darken toward their char.
+      setTemperature(material, T)
       const g = glow(T)
       material.emissive.copy(g.color)
       material.emissiveIntensity = g.level
