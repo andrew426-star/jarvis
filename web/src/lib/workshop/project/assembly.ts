@@ -4,6 +4,7 @@ import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js"
 
 import type { BuiltItem } from "@/lib/workshop/models"
 import { componentModel } from "@/lib/workshop/project/components3d"
+import { loadGenuine } from "@/lib/workshop/project/genuine"
 import { filament } from "@/lib/workshop/project/materials"
 import { buildCables } from "@/lib/workshop/project/wires3d"
 import { PARTS, type Project } from "@/lib/workshop/project/types"
@@ -62,6 +63,8 @@ export async function buildDesign(
   const rowWidth = unplaced.reduce((sum, p) => sum + Math.min(200, Number(PARTS[p.type]?.size?.[0] ?? 10)) + 12, 0)
   let cursor = -rowWidth / 2
 
+  // The genuine UNO model, the first time a project has one.
+  if (project.parts.some((p) => p.type === "uno")) await loadGenuine()
   const placed = new Map<string, THREE.Object3D>()
   for (const part of project.parts) {
     if (placedOnly && !project.layout[part.id]) continue

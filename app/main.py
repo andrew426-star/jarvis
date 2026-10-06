@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes.autonomy import router as autonomy_router
 from app.api.routes.brief import router as brief_router
+from app.api.routes.camera_link import relay_router as camera_relay_router
 from app.api.routes.camera_link import router as camera_link_router
 from app.api.routes.browser import router as browser_router
 from app.api.routes.checklists import router as checklists_router
@@ -54,6 +55,7 @@ app.include_router(brief_router)
 app.include_router(autonomy_router)
 app.include_router(browser_router)
 app.include_router(camera_link_router)
+app.include_router(camera_relay_router)
 app.include_router(checklists_router)
 app.include_router(files_router)
 app.include_router(google_auth_router)

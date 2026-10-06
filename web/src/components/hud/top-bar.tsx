@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react"
 
 import { useInbox } from "@/lib/inbox-store"
 import { sfx } from "@/lib/sfx"
+import { clock, remaining, useTimers } from "@/lib/timer-store"
 import { useSpatial } from "@/lib/spatial-store"
 import { useClock } from "@/lib/use-clock"
 import { useJarvis, type TabKey } from "@/lib/store"
@@ -144,6 +145,8 @@ export function TopBar() {
 
       {/* Right: audio, mode toggle and live link health */}
       <div className="relative flex min-w-0 shrink-0 items-center" style={{ gap: "var(--sp-4)" }}>
+        <TimerButton />
+
         <button
           type="button"
           onClick={() => sfx.toggleMuted()}
@@ -196,5 +199,27 @@ export function TopBar() {
         </div>
       </div>
     </header>
+  )
+}
+
+/** Opens the timer window; shows the soonest countdown while one runs. */
+function TimerButton() {
+  const timers = useTimers((s) => s.timers)
+  const open = useTimers((s) => s.open)
+  const setOpen = useTimers((s) => s.setOpen)
+  const next = timers.filter((t) => t.kind === "countdown" && (t.startedAt !== null || t.done)).sort((a, b) => remaining(a) - remaining(b))[0]
+  const ringing = timers.some((t) => t.done)
+  useClock() // ticks once a second, which keeps the countdown here current
+  return (
+    <button
+      type="button"
+      onClick={() => setOpen(!open)}
+      aria-pressed={open}
+      className="btn shrink-0"
+      style={{ padding: "4px 12px", fontVariantNumeric: "tabular-nums", color: ringing ? "var(--warning)" : undefined }}
+      title="Timers and stopwatches"
+    >
+      {ringing ? "Timer done" : next ? clock(remaining(next)) : "Timer"}
+    </button>
   )
 }

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Loader2Icon, SmartphoneIcon, XIcon } from "lucide-react"
 
-import { adoptStream, cameraDevice, cameraSource, listCameras, setCameraDevice, startCamera } from "@/lib/camera"
+import { adoptStream, cameraDevice, cameraSource, listCameras, replaceStream, setCameraDevice, startCamera } from "@/lib/camera"
 import { startHands } from "@/lib/hand-tracking"
 import { receivePhoneCamera, type LinkState, type PhoneReceiver } from "@/lib/phone-camera"
 import { useSpatial } from "@/lib/spatial-store"
@@ -45,6 +45,9 @@ export function PhoneCameraDialog({ token, onClose }: { token: string; onClose: 
       if (s === "lost" && cameraSource() === "phone") {
         useJarvis.getState().notify("warning", "iPhone camera", d ?? "The phone's stream dropped.")
       }
+    }, (stream) => {
+      // The direct link dropped and the relay took over: swap the source.
+      replaceStream(stream)
     })
       .then((receiver) => {
         if (!alive) {

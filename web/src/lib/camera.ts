@@ -98,6 +98,15 @@ export function adoptStream(external: MediaStream, close: () => void) {
   changed()
 }
 
+/** The same link with a new picture (the phone fell back to its relay):
+ *  swap the stream, keep the link and its closer. */
+export function replaceStream(next: MediaStream) {
+  if (source !== "phone") return
+  stream = next
+  if (video) video.srcObject = stream
+  changed()
+}
+
 export function stopCamera() {
   // Stopping every track is what turns the camera's light off; dropping
   // the reference alone would leave it recording.

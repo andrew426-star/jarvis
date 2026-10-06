@@ -1,8 +1,10 @@
 "use client"
 
-import { useRef, type PointerEvent, type WheelEvent } from "react"
+import { useCallback, useRef, type PointerEvent, type WheelEvent } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { XIcon } from "lucide-react"
+import { AppWindowIcon, XIcon } from "lucide-react"
+
+import { PopOutPortal, usePopOut } from "@/components/ui/pop-out"
 
 import { HOLOGRAM_WIDTH, useSpatial, type Hologram } from "@/lib/spatial-store"
 
@@ -12,7 +14,8 @@ import { HOLOGRAM_WIDTH, useSpatial, type Hologram } from "@/lib/spatial-store"
 //
 // 2.5D, not 3D: the layer has perspective and each card lifts toward the
 // viewer (translateZ) and tilts while held, which reads as depth without
-// a 3D engine or a second render loop.
+// a 3D engine or a second render loop. Any card can also leave the console
+// for a window of its own; closing that window dismisses it.
 export function HologramLayer() {
   const holograms = useSpatial((state) => state.holograms)
 
@@ -35,6 +38,8 @@ function HologramCard({ hologram }: { hologram: Hologram }) {
   const hovered = useSpatial((state) => state.hovered === hologram.id)
   const { grab, release, moveHologram, scaleHologram, removeHologram } = useSpatial.getState()
   const drag = useRef<{ x: number; y: number } | null>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
+  const popOut = usePopOut(`holo-${hologram.id}`, useCallback(() => removeHologram(hologram.id), [removeHologram, hologram.id]))
 
   function onPointerDown(event: PointerEvent<HTMLElement>) {
     // Buttons inside the card (close) keep their own click.
@@ -63,10 +68,31 @@ function HologramCard({ hologram }: { hologram: Hologram }) {
 
   const lit = held || hovered
 
+  if (popOut.root) {
+    return (
+      <PopOutPortal root={popOut.root}>
+        <article className="holo-card" data-lit="true" style={{ flex: 1, margin: 8, overflow: "auto" }}>
+          <header className="holo-card-header">
+            <span className="t-label truncate-1">{hologram.title}</span>
+            <button type="button" className="btn" onClick={() => removeHologram(hologram.id)} aria-label="Dismiss hologram" style={{ width: 20, height: 20, padding: 0 }}>
+              <XIcon size={11} />
+            </button>
+          </header>
+          {hologram.image && (
+            // eslint-disable-next-line @next/next/no-img-element -- a local data URL
+            <img src={hologram.image} alt="Camera frame Jarvis looked at" className="holo-card-image" draggable={false} />
+          )}
+          <p className="holo-card-body">{hologram.body}</p>
+        </article>
+      </PopOutPortal>
+    )
+  }
+
   return (
     // Outer element owns position and depth; the motion element inside
     // owns the entrance and exit, so the two transforms never fight.
     <div
+      ref={cardRef}
       data-holo-id={hologram.id}
       className="pointer-events-auto absolute top-0 left-0"
       style={{
@@ -97,6 +123,16 @@ function HologramCard({ hologram }: { hologram: Hologram }) {
       >
         <header className="holo-card-header">
           <span className="t-label truncate-1">{hologram.title}</span>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => popOut.open(hologram.title, cardRef.current?.getBoundingClientRect())}
+            aria-label="Open in its own window"
+            title="Open in its own window"
+            style={{ width: 20, height: 20, padding: 0, marginLeft: "auto", marginRight: 4 }}
+          >
+            <AppWindowIcon size={11} />
+          </button>
           <button
             type="button"
             className="btn"

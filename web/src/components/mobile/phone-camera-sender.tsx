@@ -23,6 +23,8 @@ export function PhoneCameraSender({ token, initialCode, onClose }: { token: stri
   const [detail, setDetail] = useState<string | null>(null)
   const [facing, setFacing] = useState<Facing>("environment")
   const [busy, setBusy] = useState(false)
+  // A network that lets the direct link through but stutters: go via the server.
+  const [viaServer, setViaServer] = useState(() => new URLSearchParams(window.location.search).get("via") === "server")
   const sender = useRef<PhoneSender | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const started = useRef(false)
@@ -33,10 +35,16 @@ export function PhoneCameraSender({ token, initialCode, onClose }: { token: stri
     setDetail(null)
     try {
       sender.current?.stop()
-      const link = await sendPhoneCamera(withCode, token, facing, (s, d) => {
-        setState(s)
-        setDetail(d ?? null)
-      })
+      const link = await sendPhoneCamera(
+        withCode,
+        token,
+        facing,
+        (s, d) => {
+          setState(s)
+          setDetail(d ?? null)
+        },
+        viaServer
+      )
       sender.current = link
       if (videoRef.current) videoRef.current.srcObject = link.stream
     } catch (err) {
@@ -110,6 +118,12 @@ export function PhoneCameraSender({ token, initialCode, onClose }: { token: stri
               CONNECT
             </button>
           </div>
+        )}
+        {state !== "live" && (
+          <label className="t-label flex items-center" style={{ gap: 8 }}>
+            <input type="checkbox" checked={viaServer} onChange={(e) => setViaServer(e.target.checked)} />
+            SEND VIA THE JARVIS SERVER (FOR CAMPUS OR GUEST WI-FI)
+          </label>
         )}
         <button type="button" className="btn flex items-center" style={{ gap: 8, height: 40, padding: "0 16px" }} onClick={() => void flip()}>
           <RefreshCwIcon size={14} /> {facing === "environment" ? "BACK CAMERA" : "FRONT CAMERA"}

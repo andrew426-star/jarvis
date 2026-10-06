@@ -1,5 +1,6 @@
 import * as THREE from "three"
 
+import { genuineUno } from "@/lib/workshop/project/genuine"
 import { real } from "@/lib/workshop/project/materials"
 import { PARTS, prop, type Part } from "@/lib/workshop/project/types"
 
@@ -327,7 +328,8 @@ function generic(part: Part): THREE.Group {
 export function componentModel(part: Part): THREE.Group {
   let g: THREE.Group
   switch (part.type) {
-    case "uno": g = uno(); break
+    // The genuine board when it has loaded (genuine.ts), else ours.
+    case "uno": g = genuineUno() ?? uno(); break
     case "breadboard_170": g = breadboard(47, 35); break
     case "breadboard_400": g = breadboard(82, 55); break
     case "breadboard_830": g = breadboard(165, 55); break
@@ -363,9 +365,12 @@ export function componentModel(part: Part): THREE.Group {
   g.traverse((node) => {
     const mesh = node as THREE.Mesh
     if (!mesh.isMesh) return
-    const material = mesh.material as THREE.Material
-    if (!copies.has(material)) copies.set(material, material.clone())
-    mesh.material = copies.get(material)!
+    // One material or several (the genuine board's face and edge).
+    const own = (material: THREE.Material) => {
+      if (!copies.has(material)) copies.set(material, material.clone())
+      return copies.get(material)!
+    }
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(own) : own(mesh.material)
   })
   if (g.userData.glow) g.userData.glow = (g.userData.glow as THREE.Material[]).map((m) => copies.get(m) ?? m)
   g.userData.partId = part.id

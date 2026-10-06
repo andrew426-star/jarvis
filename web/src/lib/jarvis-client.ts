@@ -916,6 +916,11 @@ export async function getCameraSdp(code: string, kind: "offer" | "answer", token
   return ((await res.json()) as { sdp: string | null }).sdp
 }
 
+/** STUN always, and TURN when the server has one configured. */
+export async function getCameraIce(token: string): Promise<{ iceServers: RTCIceServer[]; turn: boolean }> {
+  return (await jarvisFetch("/camera-link/ice", token, { method: "GET", cache: "no-store" })).json()
+}
+
 export async function closeCameraLink(code: string, token: string): Promise<void> {
   await jarvisFetch(`/camera-link/${encodeURIComponent(code)}`, token, { method: "DELETE" })
 }

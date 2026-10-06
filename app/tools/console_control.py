@@ -36,7 +36,12 @@ CONSOLE_ACTIONS = [
     "close_settings",
     "clear_holograms",
     "close_console",
+    "timer_start",
+    "timer_stop",
+    "open_timers",
+    "close_timers",
 ]
+MAX_TIMER_S = 24 * 3600
 PANELS = {"markets", "intel", "assets", "notes", "inbox"}
 WATCH_LEVELS = {"quiet", "normal", "coach"}
 MODES = {"normal", "serious"}
@@ -111,7 +116,13 @@ CONSOLE_SCHEMA = {
             "for 15 minutes without stopping), switch between normal and serious mode, mute or "
             "unmute audio, open or close settings, clear the pinned holograms, or close the "
             "console entirely (close_console: stops the camera and audio and puts the console "
-            "in standby). Actions run in order the moment your reply arrives. You have full "
+            "in standby). Timers: timer_start with seconds and a label (\"set a ten minute timer for "
+            "the print\" -> seconds 600, label \"Print cooling\"), or target stopwatch to start a "
+            "stopwatch; timer_stop stops those whose label contains target (empty: all); "
+            "open_timers / close_timers show or hide the timer window (it can also leave the "
+            "console for a window of its own). A finished countdown chimes and notifies him; "
+            "CONSOLE_STATE lists running timers with what is left. "
+            "Actions run in order the moment your reply arrives. You have full "
             "authority to use this whenever he asks for any of these, in any wording - act, "
             "then say what you did."
         ),
@@ -128,9 +139,12 @@ CONSOLE_SCHEMA = {
                                 "type": "string",
                                 "description": (
                                     "open_panel: markets | intel | assets | notes | inbox. set_mode: normal | serious. "
-                                    "watch_on: quiet | normal | coach (default normal)."
+                                    "watch_on: quiet | normal | coach (default normal). timer_start: stopwatch for a "
+                                    "stopwatch. timer_stop: part of the label to stop (empty: every timer)."
                                 ),
                             },
+                            "seconds": {"type": "number", "description": "timer_start: the countdown's length in seconds."},
+                            "label": {"type": "string", "description": "timer_start: what it is for, shown on the timer."},
                         },
                         "required": ["action"],
                     },
@@ -289,6 +303,23 @@ def console(args: dict) -> dict:
             continue
         if action == "watch_on" and target and target not in WATCH_LEVELS:
             target = "normal"
+        if action == "timer_start":
+            step = {"action": action, "label": str((raw or {}).get("label") or "").strip()[:60]}
+            if target == "stopwatch":
+                step["target"] = "stopwatch"
+            else:
+                seconds = _num((raw or {}).get("seconds"), 0, 0, MAX_TIMER_S)
+                if seconds < 1:
+                    problems.append("timer_start needs seconds (or target stopwatch)")
+                    continue
+                step["seconds"] = round(seconds)
+            actions.append(step)
+            continue
+        if action == "timer_stop":
+            # The label to match keeps its case for the reply; matching is case-blind.
+            label = str((raw or {}).get("target") or "").strip()[:60]
+            actions.append({"action": action, "target": label} if label else {"action": action})
+            continue
         actions.append({"action": action, "target": target} if target else {"action": action})
     if not actions:
         return {"ok": False, "error": "; ".join(problems) or "No actions given."}
@@ -405,6 +436,20 @@ CONSOLE_CONTROL_NOTE = (
 )
 
 
+def _timer_note(timers) -> str:
+    """His timers: what each is for and how far along."""
+    if not isinstance(timers, list) or not timers:
+        return ""
+    parts = []
+    for t in timers[:12]:
+        if not isinstance(t, dict):
+            continue
+        left = t.get("remaining") or t.get("elapsed")
+        how = "left" if t.get("remaining") is not None else "elapsed"
+        parts.append(f"{t.get('label')} ({t.get('kind')}, {t.get('state')}, {left} {how})")
+    return " TIMERS: " + "; ".join(parts) + "." if parts else ""
+
+
 def _lab_note(lab) -> str:
     """The material lab's last run, for comparing and recommending."""
     if not isinstance(lab, dict) or not lab.get("results"):
@@ -456,6 +501,7 @@ def state_note(state: dict | None) -> str | None:
             else ""
         )
         + _lab_note(state.get("material_lab"))
+        + _timer_note(state.get("timers"))
         + (
             f" LAST OPENSCAD COMPILE FAILED for \"{(state.get('last_scad_error') or {}).get('name')}\": "
             f"{(state.get('last_scad_error') or {}).get('error', '')[:800]}"

@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DownloadIcon, ExternalLinkIcon, PinIcon, XIcon } from "lucide-react"
+import { AppWindowIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DownloadIcon, ExternalLinkIcon, MinimizeIcon, PinIcon, XIcon } from "lucide-react"
 import katex from "katex"
 import "katex/dist/katex.min.css"
 
+import { PopOutPortal, usePopOut } from "@/components/ui/pop-out"
 import { useShowcase, type ShowcaseItem } from "@/lib/showcase-store"
 import { useSpatial } from "@/lib/spatial-store"
 
@@ -13,6 +14,8 @@ import { useSpatial } from "@/lib/spatial-store"
 // (app/tools/showcase.py). It floats over the centre of the console
 // without a backdrop, so the reactor and the chat stay in view while he
 // talks it through, and steps back through earlier items with the arrows.
+// It can also leave the console for a window of its own (another monitor,
+// beside his work): still live, so what Jarvis shows next appears there.
 
 function tex(source: string, display: boolean): string {
   return katex.renderToString(source, { displayMode: display, throwOnError: false, output: "html" })
@@ -271,6 +274,12 @@ export function ShowcaseWindow() {
 
   const index = items.findIndex((item) => item.id === activeId)
   const item = index >= 0 ? items[index] : null
+  // Out of the console: closing that window closes the showcase.
+  const popOut = usePopOut("showcase", close)
+  const popped = !!popOut.root
+  useEffect(() => {
+    if (!item && popped) popOut.close()
+  }, [item, popped, popOut])
 
   useEffect(() => {
     if (!item) return
@@ -305,66 +314,7 @@ export function ShowcaseWindow() {
   const canCopy = item && item.kind !== "image"
   const canPin = item && item.kind !== "file" && (item.kind !== "image" || (item.image_data?.length ?? 0) < 400_000)
 
-  return (
-    <AnimatePresence>
-      {item && (
-        <motion.section
-          key="showcase"
-          ref={sectionRef}
-          role="dialog"
-          aria-label={item.title}
-          className="card glow-std fixed flex flex-col"
-          style={{
-            ...(box
-              ? {
-                  left: box.x,
-                  top: box.y,
-                  x: 0,
-                  width: box.width,
-                  height: box.height ?? undefined,
-                  maxHeight: `calc(100vh - ${box.y}px - ${BOTTOM + GUTTER}px)`,
-                }
-              : {
-                  top: 48 + 24,
-                  left: "50%",
-                  x: "-50%",
-                  width: "min(760px, calc(100vw - 32px))",
-                  maxHeight: "calc(100vh - 48px - 56px - 48px)",
-                }),
-            userSelect: dragging ? "none" : undefined,
-            zIndex: 45,
-            background: "rgba(5, 7, 14, 0.95)",
-            borderColor: "rgba(var(--accent-rgb), 0.5)",
-          }}
-          initial={{ opacity: 0, scale: 0.96, y: -8 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.96, y: -8 }}
-          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <header
-            className="relative flex shrink-0 items-center justify-between overflow-hidden"
-            onPointerDown={startDrag}
-            onDoubleClick={(event) => {
-              if (!(event.target as HTMLElement).closest("button")) recentre()
-            }}
-            title="Drag to move · double-click to recentre"
-            style={{
-              padding: "var(--sp-2) var(--sp-3)",
-              gap: "var(--sp-2)",
-              borderBottom: "1px solid rgba(var(--accent-rgb), 0.2)",
-              cursor: dragging ? "grabbing" : "grab",
-              touchAction: "none",
-            }}
-          >
-            <div className="bar-sweep" />
-            <div className="flex min-w-0 items-center" style={{ gap: "var(--sp-2)" }}>
-              <span className="t-label" style={{ color: "var(--accent)" }}>
-                {KIND_LABEL[item.kind]}
-              </span>
-              <span className="t-header truncate-1" style={{ color: "var(--text-primary)" }}>
-                {item.title}
-              </span>
-            </div>
+  const controls = item && (
             <div className="flex shrink-0 items-center" style={{ gap: "var(--sp-1)" }}>
               {items.length > 1 && (
                 <>
@@ -430,6 +380,16 @@ export function ShowcaseWindow() {
                 type="button"
                 className="btn"
                 style={{ width: 26, height: 26, padding: 0 }}
+                onClick={() => (popped ? popOut.close() : popOut.open(item.title, sectionRef.current?.getBoundingClientRect()))}
+                aria-label={popped ? "Back into the console" : "Open in its own window"}
+                title={popped ? "Back into the console" : "Open in its own window (another monitor, beside your work)"}
+              >
+                {popped ? <MinimizeIcon size={13} /> : <AppWindowIcon size={13} />}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                style={{ width: 26, height: 26, padding: 0 }}
                 onClick={close}
                 aria-label="Close"
                 title="Close (Esc)"
@@ -437,8 +397,8 @@ export function ShowcaseWindow() {
                 <XIcon size={14} />
               </button>
             </div>
-          </header>
-
+  )
+  const content = item && (
           <div className="min-h-0 flex-1 overflow-y-auto" style={{ padding: "var(--sp-4)", color: "var(--text-primary)", lineHeight: 1.6 }}>
             <Body item={item} />
             {item.caption && (
@@ -447,6 +407,95 @@ export function ShowcaseWindow() {
               </p>
             )}
           </div>
+  )
+
+  if (item && popOut.root) {
+    return (
+      <PopOutPortal root={popOut.root}>
+        <header
+          className="relative flex shrink-0 items-center justify-between overflow-hidden"
+          style={{ padding: "var(--sp-2) var(--sp-3)", gap: "var(--sp-2)", borderBottom: "1px solid rgba(var(--accent-rgb), 0.2)" }}
+        >
+          <div className="bar-sweep" />
+          <div className="flex min-w-0 items-center" style={{ gap: "var(--sp-2)" }}>
+            <span className="t-label" style={{ color: "var(--accent)" }}>
+              {KIND_LABEL[item.kind]}
+            </span>
+            <span className="t-header truncate-1" style={{ color: "var(--text-primary)" }}>
+              {item.title}
+            </span>
+          </div>
+          {controls}
+        </header>
+        {content}
+      </PopOutPortal>
+    )
+  }
+
+  return (
+    <AnimatePresence>
+      {item && (
+        <motion.section
+          key="showcase"
+          ref={sectionRef}
+          role="dialog"
+          aria-label={item.title}
+          className="card glow-std fixed flex flex-col"
+          style={{
+            ...(box
+              ? {
+                  left: box.x,
+                  top: box.y,
+                  x: 0,
+                  width: box.width,
+                  height: box.height ?? undefined,
+                  maxHeight: `calc(100vh - ${box.y}px - ${BOTTOM + GUTTER}px)`,
+                }
+              : {
+                  top: 48 + 24,
+                  left: "50%",
+                  x: "-50%",
+                  width: "min(760px, calc(100vw - 32px))",
+                  maxHeight: "calc(100vh - 48px - 56px - 48px)",
+                }),
+            userSelect: dragging ? "none" : undefined,
+            zIndex: 45,
+            background: "rgba(5, 7, 14, 0.95)",
+            borderColor: "rgba(var(--accent-rgb), 0.5)",
+          }}
+          initial={{ opacity: 0, scale: 0.96, y: -8 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.96, y: -8 }}
+          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+        >
+          <header
+            className="relative flex shrink-0 items-center justify-between overflow-hidden"
+            onPointerDown={startDrag}
+            onDoubleClick={(event) => {
+              if (!(event.target as HTMLElement).closest("button")) recentre()
+            }}
+            title="Drag to move · double-click to recentre"
+            style={{
+              padding: "var(--sp-2) var(--sp-3)",
+              gap: "var(--sp-2)",
+              borderBottom: "1px solid rgba(var(--accent-rgb), 0.2)",
+              cursor: dragging ? "grabbing" : "grab",
+              touchAction: "none",
+            }}
+          >
+            <div className="bar-sweep" />
+            <div className="flex min-w-0 items-center" style={{ gap: "var(--sp-2)" }}>
+              <span className="t-label" style={{ color: "var(--accent)" }}>
+                {KIND_LABEL[item.kind]}
+              </span>
+              <span className="t-header truncate-1" style={{ color: "var(--text-primary)" }}>
+                {item.title}
+              </span>
+            </div>
+            {controls}
+          </header>
+
+          {content}
 
           <div
             onPointerDown={startResize}

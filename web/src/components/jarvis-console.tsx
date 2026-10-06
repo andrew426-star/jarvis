@@ -17,6 +17,7 @@ import { RightPanel } from "@/components/hud/right-panel"
 import { SettingsPanel } from "@/components/hud/settings-panel"
 import { StatusRing } from "@/components/hud/status-ring"
 import { ShowcaseWindow } from "@/components/showcase/showcase-window"
+import { TimerWindow } from "@/components/timer/timer-window"
 import { CameraPreview } from "@/components/spatial/camera-preview"
 import { HandCursors } from "@/components/spatial/hand-cursors"
 import { HologramLayer } from "@/components/spatial/hologram-layer"
@@ -838,6 +839,7 @@ function Shell({
 
       <HologramLayer />
       <ShowcaseWindow />
+      <TimerWindow />
       <Workshop token={token} />
       <CameraPreview
         onToggleHands={toggleHands}

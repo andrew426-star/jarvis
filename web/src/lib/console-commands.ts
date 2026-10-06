@@ -8,6 +8,7 @@ import { useJarvis, type TabKey } from "@/lib/store"
 import type { GeneratedModel } from "@/lib/workshop/models"
 import type { ItemMode } from "@/lib/workshop/scene"
 import { useTryOn } from "@/lib/ar/store"
+import { timerState, useTimers } from "@/lib/timer-store"
 import { findMaterial } from "@/lib/workshop/lab/catalog"
 import { labState, useLab } from "@/lib/workshop/lab/store"
 import { TESTS, type LabTest } from "@/lib/workshop/lab/tests"
@@ -22,7 +23,7 @@ import { applyInputs, setSimSpeed, startSim, stopSim } from "@/lib/workshop/sim/
 // state back to him with every message, so he knows what is open before he
 // acts.
 
-export type ConsoleAction = { action: string; target?: string }
+export type ConsoleAction = { action: string; target?: string; seconds?: number; label?: string }
 export type WorkshopAction = {
   action: string
   target?: string
@@ -186,8 +187,21 @@ export function runWorkshopActions(actions: WorkshopAction[]) {
 export async function runConsoleActions(actions: ConsoleAction[], host: ConsoleHost) {
   const jarvis = useJarvis.getState()
   const spatial = useSpatial.getState()
-  for (const { action, target } of actions) {
+  for (const { action, target, seconds, label } of actions) {
     switch (action) {
+      case "timer_start":
+        if (target === "stopwatch") useTimers.getState().stopwatch(label)
+        else if (seconds) useTimers.getState().start(seconds, label)
+        break
+      case "timer_stop":
+        useTimers.getState().stop(target || undefined)
+        break
+      case "open_timers":
+        useTimers.getState().setOpen(true)
+        break
+      case "close_timers":
+        useTimers.getState().setOpen(false)
+        break
       case "open_panel":
         spatial.setWorkshopOpen(false)
         jarvis.setActiveTab((target as TabKey) ?? null)
@@ -272,6 +286,7 @@ export function consoleState() {
     muted: sfx.isMuted(),
     last_scad_error: lastScadError,
     material_lab: labState(),
+    timers: timerState(),
     project: projectState() && {
       ...projectState(),
       try_on: useTryOn.getState().active

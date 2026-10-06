@@ -765,6 +765,13 @@ export const sfx = {
     blip(660, 0.06, 0.14, "sine")
     window.setTimeout(() => blip(440, 0.055, 0.28, "sine"), 110)
   },
+  // A timer has run out: three bright rising chimes, unlike anything else
+  // the console makes, so it reads across the room.
+  alarm(): void {
+    blip(880, 0.07, 0.22, "sine")
+    window.setTimeout(() => blip(1175, 0.07, 0.22, "sine"), 180)
+    window.setTimeout(() => blip(1568, 0.08, 0.4, "sine"), 360)
+  },
 
   // Drives the ambience from agent state. Thinking gets an intermittent
   // data tick; speaking ducks the bed so narration stays legible.
