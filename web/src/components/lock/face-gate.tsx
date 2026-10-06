@@ -105,6 +105,7 @@ export function FaceGate({ sessionToken, onSignOut }: { sessionToken: string; on
   const [pin, setPin] = useState("")
   const [prompt, setPrompt] = useState("ALIGN YOUR FACE")
   const [direction, setDirection] = useState<Direction>("left")
+  const [fit] = useState(() => (typeof window === "undefined" ? 1 : Math.min(1, (window.innerWidth - 32) / RING)))
 
   function begin(nextMode: Mode) {
     modeRef.current = nextMode
@@ -458,7 +459,10 @@ export function FaceGate({ sessionToken, onSignOut }: { sessionToken: string; on
         </section>
 
         {/* The scanner */}
-        <section className="relative" style={{ width: RING, height: RING }}>
+        {/* Drawn at 380px and scaled to fit, so a narrow screen gets the
+            whole scanner rather than a sideways scroll. */}
+        <div style={{ width: RING * fit, height: RING * fit }}>
+        <section className="relative" style={{ width: RING, height: RING, transform: `scale(${fit})`, transformOrigin: "top left" }}>
           <svg className="absolute inset-0" width={RING} height={RING} viewBox={`0 0 ${RING} ${RING}`} aria-hidden>
             <motion.circle
               cx={RING / 2}
@@ -584,6 +588,8 @@ export function FaceGate({ sessionToken, onSignOut }: { sessionToken: string; on
             </motion.span>
           </div>
         </section>
+
+        </div>
 
         {/* Readouts, or the PIN for enrolment */}
         <section className="flex w-[220px] flex-col t-label" style={{ gap: 12, color: "var(--text-secondary)" }}>
