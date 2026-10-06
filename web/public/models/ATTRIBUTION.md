@@ -20,3 +20,19 @@ board file's positions and merged by material. The USB-B socket and the
 polyfuse are modelled in `lib/workshop/project/genuine.ts`.
 
 These two files are shared under the same license, CC BY-SA 4.0.
+
+## The component library
+
+`parts/*.glb` and `parts/manifest.json` - the workshop's resistors, LEDs,
+RGB LED, tact switch, piezo buzzer, diode, TO-92 and TO-220 packages,
+photoresistor and the ADXL335 breakout's parts - are built by
+`scripts/build-part-models.mjs` from the **KiCad 3D models library** (as
+above, CC-BY-SA 4.0, https://gitlab.com/kicad/libraries/kicad-packages3D).
+
+Changes: tessellated with OpenCascade (occt-import-js), merged by material,
+moved into the workshop's part frames; the axial parts' leads were
+straightened (KiCad bends them for a PCB); the ADXL335 breakout is composed
+from KiCad's QFN-16, 0603 capacitor and pin header models on a board drawn
+by `lib/workshop/project/library.ts`.
+
+These files are shared under the same license, CC BY-SA 4.0.

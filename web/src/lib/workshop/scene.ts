@@ -1247,7 +1247,9 @@ export class WorkshopScene {
     item.root.traverse((node) => {
       const mesh = node as THREE.Mesh
       mesh.geometry?.dispose()
-      if (mesh.material && mesh.material !== item.wireMaterial) (mesh.material as THREE.Material).dispose()
+      // One material or several (the genuine UNO board's face and edge).
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      for (const m of materials) if (m && m !== item.wireMaterial) m.dispose()
     })
     item.wireMaterial.dispose()
   }

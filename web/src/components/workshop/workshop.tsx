@@ -9,6 +9,7 @@ import {
   BoxIcon,
   Grid3x3Icon,
   MinimizeIcon,
+  SlidersHorizontalIcon,
   Move3dIcon,
   BoxesIcon,
   DownloadIcon,
@@ -41,6 +42,8 @@ import type { ItemMode, WorkshopScene } from "@/lib/workshop/scene"
 import { buildGenerated, type ItemSpec } from "@/lib/workshop/models"
 import { getGestures, KEYS, useGestures, type TapAction } from "@/lib/workshop/gestures"
 import { GestureSettings } from "@/components/workshop/gesture-settings"
+import { FxSettings } from "@/components/workshop/fx-settings"
+import { useVisuals } from "@/lib/workshop/visuals"
 import { LibraryDock, type StageItem } from "@/components/workshop/library-dock"
 import { PANEL_WIDTH, ProjectPanel } from "@/components/workshop/project-panel"
 import { MaterialLab } from "@/components/workshop/material-lab"
@@ -229,6 +232,10 @@ function WorkshopStage({
   const [snapOn, setSnapOn] = useState(false)
   const [arrowsOn, setArrowsOn] = useState(true)
   const [gesturesOpen, setGesturesOpen] = useState(false)
+  const [fxOpen, setFxOpen] = useState(false)
+  // Features the assembly is built with: switching one rebuilds it.
+  const realParts = useVisuals((state) => state.realParts)
+  const looms = useVisuals((state) => state.looms)
   const inputMode = useSpatial((state) => state.inputMode)
   const gestures = useGestures()
   // Jarvis's render control is registered once, with the
@@ -301,7 +308,7 @@ function WorkshopStage({
       releaseAssembly()
       return
     }
-    const signature = buildSignature(project)
+    const signature = `${buildSignature(project)}|${realParts}|${looms}`
     const built = rigRef.current
     if (built && assemblyRef.current && built.signature === signature) {
       built.rig.apply(rigOf(project))
@@ -336,7 +343,7 @@ function WorkshopStage({
     return () => {
       cancelled = true
     }
-  }, [ready, projectVersion])
+  }, [ready, projectVersion, realParts, looms])
 
   // The rig as it is being edited, shown live: the segment where the
   // panel or the gizmo has it and the wires re-routed to it.
@@ -724,7 +731,7 @@ function WorkshopStage({
               onClick={() => void toggleTryOn()}
               title={hasProject ? "Wear the open project, live in the camera" : "Open a project to try it on"}
             />
-            <Tool icon={<HandIcon size={13} />} label="GESTURES" active={gesturesOpen} onClick={() => setGesturesOpen((o) => !o)} title="Choose what each hand gesture does" />
+            <Tool icon={<HandIcon size={13} />} label="GESTURES" active={gesturesOpen} onClick={() => { setFxOpen(false); setGesturesOpen((o) => !o) }} title="Choose what each hand gesture does" />
           </div>
           <div className="ws-group">
             <Tool icon={<BoxesIcon size={13} />} label="EXPLODE" active={exploded} disabled={!ready} onClick={() => runAction("explode")} title={`Exploded view: parts drawn apart (${KEYS.explode})`} />
@@ -744,6 +751,7 @@ function WorkshopStage({
             <Tool icon={<Grid3x3Icon size={13} />} label="HOLO" onClick={() => sceneRef.current?.setAllModes("wire")} title="Show everything as a hologram" />
             <Tool icon={<BoxIcon size={13} />} label="SOLID" onClick={() => sceneRef.current?.setAllModes("solid")} title="Show everything in its real materials" />
             <Tool icon={<RotateCcwIcon size={13} />} label="CLEAR" onClick={() => sceneRef.current?.clear()} title="Clear everything off the stage" />
+            <Tool icon={<SlidersHorizontalIcon size={13} />} label="FX" active={fxOpen} onClick={() => { setGesturesOpen(false); setFxOpen((o) => !o) }} title="Visual features: switch each on or off to compare" />
           </div>
           <div className="ws-group">
             <Tool icon={<DownloadIcon size={13} />} label="STL" disabled={!ready || !focus} onClick={() => sceneRef.current && download(sceneRef.current.exportStl())} title="Download the selected item as STL, in millimetres" />
@@ -792,7 +800,8 @@ function WorkshopStage({
           onDoubleClick={() => focus && sceneRef.current?.toggle(focus.id)}
         />
 
-        {gesturesOpen && <GestureSettings onClose={() => setGesturesOpen(false)} />}
+        {gesturesOpen && <GestureSettings onClose={() => setGesturesOpen(false)} right={projectShown ? PANEL_WIDTH + 24 : 12} />}
+        {fxOpen && <FxSettings onClose={() => setFxOpen(false)} right={projectShown ? PANEL_WIDTH + 24 : 12} />}
 
         <ProjectPanel />
         {galleryOpen && <ProjectGallery />}

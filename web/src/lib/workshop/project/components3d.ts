@@ -1,6 +1,7 @@
 import * as THREE from "three"
 
 import { genuineUno } from "@/lib/workshop/project/genuine"
+import { libraryModel } from "@/lib/workshop/project/library"
 import { real } from "@/lib/workshop/project/materials"
 import { PARTS, prop, type Part } from "@/lib/workshop/project/types"
 
@@ -281,6 +282,56 @@ function battery6(): THREE.Group {
   return g
 }
 
+/** A miniature lever microswitch (SS-5GL size: 20 x 6.5 x 10 body): two
+ *  mounting holes, the plunger under a hinged steel lever with a roller,
+ *  and three solder tabs below - COM, NO, NC - where wires3d.ts lands. */
+function limitSwitch(): THREE.Group {
+  const g = new THREE.Group()
+  const body = new THREE.Mesh(roundedBlock(20, 6.5, 10, 0.6), mat.black)
+  body.position.z = 5
+  body.castShadow = body.receiveShadow = true
+  g.add(body)
+  // Mounting holes through the body: dark rings on both faces.
+  for (const x of [-4.75, 4.75]) {
+    for (const y of [-3.26, 3.26]) {
+      // Across the body's thickness: three's own y-axis cylinder.
+      const hole = cyl(1.2, 0.2, mat.dark, [x, y, 5.5], 16)
+      hole.rotation.set(0, 0, 0)
+      g.add(hole)
+    }
+  }
+  // The plunger, and the lever hinged at one end lying over it.
+  g.add(box(1.6, 2.2, 1, mat.white, [1.5, 0, 10.5]))
+  const lever = new THREE.Group()
+  lever.position.set(-8.5, 0, 10.6)
+  lever.rotation.y = -0.12
+  lever.add(box(19, 4, 0.3, mat.silver, [9.5, 0, 0]))
+  const roller = cyl(2, 3, mat.white, [18.5, 0, 1.6], 20)
+  roller.rotation.set(Math.PI / 2, 0, 0)
+  lever.add(roller)
+  g.add(lever)
+  // The three tabs, 6 mm apart, down out of the body.
+  for (const x of [-6, 0, 6]) g.add(box(3.2, 0.5, 4, mat.silver, [x, 0, -2]))
+  return g
+}
+
+/** A box with its vertical edges rounded, standing on z. */
+function roundedBlock(x: number, y: number, z: number, r: number): THREE.BufferGeometry {
+  const s = new THREE.Shape()
+  s.moveTo(-x / 2 + r, -y / 2)
+  s.lineTo(x / 2 - r, -y / 2)
+  s.quadraticCurveTo(x / 2, -y / 2, x / 2, -y / 2 + r)
+  s.lineTo(x / 2, y / 2 - r)
+  s.quadraticCurveTo(x / 2, y / 2, x / 2 - r, y / 2)
+  s.lineTo(-x / 2 + r, y / 2)
+  s.quadraticCurveTo(-x / 2, y / 2, -x / 2, y / 2 - r)
+  s.lineTo(-x / 2, -y / 2 + r)
+  s.quadraticCurveTo(-x / 2, -y / 2, -x / 2 + r, -y / 2)
+  const geometry = new THREE.ExtrudeGeometry(s, { depth: z, bevelEnabled: true, bevelThickness: r * 0.5, bevelSize: r * 0.5, bevelSegments: 2, curveSegments: 4 })
+  geometry.translate(0, 0, -z / 2)
+  return geometry
+}
+
 function fan(): THREE.Group {
   const g = new THREE.Group()
   const frame = new THREE.Mesh(new THREE.TorusGeometry(23, 2.5, 8, 4, Math.PI * 2), mat.black)
@@ -326,8 +377,10 @@ function generic(part: Part): THREE.Group {
 
 /** One part's 3D model, millimetres, z up, sitting on z = 0. */
 export function componentModel(part: Part): THREE.Group {
-  let g: THREE.Group
-  switch (part.type) {
+  // The real model from the component library (library.ts) when there is
+  // one and it has loaded; the primitive stand-ins below otherwise.
+  let g: THREE.Group | null = libraryModel(part)
+  if (!g) switch (part.type) {
     // The genuine board when it has loaded (genuine.ts), else ours.
     case "uno": g = genuineUno() ?? uno(); break
     case "breadboard_170": g = breadboard(47, 35); break
@@ -354,6 +407,7 @@ export function componentModel(part: Part): THREE.Group {
     case "bearing_608": g = (() => { const b = new THREE.Group(); b.add(cyl(11, 7, mat.silver)); b.add(cyl(4, 7.2, mat.dark, [0, 0, 3.5])); return b })(); break
     case "lm8uu": g = (() => { const b = new THREE.Group(); const c = cyl(7.5, 24, mat.silver, [0, 0, 7.5]); c.rotation.set(0, 0, Math.PI / 2); b.add(c); return b })(); break
     case "battery_6aa": g = battery6(); break
+    case "limit_switch": g = limitSwitch(); break
     case "fan": g = fan(); break
     case "enclosure_3x2": g = enclosure(76.2, 50.8, 27.9); break
     case "enclosure_5x2": g = enclosure(127, 63.5, 44.5); break

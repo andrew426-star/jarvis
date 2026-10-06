@@ -5,6 +5,7 @@ import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js"
 import type { BuiltItem } from "@/lib/workshop/models"
 import { componentModel } from "@/lib/workshop/project/components3d"
 import { loadGenuine } from "@/lib/workshop/project/genuine"
+import { loadLibrary } from "@/lib/workshop/project/library"
 import { filament } from "@/lib/workshop/project/materials"
 import { buildAxes } from "@/lib/workshop/project/axes3d"
 import { Rig, rigOf } from "@/lib/workshop/project/rig"
@@ -70,6 +71,8 @@ export async function buildDesign(
 
   // The genuine UNO model, the first time a project has one.
   if (project.parts.some((p) => p.type === "uno")) await loadGenuine()
+  // Real models for the rest, from the component library (library.ts).
+  await loadLibrary(project.parts.map((p) => p.type))
   const placed = new Map<string, THREE.Object3D>()
   for (const part of project.parts) {
     if (placedOnly && !project.layout[part.id]) continue
@@ -98,6 +101,8 @@ export async function buildDesign(
   }
 
   const loader = new STLLoader()
+  // What the cables must go around besides the components.
+  const solids: THREE.Object3D[] = []
   for (const printed of project.printed) {
     try {
       const stl = await compile(printed.code)
@@ -114,6 +119,7 @@ export async function buildDesign(
       mesh.userData.scad = printed.code
       const spot = project.layout[printed.name]
       if (spot) place(mesh, spot.pos, spot.rot)
+      solids.push(mesh)
       rig.container(printed.name, printed.group).add(mesh)
     } catch (err) {
       failures.push({ name: printed.name, error: err instanceof Error ? err.message : String(err) })
@@ -126,7 +132,7 @@ export async function buildDesign(
   rig.measure()
   rig.apply(rig.segments, false)
   if (project.wires.length) {
-    rig.cabling = new Cabling(project.parts, project.wires, placed, zUp)
+    rig.cabling = new Cabling(project.parts, project.wires, placed, zUp, solids)
     zUp.add(rig.cabling.group)
   }
 
