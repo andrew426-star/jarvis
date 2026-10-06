@@ -2,8 +2,8 @@
 
 Lets Jarvis follow along in Chrome or Edge: read the page you're on, your
 selected text and the box you're typing in, see your open tabs, and speak up
-when he can help — in a bubble on the page, out loud. Version 1 is
-read-only: he cannot click, type or navigate.
+when he can help — in a bubble on the page, out loud — and act for you:
+open pages, click, type, choose from lists, scroll, and switch or close tabs.
 
 ## Install
 
@@ -33,6 +33,28 @@ revokes every extension token at once.
 - In the bubble: **Not now** silences remarks for 15 minutes; **Not on this
   site** blocks the site for good.
 
+## Acting
+
+Ask Jarvis to do something in the browser ("search Digi-Key for a 9g servo",
+"fill in my name on this form", "open my Moodle lab 4 page") and he works it
+step by step: he lists the page's buttons, links and fields, acts on one,
+then reads what happened before the next.
+
+- While he works, a **glowing cyan rim** surrounds the page, with a pill at
+  the top saying what he is doing. **STOP** (or **Esc**) halts him for 45
+  seconds.
+- Anything with consequences (send, post, buy, pay, order, delete, submit
+  a form, Enter outside a search box, closing one of your own tabs) turns
+  the rim **amber**, outlines the control and waits for you to press
+  **ALLOW**. No answer in 18 seconds counts as no.
+- **Acts for you** in the popup: **Off** (read only), **Ask first** (you
+  allow every click and keystroke), or **Auto** (the default: you allow
+  only the consequential ones).
+- He never types into password, card or similar fields, never acts on the
+  private sites below, and his unattended rounds can only read.
+- Clicks and keys are simulated in the page, so the odd site that only
+  accepts real input won't respond; he'll see that nothing changed.
+
 ## Privacy
 
 Checked in the browser, before anything leaves it:
@@ -49,8 +71,10 @@ Checked in the browser, before anything leaves it:
 ## How it works
 
 `background.js` keeps a WebSocket to `/browser/ws` (app/api/routes/browser.py)
-and is the only part that talks to Jarvis. `content.js` reads a page when
-asked, pings when it settles, and draws the bubble. `offscreen.js` plays the
+and is the only part that talks to Jarvis; it also runs tab actions (open,
+back, switch, close), one at a time. `content.js` reads a page when asked,
+pings when it settles, draws the bubble, and carries out page actions with
+the rim and the ALLOW prompt. `offscreen.js` plays the
 voice. `blocklist.js` decides what's private. Jarvis reads it all through his
 `browser` tool (app/tools/browser.py); remarks are judged by
 app/services/browser_watch.py.

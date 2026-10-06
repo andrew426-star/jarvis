@@ -12,7 +12,7 @@
     </header>
 
     <section id="unpaired" hidden>
-      <p>Open your Jarvis console in this tab, signed in, then pair. Jarvis will be able to read the pages you're on (never banking, email or health sites) and speak up when he can help.</p>
+      <p>Open your Jarvis console in this tab, signed in, then pair. Jarvis will be able to read the pages you're on (never banking, email or health sites) speak up when he can help, and click, type and navigate when you ask.</p>
       <button id="pair" class="primary">PAIR WITH THIS CONSOLE</button>
       <p id="pair-error" class="error" hidden></p>
     </section>
@@ -28,6 +28,14 @@
           <button data-level="quiet" title="Only clear mistakes">QUIET</button>
           <button data-level="normal" title="Offers help, flags problems">NORMAL</button>
           <button data-level="coach" title="Also nudges when you're stuck">COACH</button>
+        </div>
+      </div>
+      <div class="row">
+        <span>Acts for you</span>
+        <div class="seg" id="act">
+          <button data-act="off" title="Jarvis only reads; he never clicks or types">OFF</button>
+          <button data-act="ask" title="You ALLOW every click and keystroke">ASK FIRST</button>
+          <button data-act="auto" title="You ALLOW only sending, buying, deleting, submitting and the like">AUTO</button>
         </div>
       </div>
       <div class="row">

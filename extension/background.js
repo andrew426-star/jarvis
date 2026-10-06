@@ -14,6 +14,7 @@ const DEFAULTS = {
   sessionId: "", // the console's chat session, shared with the bubble
   follow: true, // chime in unprompted
   level: "normal", // quiet | normal | coach
+  act: "auto", // off | ask (approve every action) | auto (approve only consequential ones)
   voice: true,
   pausedUntil: 0, // Infinity-ish (a far date) for "until I resume"
   remarksPausedUntil: 0, // "not now" from the bubble
@@ -143,14 +144,21 @@ async function offLimits(tab, s) {
 /** The page's text, from the content script (injected first if this tab
  *  was open before the extension was). */
 async function extract(tabId) {
+  return toPage(tabId, { type: "extract" })
+}
+
+/** A message to the page's content script, injecting it first if the tab
+ *  was open before the extension was; null for a page extensions cannot
+ *  touch (the Web Store, a PDF viewer). */
+async function toPage(tabId, message) {
   try {
-    return await chrome.tabs.sendMessage(tabId, { type: "extract" })
+    return await chrome.tabs.sendMessage(tabId, message)
   } catch {
     try {
       await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] })
-      return await chrome.tabs.sendMessage(tabId, { type: "extract" })
+      return await chrome.tabs.sendMessage(tabId, message)
     } catch {
-      return null // a page extensions cannot read (the Web Store, a PDF viewer)
+      return null
     }
   }
 }
@@ -204,6 +212,8 @@ async function sendTabs() {
 }
 
 async function answer(kind, args) {
+  if (kind === "elements") return elementsOf(args)
+  if (kind === "act") return serially(() => act(args))
   if (kind !== "read_tab") return { ok: false, error: `Unknown request ${kind}.` }
   const s = await settings()
   let tab
@@ -216,6 +226,197 @@ async function answer(kind, args) {
   if (why) return { ok: false, error: `That tab is private (${why}).` }
   const page = await extract(tab.id)
   return page ? { ok: true, page } : { ok: false, error: "That page cannot be read by an extension." }
+}
+
+// --- Acting ----------------------------------------------------------------------
+// Jarvis acting in the browser, on his own requests over the link (never
+// from a remark). The same gate as reading applies first: no action on a
+// private site, while paused, or in incognito. The content script draws
+// the glowing rim and asks Andrew to ALLOW anything with consequences;
+// STOP (or Esc) on the page halts him here.
+
+const HALT_MS = 45_000 // about one turn: STOP ends what he is doing now
+const LOAD_WAIT_MS = 6000
+const PAGE_START_CHARS = 1500
+
+let haltedUntil = 0
+let actingOn = null // the tab of his last element list or action
+const openedByJarvis = new Set()
+let actQueue = Promise.resolve()
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** One action at a time, in the order asked: two clicks racing on one
+ *  page would each act on a page the other has changed. */
+function serially(fn) {
+  const run = actQueue.then(fn, fn)
+  actQueue = run.catch(() => {})
+  return run
+}
+
+/** The tab Andrew is working in: the one in front, or, while he is on the
+ *  console, the web page he was on last. */
+async function workTab(s) {
+  const usable = (t) => !t.incognito && /^https?:/.test(t.url || "") && blockedReason(t.url, s) !== "the Jarvis console"
+  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+  if (active && usable(active)) return active
+  const tabs = (await chrome.tabs.query({})).filter(usable)
+  return tabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0] || null
+}
+
+/** The tab asked for, else (for actions) the one he was last working in,
+ *  else Andrew's. Null when the named tab has closed. */
+async function tabFor(args, s, preferActing) {
+  if (args.tab_id !== undefined && args.tab_id !== null && args.tab_id !== "") {
+    return chrome.tabs.get(Number(args.tab_id)).catch(() => null)
+  }
+  if (preferActing && actingOn !== null) {
+    const tab = await chrome.tabs.get(actingOn).catch(() => null)
+    if (tab) return tab
+  }
+  return workTab(s)
+}
+
+async function elementsOf(args) {
+  const s = await settings()
+  const tab = await tabFor(args, s, false)
+  if (!tab) return { ok: false, error: args.tab_id ? "That tab is closed." : "No web page is open." }
+  const why = await offLimits(tab, s)
+  if (why) return { ok: false, error: `That tab is private (${why}).` }
+  const page = await toPage(tab.id, { type: "elements" })
+  if (!page) return { ok: false, error: "That page cannot be read by an extension." }
+  actingOn = tab.id
+  return { ok: true, tab_id: tab.id, ...page }
+}
+
+async function loaded(tabId) {
+  const until = Date.now() + LOAD_WAIT_MS
+  while (Date.now() < until) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null)
+    if (!tab || tab.status === "complete") return
+    await pause(250)
+  }
+}
+
+/** What an action left behind: where the tab is now, any tab it opened,
+ *  and the start of a new page, so Jarvis reports what happened rather
+ *  than what he meant to happen. */
+async function after(tabId, did, beforeUrl, tabsBefore) {
+  await pause(500)
+  await loaded(tabId)
+  const tab = await chrome.tabs.get(tabId).catch(() => null)
+  if (!tab) return { ok: true, did, note: "The tab closed." }
+  const result = { ok: true, did, tab_id: tabId, url: tab.url, title: tab.title, navigated: tab.url !== beforeUrl }
+  let landed = tab
+  if (tabsBefore) {
+    const fresh = (await chrome.tabs.query({})).find((t) => !tabsBefore.has(t.id) && t.openerTabId === tabId)
+    if (fresh) {
+      openedByJarvis.add(fresh.id)
+      actingOn = fresh.id
+      await loaded(fresh.id)
+      landed = (await chrome.tabs.get(fresh.id).catch(() => null)) || fresh
+      result.new_tab = { id: landed.id, title: landed.title, url: landed.url }
+    }
+  }
+  if (result.navigated || result.new_tab) {
+    const why = await offLimits(landed, await settings())
+    if (why) result.note = `That page is private (${why}): you cannot see or act on it.`
+    else {
+      const page = await extract(landed.id)
+      if (page?.text) result.page_start = page.text.slice(0, PAGE_START_CHARS)
+      void toTab(landed.id, { type: "driving", text: did })
+    }
+  }
+  return result
+}
+
+async function openUrl(args, s) {
+  let raw = String(args.url || "").trim()
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(raw)) raw = "https://" + raw
+  let url
+  try {
+    url = new URL(raw)
+  } catch {
+    return { ok: false, error: `"${args.url}" is not a web address.` }
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return { ok: false, error: "Only http and https pages can be opened." }
+  if (args.new_tab === false) {
+    const current = await tabFor(args, s, true)
+    if (!current) return { ok: false, error: "That tab is closed." }
+    const why = await offLimits(current, s)
+    if (why) return { ok: false, error: `That tab is private (${why}).` }
+    void toTab(current.id, { type: "driving", text: `Going to ${url.host}` })
+    await chrome.tabs.update(current.id, { url: url.href })
+    actingOn = current.id
+    return after(current.id, `went to ${url.href}`, current.url)
+  }
+  const tab = await chrome.tabs.create({ url: url.href, active: true })
+  openedByJarvis.add(tab.id)
+  actingOn = tab.id
+  return after(tab.id, `opened ${url.href} in a new tab`, "")
+}
+
+async function act(args) {
+  const s = await settings()
+  if (s.act === "off") return { ok: false, error: "Andrew has switched browser actions off in the extension's popup." }
+  if (Date.now() < haltedUntil) {
+    const wait = Math.ceil((haltedUntil - Date.now()) / 1000)
+    return { ok: false, error: `Andrew pressed STOP. Do not act in the browser again unless he asks (actions resume in ${wait}s).` }
+  }
+  const action = String(args.action || "")
+  if (action === "open") return openUrl(args, s)
+
+  const tab = await tabFor(args, s, true)
+  if (!tab) return { ok: false, error: args.tab_id ? "That tab is closed." : "No web page is open." }
+  const why = await offLimits(tab, s)
+  if (why) return { ok: false, error: `That tab is private (${why}), so Jarvis cannot act there.` }
+
+  switch (action) {
+    case "back":
+    case "forward":
+    case "reload": {
+      void toTab(tab.id, { type: "driving", text: { back: "Going back", forward: "Going forward", reload: "Reloading" }[action] })
+      try {
+        if (action === "back") await chrome.tabs.goBack(tab.id)
+        else if (action === "forward") await chrome.tabs.goForward(tab.id)
+        else await chrome.tabs.reload(tab.id)
+      } catch {
+        return { ok: false, error: `Can't go ${action} from here.` }
+      }
+      actingOn = tab.id
+      return after(tab.id, action === "reload" ? "reloaded" : `went ${action}`, action === "reload" ? "" : tab.url)
+    }
+    case "switch_tab":
+      await chrome.tabs.update(tab.id, { active: true })
+      await chrome.windows.update(tab.windowId, { focused: true })
+      actingOn = tab.id
+      void toTab(tab.id, { type: "driving", text: "Switched here" })
+      return { ok: true, did: `switched to "${tab.title}"`, tab_id: tab.id, url: tab.url, title: tab.title }
+    case "close_tab": {
+      // His own tabs may hold unsaved work: closing one needs his ALLOW.
+      if (!openedByJarvis.has(tab.id)) {
+        const answer = await toPage(tab.id, { type: "confirm", text: `Close this tab ("${tab.title}")? Allow?` })
+        if (!answer?.ok) return { ok: false, declined: true, error: "Andrew did not allow closing that tab." }
+      }
+      await chrome.tabs.remove(tab.id)
+      openedByJarvis.delete(tab.id)
+      if (actingOn === tab.id) actingOn = null
+      return { ok: true, did: `closed "${tab.title}"` }
+    }
+    case "click":
+    case "type":
+    case "select":
+    case "press":
+    case "scroll": {
+      const tabsBefore = new Set((await chrome.tabs.query({})).map((t) => t.id))
+      const result = await toPage(tab.id, { type: "act", request: { ...args, mode: s.act } })
+      if (!result) return { ok: false, error: "That page cannot be controlled by an extension." }
+      actingOn = tab.id
+      if (!result.ok) return result
+      return after(tab.id, result.did, tab.url, tabsBefore)
+    }
+  }
+  return { ok: false, error: `Unknown action ${action}.` }
 }
 
 // --- Following along ------------------------------------------------------------
@@ -438,6 +639,17 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     case "stop-voice":
       stopSpeaking()
       return false
+    case "stop-acting":
+      // STOP or Esc on the page: refuse further actions for a while.
+      haltedUntil = Date.now() + HALT_MS
+      return false
+    case "attention":
+      // A page asking Andrew to ALLOW something: bring it in front of him.
+      if (sender.tab) {
+        void chrome.tabs.update(sender.tab.id, { active: true })
+        void chrome.windows.update(sender.tab.windowId, { focused: true })
+      }
+      return false
     case "speaking":
       // From the offscreen player: the bubble's core pulses while he talks.
       if (speakingTab !== null) void toTab(speakingTab, { type: "speaking", on: message.on })
@@ -452,6 +664,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
           paired: Boolean(s.token),
           follow: s.follow,
           level: s.level,
+          act: s.act,
           voice: s.voice,
           pausedUntil: s.pausedUntil,
           categories: s.categories,

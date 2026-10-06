@@ -1,5 +1,6 @@
 // The toolbar popup: pair with the console, and the controls Andrew asked
-// for - follow along or not, how readily Jarvis speaks up, voice, pausing,
+// for - follow along or not, how readily Jarvis speaks up, whether he may
+// act, voice, pausing,
 // and which sites are private.
 
 import { CATEGORIES } from "./blocklist.js"
@@ -39,6 +40,7 @@ async function render() {
   $("voice").checked = s.voice
   $("level-row").style.opacity = s.follow ? "1" : "0.4"
   for (const button of $("level").querySelectorAll("button")) button.dataset.active = String(button.dataset.level === s.level)
+  for (const button of $("act").querySelectorAll("button")) button.dataset.active = String(button.dataset.act === s.act)
 
   $("pause-row").hidden = paused
   $("paused-row").hidden = !paused
@@ -101,6 +103,10 @@ $("voice").addEventListener("change", (e) => update({ voice: e.target.checked })
 $("level").addEventListener("click", (e) => {
   const level = e.target?.dataset?.level
   if (level) void update({ level })
+})
+$("act").addEventListener("click", (e) => {
+  const act = e.target?.dataset?.act
+  if (act) void update({ act })
 })
 $("pause-row").addEventListener("click", (e) => {
   const value = e.target?.dataset?.pause

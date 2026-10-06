@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "J.A.R.V.I.S.",
-  "version": "1.0.0",
-  "description": "Lets Jarvis follow along in your browser: read the page you're on, and speak up when he can help.",
+  "version": "1.1.0",
+  "description": "Lets Jarvis follow along in your browser and act in it: read the page, speak up, click, type and navigate for you.",
   "minimum_chrome_version": "116",
   "incognito": "not_allowed",
   "permissions": ["storage", "tabs", "scripting", "offscreen", "alarms", "idle"],
@@ -24,7 +24,7 @@
   "commands": {
     "open-bubble": {
       "suggested_key": { "default": "Alt+J" },
-      "description": "Ask Jarvis about this page"
+      "description": "Lets Jarvis follow along in your browser and act in it: read the page, speak up, click, type and navigate for you."
     }
   }
 }
