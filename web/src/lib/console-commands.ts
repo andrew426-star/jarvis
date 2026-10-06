@@ -277,9 +277,15 @@ export async function runConsoleActions(actions: ConsoleAction[], host: ConsoleH
           jarvis.setActiveTab(target as TabKey)
           windowTarget = "panel"
         }
-        // One tick, so a window opened just now has registered.
+        // One tick, so a window opened just now has registered - or, for
+        // the workshop before its chunk has loaded, until it has.
         await new Promise((resolve) => setTimeout(resolve, 0))
-        const outcome = popOutWindow(windowTarget)
+        if (windowTarget === "workshop") spatial.setWorkshopOpen(true)
+        let outcome = popOutWindow(windowTarget)
+        for (let wait = 0; outcome === "unavailable" && wait < 40; wait += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          outcome = popOutWindow(windowTarget)
+        }
         if (outcome === "blocked") jarvis.pushLog("WARN", "Pop-up held by the browser; waiting on a click")
         break
       }

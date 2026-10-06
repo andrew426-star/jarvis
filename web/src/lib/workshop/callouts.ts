@@ -174,9 +174,15 @@ export class Callouts {
 
       // Find it a free spot: where it wants to be, else slid up or down
       // along the screen a label's height at a time.
+      // Measured once, when it has first been laid out: reading sizes every
+      // frame would force the page's layout in the middle of rendering.
       const el = shown.label.element
-      const w = el.offsetWidth || 170
-      const h = el.offsetHeight || 52
+      if (!shown.label.userData.w && el.offsetWidth) {
+        shown.label.userData.w = el.offsetWidth
+        shown.label.userData.h = el.offsetHeight
+      }
+      const w = (shown.label.userData.w as number) || 170
+      const h = (shown.label.userData.h as number) || 52
       const px = (screen.x * 0.5 + 0.5) * this.width
       const py = (-screen.y * 0.5 + 0.5) * this.height
       const perPixel = (2 * camera.position.distanceTo(end) * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / this.height
@@ -215,8 +221,12 @@ export class Callouts {
       if (!(child instanceof CSS2DObject)) continue
       const [hx, hy] = child.userData.hang as [number, number]
       const el = child.element
-      const w = el.offsetWidth || 64
-      const h = el.offsetHeight || 18
+      if (!child.userData.w && el.offsetWidth) {
+        child.userData.w = el.offsetWidth
+        child.userData.h = el.offsetHeight
+      }
+      const w = (child.userData.w as number) || 64
+      const h = (child.userData.h as number) || 18
       const at = child.getWorldPosition(new THREE.Vector3()).project(camera)
       const px = (at.x * 0.5 + 0.5) * this.width
       const py = (-at.y * 0.5 + 0.5) * this.height

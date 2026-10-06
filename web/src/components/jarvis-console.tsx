@@ -21,17 +21,15 @@ import { TimerWindow } from "@/components/timer/timer-window"
 import { CameraPreview } from "@/components/spatial/camera-preview"
 import { HandCursors } from "@/components/spatial/hand-cursors"
 import { HologramLayer } from "@/components/spatial/hologram-layer"
-import { Workshop } from "@/components/workshop/workshop"
+import dynamic from "next/dynamic"
 import { PopOutPrompt } from "@/components/ui/pop-out-prompt"
 import { TopBar } from "@/components/hud/top-bar"
 import { FaceGate } from "@/components/lock/face-gate"
 import { LoginGate } from "@/components/login-gate"
 import type { MicButtonHandle } from "@/components/mic-button"
-import { MarketsPanel } from "@/components/panels/markets-panel"
 import { NewsPanel } from "@/components/panels/news-panel"
 import { NotesPanel } from "@/components/panels/notes-panel"
 import { InboxPanel } from "@/components/inbox/inbox-panel"
-import { PortfolioPanel } from "@/components/panels/portfolio-panel"
 import {
   JarvisApiError,
   JarvisAuthError,
@@ -74,6 +72,28 @@ import { loadLinkedFolders, startFolderSync, useLinkedFolders } from "@/lib/link
 import { resolveAuth, subscribeAuth } from "@/lib/auth-state"
 import { clearSession, clearStoredToken } from "@/lib/storage"
 import { useAutoRelock, useLock } from "@/lib/lock-state"
+
+// The workshop (three.js, its post-processing, the simulator: about 1 MB)
+// is its own chunk, fetched once the console has booted and the browser
+// is idle - or at once, when it is opened first.
+// The chart-heavy panels (recharts) load the first time they are opened.
+const MarketsPanel = dynamic(() => import("@/components/panels/markets-panel").then((m) => m.MarketsPanel), { ssr: false, loading: () => null })
+const PortfolioPanel = dynamic(() => import("@/components/panels/portfolio-panel").then((m) => m.PortfolioPanel), { ssr: false, loading: () => null })
+
+const loadWorkshop = () => import("@/components/workshop/workshop").then((m) => m.Workshop)
+const Workshop = dynamic(loadWorkshop, { ssr: false, loading: () => null })
+
+function LazyWorkshop({ token, ready }: { token: string; ready: boolean }) {
+  const open = useSpatial((state) => state.workshopOpen)
+  const [wanted, setWanted] = useState(false)
+  useEffect(() => {
+    if (!ready || wanted) return
+    const idle = window.requestIdleCallback ?? ((fn: () => void) => window.setTimeout(fn, 1500))
+    const id = idle(() => void loadWorkshop().then(() => setWanted(true)))
+    return () => (window.cancelIdleCallback ?? window.clearTimeout)(id as number)
+  }, [ready, wanted])
+  return wanted || open ? <Workshop token={token} /> : null
+}
 
 // "Not now", "quiet", "hush, Jarvis": while he is watching, a short line
 // like this snoozes him rather than going out as a message.
@@ -679,6 +699,13 @@ function Shell({
     micRef.current?.startRecording()
   }
 
+  // Data panels mount the first time their tab opens (not at boot, where
+  // they would all fetch while hidden), then stay mounted so switching
+  // tabs keeps their state.
+  const [opened, setOpened] = useState<TabKey[]>([])
+  if (activeTab && !opened.includes(activeTab)) setOpened([...opened, activeTab])
+  const seen = (tab: TabKey) => opened.includes(tab)
+
   const serious = mode === "serious"
   // Captioned in the camera window, so a reply can be read without
   // looking away from the board.
@@ -806,26 +833,26 @@ function Shell({
 
       <DataWindow>
         <div className={activeTab === "markets" ? "" : "hidden"}>
-          <MarketsPanel
+          {seen("markets") && <MarketsPanel
             token={token}
             onAuthError={onAuthError}
             liveSnapshot={liveMarketSnapshot}
             liveHistory={liveMarketHistory}
             liveTrades={liveTrades}
             onAsk={(question) => void handleSend(question, false)}
-          />
+          />}
         </div>
         <div className={activeTab === "intel" ? "" : "hidden"}>
-          <NewsPanel token={token} onAuthError={onAuthError} liveNews={liveNews} />
+          {seen("intel") && <NewsPanel token={token} onAuthError={onAuthError} liveNews={liveNews} />}
         </div>
         <div className={activeTab === "assets" ? "" : "hidden"}>
-          <PortfolioPanel token={token} onAuthError={onAuthError} livePortfolio={livePortfolio} />
+          {seen("assets") && <PortfolioPanel token={token} onAuthError={onAuthError} livePortfolio={livePortfolio} />}
         </div>
         <div className={activeTab === "notes" ? "" : "hidden"}>
-          <NotesPanel token={token} onAuthError={onAuthError} />
+          {seen("notes") && <NotesPanel token={token} onAuthError={onAuthError} />}
         </div>
         <div className={activeTab === "inbox" ? "" : "hidden"} style={{ fontSize: 13 }}>
-          <InboxPanel
+          {seen("inbox") && <InboxPanel
             token={token}
             onAuthError={onAuthError}
             onOpenSymbol={(symbol) => {
@@ -834,14 +861,14 @@ function Shell({
                 .then(setLiveMarketHistory)
                 .catch(() => {})
             }}
-          />
+          />}
         </div>
       </DataWindow>
 
       <HologramLayer />
       <ShowcaseWindow />
       <TimerWindow />
-      <Workshop token={token} />
+      <LazyWorkshop token={token} ready={boot.done} />
       <CameraPreview
         onToggleHands={toggleHands}
         onSetWatch={(level) => void setWatch(level)}

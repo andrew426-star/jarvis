@@ -50,6 +50,8 @@ interface Item {
   materializing: number | null
   /** What it lit with bloom: its edges and lit LEDs. */
   glowing: THREE.Object3D[]
+  /** Its parts that carry a callout, found once. */
+  labelled?: THREE.Object3D[]
   lights: THREE.PointLight[]
   scanRing: THREE.LineLoop
   mode: ItemMode
@@ -352,6 +354,12 @@ export class WorkshopScene {
   private hoverPart: THREE.Object3D | null = null
   private lastPartPick = 0
   private callouts!: Callouts
+  private keepOut: { x0: number; y0: number; x1: number; y1: number }[] = []
+  private keepOutAt = -1
+  /** The stage's size in CSS pixels, kept by resize(). */
+  private view = { width: 1, height: 1 }
+  /** The focus readout's size, re-measured only when what it shows changes. */
+  private labelSize = { for: "", w: 0, h: 0 }
   // Cross-section: the plane, the item it cuts, the widget to drag it by.
   private section: SectionState = { on: false, axis: 0, offset: 0.5, flip: false }
   private readonly sectionPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0)
@@ -1664,6 +1672,7 @@ export class WorkshopScene {
   private resize() {
     const { clientWidth: width, clientHeight: height } = this.container
     if (!width || !height) return
+    this.view = { width, height }
     this.renderer.setSize(width, height, false)
     this.post.setSize(width, height)
     this.callouts.setSize(width, height)
@@ -1935,10 +1944,12 @@ export class WorkshopScene {
         this.focused.bounds.max.y + 0.25,
         (this.focused.bounds.min.z + this.focused.bounds.max.z) / 2
       ).project(this.camera)
-      const rect = this.renderer.domElement.getBoundingClientRect()
+      const rect = this.view
       // Kept wholly on the stage: a tall item's top would push it off.
-      const w = this.label.offsetWidth
-      const h = this.label.offsetHeight
+      // Its size is read when its text changes, not every frame (layout).
+      const key = `${this.focused.id}|${this.focused.mode}|${this.label.textContent?.length ?? 0}`
+      if (this.labelSize.for !== key || !this.labelSize.w) this.labelSize = { for: key, w: this.label.offsetWidth, h: this.label.offsetHeight }
+      const { w, h } = this.labelSize
       const lx = THREE.MathUtils.clamp((top.x * 0.5 + 0.5) * rect.width, w / 2 + 8, Math.max(w / 2 + 8, rect.width - w / 2 - 8))
       const ly = THREE.MathUtils.clamp((-top.y * 0.5 + 0.5) * rect.height, h + 8, Math.max(h + 8, rect.height - 8))
       this.label.style.transform = `translate(${lx}px, ${ly}px) translate(-50%, -100%)`
@@ -1981,24 +1992,30 @@ export class WorkshopScene {
     let dimension: THREE.Object3D | null = null
     if (fx.callouts) {
       if (this.explodeT > 0.5) {
-        for (const item of this.live()) item.model.traverse((node) => node.userData.callout && tagged.length < 30 && tagged.push(node))
+        for (const item of this.live()) {
+          item.labelled ??= []
+          if (!item.labelled.length) item.model.traverse((node) => node.userData.callout && item.labelled!.push(node))
+          for (const node of item.labelled) if (tagged.length < 30) tagged.push(node)
+        }
       } else if (this.hoverPart && this.hoverPart.parent) {
         tagged.push(this.hoverPart)
         if (this.hoverPart.userData.callout.printed) dimension = this.hoverPart
       }
     }
     const around = (this.focused ?? this.hovered)?.bounds.getCenter(new THREE.Vector3()) ?? TARGET
-    // The panels over the stage (marked data-keepout) are taken space.
-    const stage = this.container.getBoundingClientRect()
-    const keepOut = tagged.length
-      ? [...(this.container.parentElement?.querySelectorAll<HTMLElement>("[data-keepout]") ?? [])]
-          .filter((el) => el.offsetParent !== null && getComputedStyle(el).opacity !== "0")
-          .map((el) => {
-            const r = el.getBoundingClientRect()
-            return { x0: r.left - stage.left, y0: r.top - stage.top, x1: r.right - stage.left, y1: r.bottom - stage.top }
-          })
-      : []
-    this.callouts.update(tagged, around, dimension, this.camera, keepOut)
+    // The panels over the stage (marked data-keepout) are taken space,
+    // looked up four times a second rather than every frame (layout).
+    if (tagged.length && t - this.keepOutAt > 0.25) {
+      this.keepOutAt = t
+      const stage = this.container.getBoundingClientRect()
+      this.keepOut = [...(this.container.parentElement?.querySelectorAll<HTMLElement>("[data-keepout]") ?? [])]
+        .filter((el) => el.offsetParent !== null && getComputedStyle(el).opacity !== "0")
+        .map((el) => {
+          const r = el.getBoundingClientRect()
+          return { x0: r.left - stage.left, y0: r.top - stage.top, x1: r.right - stage.left, y1: r.bottom - stage.top }
+        })
+    }
+    this.callouts.update(tagged, around, dimension, this.camera, tagged.length ? this.keepOut : [])
     this.callouts.render(this.camera)
     this.sample(dt)
   }
