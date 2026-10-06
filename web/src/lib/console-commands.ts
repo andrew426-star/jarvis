@@ -16,6 +16,9 @@ import { startCamera } from "@/lib/camera"
 import { projectState, useProject } from "@/lib/workshop/project/store"
 import type { Anchor, Project, Report } from "@/lib/workshop/project/types"
 import { applyInputs, setSimSpeed, startSim, stopSim } from "@/lib/workshop/sim/controller"
+import { popInWindow, popOutWindow, poppedOutWindows, type WindowTarget } from "@/lib/window-control"
+
+const PANEL_TABS = new Set(["markets", "intel", "assets", "notes", "inbox"])
 
 // Jarvis operating the console. His `console` and `workshop` tools return a
 // list of actions (app/tools/console_control.py); this carries them out,
@@ -265,6 +268,24 @@ export async function runConsoleActions(actions: ConsoleAction[], host: ConsoleH
       case "close_console":
         host.closeConsole()
         break
+      case "pop_out": {
+        // A panel opens in the data window first; the others open
+        // themselves (lib/window-control.ts).
+        let windowTarget = target as WindowTarget
+        if (target && PANEL_TABS.has(target)) {
+          spatial.setWorkshopOpen(false)
+          jarvis.setActiveTab(target as TabKey)
+          windowTarget = "panel"
+        }
+        // One tick, so a window opened just now has registered.
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        const outcome = popOutWindow(windowTarget)
+        if (outcome === "blocked") jarvis.pushLog("WARN", "Pop-up held by the browser; waiting on a click")
+        break
+      }
+      case "pop_in":
+        popInWindow(target && PANEL_TABS.has(target) ? "panel" : (target as WindowTarget))
+        break
     }
   }
 }
@@ -284,6 +305,7 @@ export function consoleState() {
     watching: spatial.watching,
     showcase: showcaseState(),
     muted: sfx.isMuted(),
+    windows_out: poppedOutWindows().map((w) => (w === "panel" ? jarvis.activeTab ?? "panel" : w)),
     last_scad_error: lastScadError,
     material_lab: labState(),
     timers: timerState(),

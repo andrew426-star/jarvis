@@ -1,9 +1,15 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react"
+import { createPortal } from "react-dom"
 import { AnimatePresence, motion } from "framer-motion"
 import {
+  AppWindowIcon,
   Axis3dIcon,
+  BoxIcon,
+  Grid3x3Icon,
+  MinimizeIcon,
+  Move3dIcon,
   BoxesIcon,
   DownloadIcon,
   FlaskConicalIcon,
@@ -25,6 +31,8 @@ import {
 import { cameraSource, startCamera, stopCamera, subscribeCamera } from "@/lib/camera"
 import { registerWorkshop, reportScadResult } from "@/lib/console-commands"
 import { PhoneCameraDialog } from "@/components/spatial/phone-camera-dialog"
+import { usePopOut } from "@/components/ui/pop-out"
+import { registerWindow } from "@/lib/window-control"
 import { setSpatialHandler, startHands, stopHands, subscribeHands } from "@/lib/hand-tracking"
 import { sfx } from "@/lib/sfx"
 import { useSpatial } from "@/lib/spatial-store"
@@ -98,39 +106,112 @@ const HINT: Record<string, string> = {
 // The 3D workshop, full-screen over the console. Hands reach it through
 // setSpatialHandler (any pinch the DOM does not claim), the mouse through
 // the pointer handlers below; both land on the same WorkshopScene calls.
+//
+// It can also leave the console for a window of its own (a second
+// monitor). The stage is rendered into one container that is moved
+// between the console and that window rather than re-rendered, so the
+// scene, what is on it and the WebGL context all come along intact.
+// Closing that window closes the workshop, like the console's others.
 export function Workshop({ token }: { token: string }) {
   const open = useSpatial((state) => state.workshopOpen)
   const setOpen = useSpatial((state) => state.setWorkshopOpen)
+  const popOut = usePopOut("workshop", useCallback(() => setOpen(false), [setOpen]))
+  const popped = !!popOut.root
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const [stageHost] = useState(() => {
+    if (typeof document === "undefined") return null
+    const host = document.createElement("div")
+    host.style.cssText = "display:flex;flex-direction:column;flex:1;min-height:0;width:100%;height:100%;background:#02050a"
+    return host
+  })
+  // Bumped on every move, so the scene restarts its loop in its new window.
+  const [hostEpoch, setHostEpoch] = useState(0)
 
   useEffect(() => {
-    if (!open) return
+    if (!open && popped) popOut.close()
+  }, [open, popped, popOut])
+
+  useEffect(
+    () =>
+      registerWindow("workshop", {
+        out: () => {
+          useJarvis.getState().setActiveTab(null)
+          setOpen(true)
+          return popOut.open("Workshop", { left: 0, top: 0, width: Math.min(1600, window.innerWidth), height: Math.min(1000, window.innerHeight) } as DOMRect)
+        },
+        in: popOut.close,
+        isOut: () => popped,
+      }),
+    [popped, popOut, setOpen]
+  )
+
+  useLayoutEffect(() => {
+    if (!open || !stageHost) return
+    const parent = popOut.root ?? overlayRef.current
+    if (parent && stageHost.parentNode !== parent) {
+      parent.appendChild(stageHost)
+      setHostEpoch((n) => n + 1)
+    }
+  }, [open, popOut.root, stageHost])
+
+  useEffect(() => {
+    if (!open || popped) return
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !useProject.getState().galleryOpen) setOpen(false)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [open, setOpen])
+  }, [open, popped, setOpen])
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          key="workshop"
-          className="fixed inset-0 flex flex-col"
-          style={{ zIndex: 35, background: "#02050a" }}
-          initial={{ opacity: 0, scale: 1.04 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 1.04 }}
-          transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <WorkshopStage token={token} onClose={() => setOpen(false)} />
-        </motion.div>
-      )}
-    </AnimatePresence>
+    <>
+      <AnimatePresence>
+        {open && !popped && (
+          <motion.div
+            key="workshop"
+            ref={overlayRef}
+            className="fixed inset-0 flex flex-col"
+            style={{ zIndex: 35, background: "#02050a" }}
+            initial={{ opacity: 0, scale: 1.04 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.04 }}
+            transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+          />
+        )}
+      </AnimatePresence>
+      {open &&
+        stageHost &&
+        createPortal(
+          <WorkshopStage
+            token={token}
+            onClose={() => setOpen(false)}
+            popped={popped}
+            onPopToggle={() => (popped ? popOut.close() : void popOut.open("Workshop", stageHost.getBoundingClientRect()))}
+            hostEpoch={hostEpoch}
+            keyWindow={popOut.root?.ownerDocument.defaultView ?? null}
+          />,
+          stageHost
+        )}
+    </>
   )
 }
 
-function WorkshopStage({ token, onClose }: { token: string; onClose: () => void }) {
+function WorkshopStage({
+  token,
+  onClose,
+  popped,
+  onPopToggle,
+  hostEpoch,
+  keyWindow,
+}: {
+  token: string
+  onClose: () => void
+  popped: boolean
+  onPopToggle: () => void
+  hostEpoch: number
+  /** The workshop's own window while it is popped out, for its shortcuts. */
+  keyWindow: Window | null
+}) {
   const hostRef = useRef<HTMLDivElement>(null)
   const labelRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<WorkshopScene | null>(null)
@@ -146,6 +227,7 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
   const [render, setRender] = useState<{ url: string; prompt: string; model: string } | null>(null)
   const [exploded, setExploded] = useState(false)
   const [snapOn, setSnapOn] = useState(false)
+  const [arrowsOn, setArrowsOn] = useState(true)
   const [gesturesOpen, setGesturesOpen] = useState(false)
   const inputMode = useSpatial((state) => state.inputMode)
   const gestures = useGestures()
@@ -545,9 +627,15 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
       else if (key === KEYS.snap) latest.current?.runAction("snap")
       else if (key === KEYS.reset_view) latest.current?.runAction("reset_view")
     }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [])
+    const target = keyWindow ?? window
+    target.addEventListener("keydown", onKey)
+    return () => target.removeEventListener("keydown", onKey)
+  }, [keyWindow])
+
+  // Moved between the console and its own window: the loop restarts there.
+  useEffect(() => {
+    if (hostEpoch > 1) sceneRef.current?.rehost()
+  }, [hostEpoch])
 
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -584,18 +672,18 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
   return (
     <>
       <header
-        className="relative flex shrink-0 items-center justify-between overflow-hidden"
+        className="relative flex shrink-0 items-center justify-between"
         style={{
           height: 48,
           padding: "0 var(--sp-4)",
-          gap: "var(--sp-3)",
+          gap: "var(--sp-4)",
           background: "rgba(5, 5, 10, 0.85)",
           borderBottom: "1px solid rgba(var(--accent-rgb), 0.3)",
           zIndex: 2,
         }}
       >
         <div className="bar-sweep" aria-hidden />
-        <div className="relative flex min-w-0 items-center" style={{ gap: "var(--sp-3)" }}>
+        <div className="relative flex min-w-0 shrink-0 items-center" style={{ gap: "var(--sp-3)" }}>
           <span className="t-header shrink-0" style={{ color: "var(--accent)" }}>
             WORKSHOP
           </span>
@@ -611,157 +699,71 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
             </span>
           )}
         </div>
-        <div className="relative flex shrink-0 items-center" style={{ gap: "var(--sp-2)" }}>
-          <button
-            type="button"
-            className="btn flex items-center"
-            style={{ gap: 6, padding: "4px 10px" }}
-            onClick={() => useProject.getState().setGalleryOpen(!galleryOpen)}
-            data-active={galleryOpen}
-            aria-pressed={galleryOpen}
-            title="Every project, its finished product as a hologram"
-          >
-            <LayersIcon size={12} /> GALLERY
-          </button>
-          <button
-            type="button"
-            className="btn flex items-center"
-            style={{ gap: 6, padding: "4px 10px" }}
-            onClick={() => useLab.getState().setOpen(!labOpen)}
-            data-active={labOpen}
-            aria-pressed={labOpen}
-            title="Material lab: tensile, drop, bend and heat tests on rubber, glass, metals and filaments, side by side"
-          >
-            <FlaskConicalIcon size={12} /> MATERIALS
-          </button>
-          <button
-            type="button"
-            className="btn flex items-center"
-            style={{ gap: 6, padding: "4px 10px" }}
-            onClick={() => sceneRef.current && download(sceneRef.current.exportStl())}
-            disabled={!ready || !focus}
-            title="Download the selected item as STL, in millimetres"
-          >
-            <DownloadIcon size={12} /> STL
-          </button>
-          <button
-            type="button"
-            className="btn flex items-center"
-            style={{ gap: 6, padding: "4px 10px" }}
-            onClick={() => void renderNow()}
-            disabled={!ready || rendering}
-            title="Photoreal render of this view (Gemini image model)"
-          >
-            {rendering ? <Loader2Icon size={12} className="animate-spin" /> : <SparklesIcon size={12} />} RENDER
-          </button>
-          <button
-            type="button"
-            className="btn flex items-center"
-            style={{ gap: 6, padding: "4px 10px" }}
-            onClick={() => void setCamera(!cameraOn)}
-            data-active={cameraOn}
-            aria-pressed={cameraOn}
-            title={cameraOn ? "Turn the camera off" : "Turn the camera on (with hand tracking)"}
-          >
-            {cameraOn ? <VideoIcon size={12} /> : <VideoOffIcon size={12} />} {cameraOn && source === "phone" ? "IPHONE CAM" : "CAMERA"}
-          </button>
-          <button
-            type="button"
-            className="btn flex items-center"
-            style={{ gap: 6, padding: "4px 10px" }}
-            onClick={() => setPhoneOpen(!phoneOpen)}
-            data-active={phoneOpen || source === "phone"}
-            aria-pressed={phoneOpen}
-            title="Use your iPhone (or another camera) as the console's camera"
-          >
-            <SmartphoneIcon size={12} /> IPHONE
-          </button>
-          <button
-            type="button"
-            className="btn flex items-center"
-            style={{ gap: 6, padding: "4px 10px" }}
-            onClick={() => void toggleTryOn()}
-            data-active={tryingOn}
-            aria-pressed={tryingOn}
-            disabled={!hasProject && !tryingOn}
-            title={hasProject ? "Wear the open project, live in the camera" : "Open a project to try it on"}
-          >
-            <GlassesIcon size={12} /> TRY ON
-          </button>
-          <button
-            type="button"
-            className="btn flex items-center"
-            style={{ gap: 6, padding: "4px 10px" }}
-            onClick={() => runAction("explode")}
-            data-active={exploded}
-            aria-pressed={exploded}
-            disabled={!ready}
-            title={`Exploded view: parts drawn apart (${KEYS.explode})`}
-          >
-            <BoxesIcon size={12} /> EXPLODE
-          </button>
-          <button
-            type="button"
-            className="btn flex items-center"
-            style={{ gap: 6, padding: "4px 10px" }}
-            onClick={() => runAction("snap")}
-            data-active={snapOn}
-            aria-pressed={snapOn}
-            disabled={!ready}
-            title={`Snapping: 25 mm grid, 15° turns, flush to neighbours (${KEYS.snap})`}
-          >
-            <MagnetIcon size={12} /> SNAP
-          </button>
-          <button
-            type="button"
-            className="btn flex items-center"
-            style={{ gap: 6, padding: "4px 10px" }}
-            onClick={() => useProject.getState().setAxes(!axesOn)}
-            data-active={axesOn}
-            aria-pressed={axesOn}
-            disabled={!ready}
-            title="The project's X, Y and Z axes: the layout's frame, in mm (z up)"
-          >
-            <Axis3dIcon size={12} /> AXES
-          </button>
-          <button
-            type="button"
-            className="btn"
-            style={{ width: 28, height: 28, padding: 0 }}
-            onClick={() => setGesturesOpen((o) => !o)}
-            data-active={gesturesOpen}
-            aria-pressed={gesturesOpen}
-            aria-label="Gesture mapping"
-            title="Choose what each hand gesture does"
-          >
-            <HandIcon className="mx-auto size-4" />
-          </button>
-          <button type="button" className="btn" style={{ padding: "4px 10px" }} onClick={() => sceneRef.current?.setAllModes("wire")}>
-            HOLOGRAM
-          </button>
-          <button type="button" className="btn" style={{ padding: "4px 10px" }} onClick={() => sceneRef.current?.setAllModes("solid")}>
-            MATERIALS
-          </button>
-          <button
-            type="button"
-            className="btn"
-            style={{ width: 28, height: 28, padding: 0 }}
-            onClick={() => sceneRef.current?.clear()}
-            aria-label="Clear the workshop"
-            title="Clear everything"
-          >
-            <RotateCcwIcon className="mx-auto size-4" />
-          </button>
-          <button
-            type="button"
-            className="btn"
-            style={{ width: 28, height: 28, padding: 0 }}
-            onClick={onClose}
-            aria-label="Close the workshop"
-            title="Close (Esc)"
-          >
-            <XIcon className="mx-auto size-4" />
-          </button>
+        {/* Grouped by what they act on, with a rule between groups. On a
+            narrower screen the labels fold away and the icons (with their
+            titles) carry on, so the bar never runs under the title. */}
+        <div className="ws-tools relative flex min-w-0 items-center">
+          <div className="ws-group">
+            <Tool icon={<LayersIcon size={13} />} label="GALLERY" active={galleryOpen} onClick={() => useProject.getState().setGalleryOpen(!galleryOpen)} title="Every project, its finished product as a hologram" />
+            <Tool icon={<FlaskConicalIcon size={13} />} label="LAB" active={labOpen} onClick={() => useLab.getState().setOpen(!labOpen)} title="Material lab: tensile, drop, bend and heat tests on rubber, glass, metals and filaments, side by side" />
+          </div>
+          <div className="ws-group">
+            <Tool
+              icon={cameraOn ? <VideoIcon size={13} /> : <VideoOffIcon size={13} />}
+              label={cameraOn && source === "phone" ? "IPHONE CAM" : "CAMERA"}
+              active={cameraOn}
+              onClick={() => void setCamera(!cameraOn)}
+              title={cameraOn ? "Turn the camera off" : "Turn the camera on (with hand tracking)"}
+            />
+            <Tool icon={<SmartphoneIcon size={13} />} label="IPHONE" active={phoneOpen || source === "phone"} onClick={() => setPhoneOpen(!phoneOpen)} title="Use your iPhone (or another camera) as the console's camera" />
+            <Tool
+              icon={<GlassesIcon size={13} />}
+              label="TRY ON"
+              active={tryingOn}
+              disabled={!hasProject && !tryingOn}
+              onClick={() => void toggleTryOn()}
+              title={hasProject ? "Wear the open project, live in the camera" : "Open a project to try it on"}
+            />
+            <Tool icon={<HandIcon size={13} />} label="GESTURES" active={gesturesOpen} onClick={() => setGesturesOpen((o) => !o)} title="Choose what each hand gesture does" />
+          </div>
+          <div className="ws-group">
+            <Tool icon={<BoxesIcon size={13} />} label="EXPLODE" active={exploded} disabled={!ready} onClick={() => runAction("explode")} title={`Exploded view: parts drawn apart (${KEYS.explode})`} />
+            <Tool icon={<MagnetIcon size={13} />} label="SNAP" active={snapOn} disabled={!ready} onClick={() => runAction("snap")} title={`Snapping: 25 mm grid, 15° turns, flush to neighbours (${KEYS.snap})`} />
+            <Tool
+              icon={<Move3dIcon size={13} />}
+              label="MOVE"
+              active={arrowsOn}
+              disabled={!ready}
+              onClick={() => {
+                const scene = sceneRef.current
+                if (scene) setArrowsOn(scene.setItemArrows())
+              }}
+              title="Move arrows on the selected item: drag X or Y to slide it, Z (blue) to lift it off the floor"
+            />
+            <Tool icon={<Axis3dIcon size={13} />} label="AXES" active={axesOn} disabled={!ready} onClick={() => useProject.getState().setAxes(!axesOn)} title="The project's X, Y and Z axes: the layout's frame, in mm (z up)" />
+            <Tool icon={<Grid3x3Icon size={13} />} label="HOLO" onClick={() => sceneRef.current?.setAllModes("wire")} title="Show everything as a hologram" />
+            <Tool icon={<BoxIcon size={13} />} label="SOLID" onClick={() => sceneRef.current?.setAllModes("solid")} title="Show everything in its real materials" />
+            <Tool icon={<RotateCcwIcon size={13} />} label="CLEAR" onClick={() => sceneRef.current?.clear()} title="Clear everything off the stage" />
+          </div>
+          <div className="ws-group">
+            <Tool icon={<DownloadIcon size={13} />} label="STL" disabled={!ready || !focus} onClick={() => sceneRef.current && download(sceneRef.current.exportStl())} title="Download the selected item as STL, in millimetres" />
+            <Tool
+              icon={rendering ? <Loader2Icon size={13} className="animate-spin" /> : <SparklesIcon size={13} />}
+              label="RENDER"
+              disabled={!ready || rendering}
+              onClick={() => void renderNow()}
+              title="Photoreal render of this view (Gemini image model)"
+            />
+          </div>
+          <div className="ws-group">
+            <Tool
+              icon={popped ? <MinimizeIcon size={13} /> : <AppWindowIcon size={13} />}
+              label={popped ? "DOCK" : "WINDOW"}
+              onClick={onPopToggle}
+              title={popped ? "Back into the console" : "Open the workshop in its own window (another monitor)"}
+            />
+            <Tool icon={<XIcon size={14} />} label="" onClick={onClose} title={popped ? "Close the workshop" : "Close the workshop (Esc)"} />
+          </div>
         </div>
       </header>
       {phoneOpen && <PhoneCameraDialog token={token} onClose={closePhone} />}
@@ -894,6 +896,39 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
         </p>
       </div>
     </>
+  )
+}
+
+/** One toolbar control: its icon always, its label while there is room. */
+function Tool({
+  icon,
+  label,
+  title,
+  onClick,
+  active,
+  disabled,
+}: {
+  icon: React.ReactNode
+  label: string
+  title: string
+  onClick: () => void
+  active?: boolean
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      className="btn ws-tool"
+      onClick={onClick}
+      data-active={active}
+      aria-pressed={active}
+      disabled={disabled}
+      title={title}
+      aria-label={label ? undefined : title}
+    >
+      {icon}
+      {label && <span className="ws-label">{label}</span>}
+    </button>
   )
 }
 

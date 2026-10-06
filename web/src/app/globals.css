@@ -482,6 +482,41 @@ body {
   color: var(--accent);
 }
 
+/* Workshop toolbar: groups of controls with a rule between them. The
+   labels fold away below 1840px; every control keeps its icon and title. */
+.ws-tools {
+  gap: var(--sp-3);
+}
+
+.ws-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ws-group + .ws-group {
+  padding-left: var(--sp-3);
+  border-left: 1px solid rgba(var(--accent-rgb), 0.2);
+}
+
+.ws-tool {
+  height: 30px;
+  min-width: 30px;
+  padding: 0 10px;
+  gap: 6px;
+  white-space: nowrap;
+  flex: none;
+}
+
+@media (max-width: 1839px) {
+  .ws-label { display: none; }
+  .ws-tool { padding: 0; width: 32px; }
+}
+
+@media (max-width: 860px) {
+  .ws-tools { overflow-x: auto; }
+}
+
 /* Workshop library dock: preview cards and list rows. */
 .library-card {
   display: flex;
@@ -781,6 +816,20 @@ button {
   grid-column: 1 / -1;
 }
 
+/* Inline styles can't carry this: the media query below has to be able
+   to win, and an inline display would beat it. */
+.hud-side {
+  display: flex;
+}
+
+/* Placed, not auto-flowed: with the side panels hidden below 1280 they
+   no longer take up grid cells, and the centre would slide into the
+   zero-width first column. */
+.hud-main {
+  grid-column: 2;
+  grid-row: 2;
+}
+
 /* Below 1280 the side panels are dropped rather than reduced to 60px
    icon strips. A donut chart, a sparkline and a scrolling log have no
    honest single-glyph representation - a strip of icons that expand
@@ -792,6 +841,51 @@ button {
   .hud-side {
     display: none;
   }
+}
+
+/* ============================================================
+   TOP BAR - three real columns, so the clock holds the middle and
+   the tab and control groups give way to it instead of running under.
+   Narrower consoles shed the least useful detail first: the link
+   metrics (already in the side panels), then the date, then padding.
+   ============================================================ */
+
+.top-bar {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.top-bar-clock {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.top-bar-tab {
+  height: 28px;
+  padding: 0 12px;
+  white-space: nowrap;
+  flex: none;
+}
+
+.top-bar-metrics {
+  display: flex;
+}
+
+@media (max-width: 1599px) {
+  .top-bar-metrics { display: none; }
+}
+
+@media (max-width: 1439px) {
+  .top-bar-tab { padding: 0 9px; }
+  .top-bar-tabs { gap: 6px !important; }
+}
+
+@media (max-width: 1279px) {
+  .top-bar-date { display: none; }
+}
+
+@media (max-width: 1100px) {
+  .top-bar-brand { display: none; }
 }
 
 /* ============================================================

@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion"
 import { AppWindowIcon, MinimizeIcon, PauseIcon, PlayIcon, RotateCcwIcon, TimerIcon, WatchIcon, XIcon } from "lucide-react"
 
 import { PopOutPortal, usePopOut } from "@/components/ui/pop-out"
+import { registerWindow } from "@/lib/window-control"
 import { clock, elapsed, parseDuration, remaining, useTimers, type Timer } from "@/lib/timer-store"
 
 // The timer window: his countdowns and stopwatches, big enough to read
@@ -138,6 +139,19 @@ export function TimerWindow() {
   useEffect(() => {
     if (!open && popped) popOut.close()
   }, [open, popped, popOut])
+  // Jarvis can move it too (console tool: pop_out / pop_in).
+  useEffect(
+    () =>
+      registerWindow("timers", {
+        out: () => {
+          setOpen(true)
+          return popOut.open("Timers", sectionRef.current?.getBoundingClientRect())
+        },
+        in: popOut.close,
+        isOut: () => popped,
+      }),
+    [popped, popOut, setOpen]
+  )
 
   const header = (
     <header

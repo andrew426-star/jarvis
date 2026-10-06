@@ -58,7 +58,7 @@ function SystemLog() {
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2, ease: "easeOut" }}
               className="flex min-w-0 items-baseline"
-              style={{ gap: "var(--sp-1)", padding: "4px 0" }}
+              style={{ gap: "var(--sp-2)", padding: "4px 0", lineHeight: 1.45 }}
             >
               <span
                 className="shrink-0"
@@ -82,10 +82,10 @@ function SystemLog() {
                   {entry.level}
                 </span>
               )}
-              {/* min-width:0 via .truncate-1 is what actually lets this
-                  shrink and show an ellipsis inside a flex row. */}
+              {/* Two lines, then an ellipsis: at this column width a single
+                  line cut most entries off after a word or two. */}
               <span
-                className="truncate-1 flex-1"
+                className="wrap-words clamp-2 flex-1"
                 style={{
                   fontFamily: "var(--font-jetbrains), monospace",
                   fontSize: "11px",
@@ -125,7 +125,10 @@ function Notifications() {
               transition={{ duration: 0.25, ease: "easeOut" }}
               className="card shrink-0"
               style={{
-                padding: "var(--sp-2)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "2px",
+                padding: "var(--sp-2) var(--sp-3)",
                 borderLeft: `2px solid ${KIND_COLOR[item.kind]}`,
               }}
             >
@@ -138,10 +141,10 @@ function Notifications() {
                   type="button"
                   onClick={() => dismiss(item.id)}
                   aria-label={`Dismiss ${item.title}`}
-                  className="shrink-0 cursor-pointer"
-                  style={{ color: "var(--text-secondary)", background: "transparent", border: 0 }}
+                  className="flex shrink-0 cursor-pointer items-center justify-center"
+                  style={{ width: 20, height: 20, margin: "-4px -6px -4px 0", color: "var(--text-secondary)", background: "transparent", border: 0 }}
                 >
-                  <XIcon size={11} />
+                  <XIcon size={12} />
                 </button>
               </div>
               <div
@@ -152,8 +155,8 @@ function Notifications() {
                 {item.title}
               </div>
               <div
-                className="clamp-2"
-                style={{ fontSize: "11px", color: "var(--text-secondary)", lineHeight: 1.4 }}
+                className="clamp-2 wrap-words"
+                style={{ fontSize: "11px", color: "var(--text-secondary)", lineHeight: 1.45 }}
               >
                 {item.description}
               </div>
@@ -174,7 +177,7 @@ function Notifications() {
 export function RightPanel() {
   return (
     <aside
-      className="panel flex min-h-0 flex-col overflow-hidden"
+      className="panel flex min-h-0 flex-1 flex-col overflow-hidden"
       style={{
         padding: "var(--sp-3)",
         gap: "var(--sp-3)",

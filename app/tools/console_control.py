@@ -40,10 +40,15 @@ CONSOLE_ACTIONS = [
     "timer_stop",
     "open_timers",
     "close_timers",
+    "pop_out",
+    "pop_in",
 ]
 MAX_TIMER_S = 24 * 3600
 PANELS = {"markets", "intel", "assets", "notes", "inbox"}
 WATCH_LEVELS = {"quiet", "normal", "coach"}
+# What can leave the console for a window of its own: the workshop, a data
+# panel (by name), the showcase, the timers.
+WINDOWS = {"workshop", "showcase", "timers"} | PANELS
 MODES = {"normal", "serious"}
 
 SHAPES = ["box", "rounded_box", "sphere", "cylinder", "cone", "torus", "capsule"]
@@ -122,6 +127,12 @@ CONSOLE_SCHEMA = {
             "open_timers / close_timers show or hide the timer window (it can also leave the "
             "console for a window of its own). A finished countdown chimes and notifies him; "
             "CONSOLE_STATE lists running timers with what is left. "
+            "Windows: pop_out moves something into a window of its own (a second monitor) - target "
+            "workshop, showcase, timers or a panel (markets | intel | assets | notes | inbox), "
+            "opening it first if needed; pop_in puts it back in the console. Use it whenever he "
+            "asks to put work in a new or separate window, or on the other screen. If the browser "
+            "holds the window back he gets a one-click prompt, so say it is ready to open. "
+            "CONSOLE_STATE lists the windows already out. "
             "Actions run in order the moment your reply arrives. You have full "
             "authority to use this whenever he asks for any of these, in any wording - act, "
             "then say what you did."
@@ -139,6 +150,7 @@ CONSOLE_SCHEMA = {
                                 "type": "string",
                                 "description": (
                                     "open_panel: markets | intel | assets | notes | inbox. set_mode: normal | serious. "
+                                    "pop_out / pop_in: workshop | showcase | timers | markets | intel | assets | notes | inbox. "
                                     "watch_on: quiet | normal | coach (default normal). timer_start: stopwatch for a "
                                     "stopwatch. timer_stop: part of the label to stop (empty: every timer)."
                                 ),
@@ -297,6 +309,9 @@ def console(args: dict) -> dict:
             continue
         if action == "open_panel" and target not in PANELS:
             problems.append(f"open_panel needs one of {sorted(PANELS)}")
+            continue
+        if action in ("pop_out", "pop_in") and target not in WINDOWS:
+            problems.append(f"{action} needs one of {sorted(WINDOWS)}")
             continue
         if action == "set_mode" and target not in MODES:
             problems.append("set_mode needs normal or serious")
@@ -487,6 +502,11 @@ def state_note(state: dict | None) -> str | None:
             else "not watching the whiteboard; "
         )
         + f"audio {'muted' if state.get('muted') else 'on'}."
+        + (
+            f" In windows of their own: {', '.join(str(w) for w in state.get('windows_out')[:6])}."
+            if isinstance(state.get("windows_out"), list) and state.get("windows_out")
+            else ""
+        )
         + (
             " His CAMERA WINDOW FILLS THE SCREEN, so the chat is hidden: anything longer than a "
             "sentence - lists, checked answers, steps, code - must go in a showcase window, or he "

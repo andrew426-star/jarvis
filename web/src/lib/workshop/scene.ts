@@ -76,11 +76,12 @@ type Grip =
     }
   | { kind: "orbit"; lastX: number; lastY: number }
   | { kind: "rotate"; item: Item; lastX: number; lastY: number; yaw: number; tilt: number }
-  | { kind: "axis"; axis: 0 | 1 | 2; lastX: number; lastY: number }
+  | { kind: "axis"; axis: 0 | 1 | 2; target: GizmoTarget; lastX: number; lastY: number }
 
 /** What the move gizmo is on: a segment of a project (rig.ts), moved in
- *  its design frame. `object` is where the handles sit (the segment's
- *  joint), `frame` the design frame whose x, y, z they point along. */
+ *  its design frame, or else the selected item, moved on the stage.
+ *  `object` is where the handles sit, `frame` the frame whose x, y, z
+ *  they point along and whose scale turns stage units into mm. */
 export interface GizmoTarget {
   object: THREE.Object3D
   frame: THREE.Object3D
@@ -257,6 +258,8 @@ export class WorkshopScene {
   private floorGrid!: THREE.GridHelper
   private readonly hands: HandRig[] = []
   private raf = 0
+  /** The window the loop is scheduled on: the one showing the canvas. */
+  private rafView: Window = window
   private observer: ResizeObserver
 
   private azimuth = VIEW.azimuth
@@ -274,6 +277,16 @@ export class WorkshopScene {
   private readonly gizmo = new THREE.Group()
   private readonly gizmoHandles: THREE.Mesh[] = []
   private gizmoTarget: GizmoTarget | null = null
+  /** The arrows on the selected item when no segment has them: X and Y
+   *  across the stage, Z straight up - lifting a part off the floor or
+   *  setting it on top of another, which a tabletop drag cannot. */
+  private itemArrows = true
+  /** Z up like the layout and OpenSCAD, 100 mm to a stage unit. */
+  private readonly itemFrame = new THREE.Object3D()
+  /** At the selected item's middle, where its arrows sit. */
+  private readonly itemAnchor = new THREE.Object3D()
+  /** The selected item's unsnapped place during an arrow drag. */
+  private itemRaw: THREE.Vector3 | null = null
 
   constructor(
     private readonly container: HTMLElement,
@@ -315,6 +328,9 @@ export class WorkshopScene {
 
     this.buildFloor()
     this.buildGizmo()
+    this.itemFrame.rotation.x = -Math.PI / 2
+    this.itemFrame.scale.setScalar(0.01)
+    this.scene.add(this.itemFrame, this.itemAnchor)
 
     this.composer = new EffectComposer(this.renderer)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
@@ -325,7 +341,23 @@ export class WorkshopScene {
     this.observer = new ResizeObserver(() => this.resize())
     this.observer.observe(container)
     this.resize()
-    this.raf = requestAnimationFrame(this.frame)
+    this.schedule()
+  }
+
+  /** Next frame, from whichever window the canvas is in now: the stage can
+   *  leave the console for a window of its own, and a minimised console
+   *  would otherwise stop the loop that window depends on. */
+  private schedule() {
+    this.rafView = this.container.ownerDocument.defaultView ?? window
+    this.raf = this.rafView.requestAnimationFrame(this.frame)
+  }
+
+  /** The stage moved to another window (or back): restart the loop there,
+   *  since one scheduled on a closing window never fires. */
+  rehost() {
+    this.rafView.cancelAnimationFrame(this.raf)
+    this.resize()
+    this.schedule()
   }
 
   // --- public API --------------------------------------------------------
@@ -439,12 +471,54 @@ export class WorkshopScene {
     })
   }
 
-  /** Put the move gizmo on a segment, or take it off (null). */
+  /** Put the move gizmo on a segment, or take it off (null: back on
+   *  the selected item, if item arrows are on). */
   setGizmo(target: GizmoTarget | null) {
     for (const [id, grip] of this.grips) if (grip.kind === "axis") this.grips.delete(id)
     this.gizmoTarget = target
-    this.gizmo.visible = !!target
   }
+
+  /** Move arrows on the selected item on or off (toggled when `on` is
+   *  left out). */
+  setItemArrows(on = !this.itemArrows): boolean {
+    this.itemArrows = on
+    return on
+  }
+
+  /** The segment the panel is editing, else the selected item. */
+  private activeTarget(): GizmoTarget | null {
+    if (this.gizmoTarget) return this.gizmoTarget
+    const item = this.focused
+    if (!this.itemArrows || !item || item.dying !== null) return null
+    return {
+      object: this.itemAnchor,
+      frame: this.itemFrame,
+      onDrag: (axis, mm) => this.moveItemAlong(item, axis, mm),
+      onEnd: () => {
+        this.itemRaw = null
+        if (this.snap) this.snapToNeighbours(item)
+      },
+    }
+  }
+
+  /** An arrow drag on an item: along the stage (X, Y) or up and down (Z),
+   *  never below the floor, never off the stage, on the grid with snapping. */
+  private moveItemAlong(item: Item, axis: 0 | 1 | 2, mm: number) {
+    const raw = (this.itemRaw ??= item.root.position.clone())
+    const units = mm * 0.01
+    if (axis === 0) raw.x += units
+    else if (axis === 1) raw.z -= units
+    else raw.y = THREE.MathUtils.clamp(raw.y + units, 0, 6)
+    const reach = Math.hypot(raw.x, raw.z)
+    if (reach > STAGE_RADIUS) {
+      raw.x *= STAGE_RADIUS / reach
+      raw.z *= STAGE_RADIUS / reach
+    }
+    const step = (v: number) => (this.snap ? Math.round(v / SNAP_GRID) * SNAP_GRID : v)
+    item.root.position.set(step(raw.x), step(raw.y), step(raw.z))
+    item.spin = 0
+  }
+
 
   /** Three arrows, X red, Y green, Z blue, each with a fat invisible
    *  handle that is easy to catch with a hand. Drawn over everything. */
@@ -478,7 +552,7 @@ export class WorkshopScene {
 
   /** The gizmo axis under the pointer, if it is showing. */
   private pickGizmo(x: number, y: number): 0 | 1 | 2 | null {
-    if (!this.gizmoTarget || !this.gizmo.visible) return null
+    if (!this.activeTarget() || !this.gizmo.visible) return null
     this.raycaster.setFromCamera(this.ndc(x, y), this.camera)
     const hit = this.raycaster.intersectObjects(this.gizmoHandles, false)[0]
     return hit ? (hit.object.userData.axis as 0 | 1 | 2) : null
@@ -487,9 +561,7 @@ export class WorkshopScene {
   /** Pixels of pointer travel to millimetres along a design axis: the
    *  travel along the axis as it appears on screen, through the design
    *  frame's scale on the stage. */
-  private dragAlong(axis: 0 | 1 | 2, dx: number, dy: number): number {
-    const target = this.gizmoTarget
-    if (!target) return 0
+  private dragAlong(target: GizmoTarget, axis: 0 | 1 | 2, dx: number, dy: number): number {
     const origin = target.object.getWorldPosition(new THREE.Vector3())
     const q = target.frame.getWorldQuaternion(new THREE.Quaternion())
     const dir = new THREE.Vector3().setComponent(axis, 1).applyQuaternion(q)
@@ -510,8 +582,13 @@ export class WorkshopScene {
   }
 
   private placeGizmo() {
-    const target = this.gizmoTarget
+    const target = this.activeTarget()
+    this.gizmo.visible = !!target
     if (!target) return
+    if (target.object === this.itemAnchor && this.focused) {
+      this.focused.bounds.getCenter(this.itemAnchor.position)
+      this.itemAnchor.updateMatrixWorld()
+    }
     target.object.getWorldPosition(this.gizmo.position)
     target.frame.getWorldQuaternion(this.gizmo.quaternion)
     this.gizmo.scale.setScalar(this.gizmo.position.distanceTo(this.camera.position) * GIZMO_SCALE)
@@ -709,8 +786,9 @@ export class WorkshopScene {
   /** Pointer pressed (mouse button or pinch). Always claims: empty space orbits. */
   down(id: string, x: number, y: number): boolean {
     const axis = this.pickGizmo(x, y)
-    if (axis !== null) {
-      this.grips.set(id, { kind: "axis", axis, lastX: x, lastY: y })
+    const target = this.activeTarget()
+    if (axis !== null && target) {
+      this.grips.set(id, { kind: "axis", axis, target, lastX: x, lastY: y })
       return true
     }
     const item = this.pick(x, y)
@@ -745,8 +823,8 @@ export class WorkshopScene {
       return
     }
     if (grip.kind === "axis") {
-      const mm = this.dragAlong(grip.axis, x - grip.lastX, y - grip.lastY)
-      if (mm) this.gizmoTarget?.onDrag(grip.axis, mm)
+      const mm = this.dragAlong(grip.target, grip.axis, x - grip.lastX, y - grip.lastY)
+      if (mm) grip.target.onDrag(grip.axis, mm)
     } else if (grip.kind === "rotate") {
       grip.yaw += (x - grip.lastX) * ROTATE_RATE
       grip.tilt = THREE.MathUtils.clamp(grip.tilt + (y - grip.lastY) * ROTATE_RATE, -Math.PI / 2, Math.PI / 2)
@@ -793,7 +871,7 @@ export class WorkshopScene {
     this.grips.delete(id)
     if (this.twoHand && (this.twoHand.a === id || this.twoHand.b === id)) this.twoHand = null
     if (grip?.kind === "axis") {
-      this.gizmoTarget?.onEnd()
+      grip.target.onEnd()
       return
     }
     if (!grip || grip.kind !== "item") return
@@ -977,7 +1055,7 @@ export class WorkshopScene {
   }
 
   dispose() {
-    cancelAnimationFrame(this.raf)
+    this.rafView.cancelAnimationFrame(this.raf)
     this.observer.disconnect()
     this.clear()
     this.scene.traverse((node) => {
@@ -1175,7 +1253,7 @@ export class WorkshopScene {
   }
 
   private frame = () => {
-    this.raf = requestAnimationFrame(this.frame)
+    this.schedule()
     const dt = Math.min(this.clock.getDelta(), 0.05)
     const t = this.clock.elapsedTime
 

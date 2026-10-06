@@ -60,7 +60,7 @@ export function TopBar() {
 
   return (
     <header
-      className="relative flex items-center justify-between overflow-hidden"
+      className="top-bar relative grid items-center overflow-hidden"
       style={{
         height: "48px",
         padding: "0 var(--sp-4)",
@@ -75,7 +75,7 @@ export function TopBar() {
       {/* Left: identity, health dot, tabs */}
       <div className="relative flex min-w-0 items-center" style={{ gap: "var(--sp-3)" }}>
         <span
-          className="truncate-1 shrink-0"
+          className="top-bar-brand truncate-1 shrink-0"
           style={{
             fontFamily: "var(--font-orbitron), sans-serif",
             fontSize: "14px",
@@ -91,15 +91,14 @@ export function TopBar() {
           style={{ background: "var(--success)", boxShadow: "0 0 8px var(--success)" }}
           aria-label="Online"
         />
-        <nav className="flex shrink-0 items-center" style={{ gap: "var(--sp-2)" }}>
+        <nav className="top-bar-tabs flex min-w-0 items-center" style={{ gap: "var(--sp-2)" }}>
           {TABS.map((tab) => (
             <button
               key={tab.key}
               type="button"
               onClick={() => setActiveTab(activeTab === tab.key ? null : tab.key)}
               data-active={activeTab === tab.key}
-              className="btn"
-              style={{ padding: "4px 12px" }}
+              className="btn top-bar-tab"
             >
               {tab.label}
               {tab.key === "inbox" && waiting > 0 && (
@@ -115,17 +114,16 @@ export function TopBar() {
               setActiveTab(null)
               setWorkshopOpen(true)
             }}
-            className="btn"
-            style={{ padding: "4px 12px" }}
+            className="btn top-bar-tab"
           >
             Workshop
           </button>
         </nav>
       </div>
 
-      {/* Centre: clock. Absolutely positioned so it stays optically
-          centred no matter how wide the two side groups grow. */}
-      <div className="pointer-events-none absolute inset-x-0 flex flex-col items-center">
+      {/* Centre: clock. Its own grid column (auto | 1fr | auto), so the
+          side groups can never slide under it however wide they grow. */}
+      <div className="top-bar-clock pointer-events-none flex flex-col items-center">
         <span
           style={{
             fontFamily: "var(--font-jetbrains), monospace",
@@ -136,7 +134,7 @@ export function TopBar() {
         >
           {now ? centralTime(now) : "--:--:--"}
         </span>
-        <span className="t-time">
+        <span className="top-bar-date t-time">
           {now
             ? `${centralDate(now)} · ${centralZoneLabel(now)}`
             : ""}
@@ -144,15 +142,14 @@ export function TopBar() {
       </div>
 
       {/* Right: audio, mode toggle and live link health */}
-      <div className="relative flex min-w-0 shrink-0 items-center" style={{ gap: "var(--sp-4)" }}>
+      <div className="relative flex min-w-0 items-center justify-end" style={{ gap: "var(--sp-3)" }}>
         <TimerButton />
 
         <button
           type="button"
           onClick={() => sfx.toggleMuted()}
           aria-pressed={muted}
-          className="btn shrink-0"
-          style={{ padding: "4px 12px" }}
+          className="btn top-bar-tab shrink-0"
         >
           {muted ? "Muted" : "Audio"}
         </button>
@@ -164,13 +161,12 @@ export function TopBar() {
             toggleMode({ x: box.left + box.width / 2, y: box.top + box.height / 2 })
           }}
           aria-pressed={serious}
-          className="btn shrink-0"
-          style={{ padding: "4px 12px" }}
+          className="btn top-bar-tab shrink-0"
         >
           {serious ? "Serious" : "Normal"}
         </button>
 
-        <div className="hidden items-center lg:flex" style={{ gap: "var(--sp-3)" }}>
+        <div className="top-bar-metrics items-center" style={{ gap: "var(--sp-3)" }}>
           <Metric
             label="LINK"
             value={signals.link === "up" ? "UP" : signals.link === "down" ? "DOWN" : "IDLE"}
@@ -215,8 +211,8 @@ function TimerButton() {
       type="button"
       onClick={() => setOpen(!open)}
       aria-pressed={open}
-      className="btn shrink-0"
-      style={{ padding: "4px 12px", fontVariantNumeric: "tabular-nums", color: ringing ? "var(--warning)" : undefined }}
+      className="btn top-bar-tab shrink-0"
+      style={{ fontVariantNumeric: "tabular-nums", color: ringing ? "var(--warning)" : undefined }}
       title="Timers and stopwatches"
     >
       {ringing ? "Timer done" : next ? clock(remaining(next)) : "Timer"}

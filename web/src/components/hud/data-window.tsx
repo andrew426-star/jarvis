@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion"
 import { AppWindowIcon, MinimizeIcon, XIcon } from "lucide-react"
 
 import { PopOutPortal, usePopOut } from "@/components/ui/pop-out"
+import { registerWindow } from "@/lib/window-control"
 
 import { useJarvis, type TabKey } from "@/lib/store"
 
@@ -37,6 +38,17 @@ export function DataWindow({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!activeTab && popped) popOut.close()
   }, [activeTab, popped, popOut])
+  // Jarvis can move it too (console tool: pop_out / pop_in); the panel to
+  // show is opened first by the caller.
+  useEffect(
+    () =>
+      registerWindow("panel", {
+        out: () => popOut.open(`${useJarvis.getState().activeTab ?? "data"}`.toUpperCase(), sectionRef.current?.getBoundingClientRect()),
+        in: popOut.close,
+        isOut: () => popped,
+      }),
+    [popped, popOut]
+  )
 
   useEffect(() => {
     if (!activeTab) return

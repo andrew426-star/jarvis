@@ -49,11 +49,13 @@ export function ChatInterface({
   return (
     <div
       ref={scrollRef}
-      className="min-h-0 w-full overflow-y-auto"
-      style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}
+      className="mx-auto min-h-0 w-full overflow-y-auto"
+      // A reading width, not the column's: on a wide screen a reply
+      // stretched edge to edge is a line too long to follow.
+      style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)", maxWidth: 860, paddingRight: "var(--sp-1)" }}
     >
       {visible.length === 0 && !pending && (
-        <p className="t-body" style={{ color: "var(--text-secondary)" }}>
+        <p className="t-body text-center" style={{ color: "var(--text-secondary)" }}>
           Awaiting input, sir. Speak, or type below.
         </p>
       )}

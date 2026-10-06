@@ -51,8 +51,10 @@ function mirrorHead(win: Window): () => void {
 export interface PopOut {
   /** The pop-out window's root, while it is open. */
   root: HTMLElement | null
-  /** Open it (from a click), sized and placed like `from` on screen. */
-  open: (title: string, from?: DOMRect | null) => void
+  /** Open it, sized and placed like `from` on screen. False when the
+   *  browser blocked it: outside a click that takes the site's pop-up
+   *  permission (lib/window-control.ts asks for the click instead). */
+  open: (title: string, from?: DOMRect | null) => boolean
   /** Close it from the console's side. */
   close: () => void
 }
@@ -80,7 +82,7 @@ export function usePopOut(name: string, onClosed: () => void): PopOut {
     (title: string, from?: DOMRect | null) => {
       if (win.current && !win.current.closed) {
         win.current.focus()
-        return
+        return true
       }
       const width = Math.round(Math.max(360, from?.width ?? 760))
       const height = Math.round(Math.max(240, (from?.height ?? 520) + 30))
@@ -88,7 +90,7 @@ export function usePopOut(name: string, onClosed: () => void): PopOut {
       const left = Math.round(window.screenX + (from?.left ?? (window.innerWidth - width) / 2))
       const top = Math.round(window.screenY + (window.outerHeight - window.innerHeight) + (from?.top ?? 80))
       const w = window.open("", `jarvis-${name}`, `popup,width=${width},height=${height},left=${left},top=${top}`)
-      if (!w) return
+      if (!w) return false
       win.current = w
       w.document.title = `${title} · J.A.R.V.I.S.`
       w.document.body.innerHTML = ""
@@ -106,6 +108,7 @@ export function usePopOut(name: string, onClosed: () => void): PopOut {
         setRoot(null)
         closedRef.current()
       })
+      return true
     },
     [name]
   )

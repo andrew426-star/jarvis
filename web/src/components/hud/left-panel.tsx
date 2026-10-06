@@ -6,8 +6,11 @@ import { getPortfolio, type PortfolioResult } from "@/lib/jarvis-client"
 import { useJarvis } from "@/lib/store"
 import { useAnimatedNumber } from "@/lib/use-animated-number"
 
-// Four cards, each flex-1, each distributing its own content with
-// justify-between so a short card cannot leave a dead gap.
+// Four cards that share the column's height but never go below their own
+// content: the content sits at the top with one even gap, so a tall
+// screen adds air at the bottom of each card instead of holes between
+// rows, and a short one scrolls the column rather than stacking rows on
+// top of each other.
 //
 // Every value here is real: the health of this app's own backend link,
 // its session against the agent's context window, its measured latency,
@@ -18,11 +21,13 @@ import { useAnimatedNumber } from "@/lib/use-animated-number"
 function CardShell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section
-      className="card flex min-h-0 flex-1 flex-col overflow-hidden"
-      style={{ padding: "var(--sp-3)", gap: "var(--sp-2)" }}
+      className="card flex flex-col"
+      style={{ flex: "1 0 auto", padding: "var(--sp-3)", gap: "var(--sp-3)" }}
     >
       <h2 className="t-panel-header truncate-1 shrink-0">{title}</h2>
-      <div className="flex min-h-0 flex-1 flex-col justify-between">{children}</div>
+      <div className="flex flex-1 flex-col" style={{ gap: "var(--sp-3)" }}>
+        {children}
+      </div>
     </section>
   )
 }
@@ -72,16 +77,17 @@ function SystemCard() {
   return (
     <CardShell title="System">
       <div
-        className="t-status truncate-1"
+        className="t-status truncate-1 shrink-0"
         style={{
           fontSize: "16px",
+          lineHeight: 1.3,
           color: linkColor,
           textShadow: signals.link === "up" ? "0 0 8px var(--success)" : "none",
         }}
       >
         {signals.link === "up" ? "NOMINAL" : signals.link === "down" ? "LINK LOST" : "STANDBY"}
       </div>
-      <div className="flex flex-col" style={{ gap: "var(--sp-1)" }}>
+      <div className="flex flex-col" style={{ gap: "var(--sp-2)" }}>
         <Row
           label="LINK"
           value={signals.link === "up" ? "UP" : signals.link === "down" ? "DOWN" : "IDLE"}
@@ -116,7 +122,7 @@ function SessionCard() {
         </span>
       </div>
 
-      <div className="flex flex-col" style={{ gap: "var(--sp-1)" }}>
+      <div className="flex flex-col" style={{ gap: "var(--sp-2)" }}>
         {/* Context window occupancy. Once this fills, the backend starts
             rolling the oldest turns out of Redis - worth being able to
             see before Jarvis "forgets" something you said. */}
@@ -159,13 +165,13 @@ function LatencyCard() {
 
   return (
     <CardShell title="Latency">
-      <div className="flex flex-col" style={{ gap: "var(--sp-1)" }}>
+      <div className="flex flex-col" style={{ gap: "var(--sp-2)" }}>
         <Row label="AVG" value={average === null ? "--" : `${average}ms`} color="var(--accent)" />
         <Row label="PEAK" value={history.length ? `${Math.max(...history)}ms` : "--"} />
         <Row label="CALLS" value={`${history.length}`} />
       </div>
       {history.length > 1 ? (
-        <svg viewBox="0 0 184 48" className="w-full" style={{ height: "40px" }} aria-hidden>
+        <svg viewBox="0 0 184 48" className="mt-auto w-full shrink-0" style={{ height: "40px" }} aria-hidden>
           <path d={path} fill="none" stroke="var(--accent)" strokeOpacity={0.7} strokeWidth={1.5} />
         </svg>
       ) : (
@@ -322,7 +328,7 @@ function PortfolioCard({ token, onAuthError }: { token: string; onAuthError: () 
 export function LeftPanel({ token, onAuthError }: { token: string; onAuthError: () => void }) {
   return (
     <aside
-      className="panel flex min-h-0 flex-col overflow-hidden"
+      className="panel flex min-h-0 flex-1 flex-col overflow-y-auto"
       style={{
         padding: "var(--sp-3)",
         gap: "var(--sp-3)",

@@ -144,15 +144,15 @@ export function ChatMessage({
   }, [])
 
   return (
-    <div className={`flex flex-col ${isUser ? "items-end" : "items-start"}`} style={{ gap: "2px" }}>
+    <div className={`flex flex-col ${isUser ? "items-end" : "items-start"}`} style={{ gap: "var(--sp-1)" }}>
       <div
         className="wrap-words"
         style={{
-          maxWidth: "80%",
-          padding: "var(--sp-2) var(--sp-3)",
+          maxWidth: "85%",
+          padding: "10px var(--sp-4)",
           borderRadius: "var(--radius)",
           fontSize: "13px",
-          lineHeight: 1.5,
+          lineHeight: 1.6,
           // The screen channel can carry line breaks now that the voice
           // line is written separately.
           whiteSpace: "pre-line",

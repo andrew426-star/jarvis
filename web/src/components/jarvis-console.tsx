@@ -22,6 +22,7 @@ import { CameraPreview } from "@/components/spatial/camera-preview"
 import { HandCursors } from "@/components/spatial/hand-cursors"
 import { HologramLayer } from "@/components/spatial/hologram-layer"
 import { Workshop } from "@/components/workshop/workshop"
+import { PopOutPrompt } from "@/components/ui/pop-out-prompt"
 import { TopBar } from "@/components/hud/top-bar"
 import { FaceGate } from "@/components/lock/face-gate"
 import { LoginGate } from "@/components/login-gate"
@@ -724,7 +725,7 @@ function Shell({
         initial={{ x: -220, opacity: 0 }}
         animate={boot.chrome ? { x: 0, opacity: 1 } : { x: -220, opacity: 0 }}
         transition={{ duration: 0.3, ease: "easeOut", delay: 0.08 }}
-        style={{ zIndex: 20, display: "flex" }}
+        style={{ zIndex: 20 }}
       >
         <LeftPanel token={token} onAuthError={onAuthError} />
       </motion.div>
@@ -733,7 +734,7 @@ function Shell({
           absolute children cannot participate in min-h-0, so a long chat
           would have escaped its region - which rules 1 and 2 forbid. */}
       <main
-        className="relative flex min-h-0 flex-col overflow-hidden"
+        className="hud-main relative flex min-h-0 flex-col overflow-hidden"
         style={{ padding: "var(--sp-4) var(--sp-5)", gap: "var(--sp-3)", zIndex: 10 }}
       >
         <div className="relative flex min-h-0 flex-1 items-center justify-center">
@@ -781,7 +782,7 @@ function Shell({
         initial={{ x: 220, opacity: 0 }}
         animate={boot.chrome ? { x: 0, opacity: 1 } : { x: 220, opacity: 0 }}
         transition={{ duration: 0.3, ease: "easeOut", delay: 0.08 }}
-        style={{ zIndex: 20, display: "flex" }}
+        style={{ zIndex: 20 }}
       >
         <RightPanel />
       </motion.div>
@@ -852,6 +853,7 @@ function Shell({
       <HandCursors />
 
       <SettingsPanel token={token} sessionId={sessionId} onSignOut={onSignOut} />
+      <PopOutPrompt />
 
       {standby && (
         <button

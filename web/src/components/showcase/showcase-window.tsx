@@ -7,6 +7,7 @@ import katex from "katex"
 import "katex/dist/katex.min.css"
 
 import { PopOutPortal, usePopOut } from "@/components/ui/pop-out"
+import { registerWindow } from "@/lib/window-control"
 import { useShowcase, type ShowcaseItem } from "@/lib/showcase-store"
 import { useSpatial } from "@/lib/spatial-store"
 
@@ -280,6 +281,16 @@ export function ShowcaseWindow() {
   useEffect(() => {
     if (!item && popped) popOut.close()
   }, [item, popped, popOut])
+  // Jarvis can move it too (console tool: pop_out / pop_in).
+  useEffect(
+    () =>
+      registerWindow("showcase", {
+        out: () => (item ? popOut.open(item.title, sectionRef.current?.getBoundingClientRect()) : true),
+        in: popOut.close,
+        isOut: () => popped,
+      }),
+    [item, popped, popOut]
+  )
 
   useEffect(() => {
     if (!item) return
