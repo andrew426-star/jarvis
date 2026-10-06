@@ -2,6 +2,7 @@ import * as THREE from "three"
 import { STLLoader } from "three/addons/loaders/STLLoader.js"
 import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js"
 
+import type { CalloutData } from "@/lib/workshop/callouts"
 import type { BuiltItem } from "@/lib/workshop/models"
 import { componentModel } from "@/lib/workshop/project/components3d"
 import { loadGenuine } from "@/lib/workshop/project/genuine"
@@ -10,7 +11,7 @@ import { filament } from "@/lib/workshop/project/materials"
 import { buildAxes } from "@/lib/workshop/project/axes3d"
 import { Rig, rigOf } from "@/lib/workshop/project/rig"
 import { Cabling } from "@/lib/workshop/project/wires3d"
-import { PARTS, type Project } from "@/lib/workshop/project/types"
+import { PARTS, type Part, type Project } from "@/lib/workshop/project/types"
 import type { SimSnapshot } from "@/lib/workshop/sim/runner"
 
 // A project as one item on the workshop stage: every component at its
@@ -89,6 +90,7 @@ export async function buildDesign(
       cursor += w + 12
     }
     model.userData.group = part.group
+    model.userData.callout = componentCallout(part)
     rig.container(part.id, part.group).add(model)
     if (model.userData.glow) {
       const materials = model.userData.glow as THREE.MeshStandardMaterial[]
@@ -114,6 +116,12 @@ export async function buildDesign(
       // export of the compiler's own file.
       mesh.userData.printPart = slug(printed.name)
       mesh.userData.printedName = printed.name
+      mesh.userData.callout = {
+        id: printed.name,
+        title: printed.name,
+        spec: [String(printed.material ?? "pla").toUpperCase(), printed.notes?.[0]].filter(Boolean).join(" · "),
+        printed: true,
+      } satisfies CalloutData
       mesh.userData.group = printed.group
       mesh.userData.stl = stl
       mesh.userData.scad = printed.code
@@ -227,4 +235,19 @@ export function animate(snapshot: SimSnapshot | null, dt: number) {
     if (s.type === "stepper" && s.angle !== undefined) spin.rotation.z = -deg(s.angle)
     else if (s.rpm) spin.rotation.z += (s.rpm / 60) * Math.PI * 2 * dt
   }
+}
+
+/** What a component's callout says: what it is, its id and its value. */
+function componentCallout(part: Part): CalloutData {
+  const spec = PARTS[part.type]
+  const ohms = Number(part.props?.ohms)
+  const value =
+    part.type === "resistor" && ohms
+      ? ohms >= 1000
+        ? `${ohms / 1000} kΩ`
+        : `${ohms} Ω`
+      : part.props?.color
+        ? `${String(part.props.color)}`
+        : spec?.kind ?? ""
+  return { id: part.id, title: part.label || spec?.label || part.type, spec: [part.id, value].filter(Boolean).join(" · ") }
 }

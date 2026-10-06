@@ -517,6 +517,57 @@ body {
   .ws-tools { overflow-x: auto; }
 }
 
+/* Workshop callouts (lib/workshop/callouts.ts): a label at the end of a
+   leader line, and dimensions on a printed part. Never in the way of the
+   pointer. */
+.workshop-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 220px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--accent);
+  background: rgba(4, 8, 16, 0.78);
+  backdrop-filter: blur(3px);
+  color: var(--text-primary);
+  font-family: var(--font-jetbrains), monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.workshop-callout-title {
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workshop-callout-spec,
+.workshop-callout-cost {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workshop-callout-cost {
+  color: var(--success);
+}
+
+.workshop-dimension {
+  padding: 1px 6px;
+  background: rgba(4, 8, 16, 0.8);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  color: var(--accent);
+  font-family: var(--font-jetbrains), monospace;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* Workshop library dock: preview cards and list rows. */
 .library-card {
   display: flex;

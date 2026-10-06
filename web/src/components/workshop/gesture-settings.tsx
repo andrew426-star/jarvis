@@ -47,6 +47,7 @@ export function GestureSettings({ onClose, right = 12 }: { onClose: () => void; 
 
   return (
     <aside
+      data-keepout
       className="holo-card flex flex-col"
       // Inline, not the `absolute` class: .holo-card sets position: relative.
       style={{ position: "absolute", top: 12, right, width: 290, zIndex: 3 }}
@@ -62,6 +63,7 @@ export function GestureSettings({ onClose, right = 12 }: { onClose: () => void; 
         {row("pinch_tap", TAP_ACTIONS)}
         {row("peace", TAP_ACTIONS)}
         {row("fist_drag", DRAG_ACTIONS)}
+        {row("spread", TAP_ACTIONS)}
         <p style={{ margin: 0, fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.4 }}>
           Pinching always grabs and slides, pinching empty space orbits, and two hands resize. The mouse does
           everything too: right- or shift-drag turns a part, E explodes, G snaps, R resets the view.

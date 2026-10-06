@@ -10,6 +10,8 @@ import {
   Grid3x3Icon,
   MinimizeIcon,
   SlidersHorizontalIcon,
+  Volume2Icon,
+  VolumeXIcon,
   Move3dIcon,
   BoxesIcon,
   DownloadIcon,
@@ -233,6 +235,8 @@ function WorkshopStage({
   const [arrowsOn, setArrowsOn] = useState(true)
   const [gesturesOpen, setGesturesOpen] = useState(false)
   const [fxOpen, setFxOpen] = useState(false)
+  // The console's mute, here too: a popped-out workshop has no top bar.
+  const muted = useSyncExternalStore(sfx.subscribeMuted, sfx.isMuted, () => false)
   // Features the assembly is built with: switching one rebuilds it.
   const realParts = useVisuals((state) => state.realParts)
   const looms = useVisuals((state) => state.looms)
@@ -291,6 +295,19 @@ function WorkshopStage({
   useEffect(() => {
     useProject.getState().setToken(token)
   }, [token])
+
+  // Callouts price each part from the project's bill of materials.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!ready || !scene) return
+    const lines = useProject.getState().report?.bom.lines ?? []
+    scene.setCalloutCost((id) => {
+      const line = lines.find((l) => l.for.includes(id))
+      if (!line) return null
+      const unit = line.unit === "each" || line.unit === "1 per slot" ? "ea" : line.unit
+      return `$${line.price.toFixed(2)} ${unit} · ${line.where}`
+    })
+  }, [ready, projectVersion])
 
   // The simulation pauses when the workshop closes.
   useEffect(() => () => stopSim(), [])
@@ -459,6 +476,10 @@ function WorkshopStage({
           return true
         },
         // Generous: a hand cannot aim as finely as a mouse.
+        binCentre: () => {
+          const rect = binRef.current?.getBoundingClientRect()
+          return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null
+        },
         binAt: (x, y) => {
           const rect = binRef.current?.getBoundingClientRect()
           if (!rect) return false
@@ -497,6 +518,10 @@ function WorkshopStage({
         gesture: (gesture) => {
           if (gesture.type === "peace") {
             latest.current?.runAction(getGestures().peace)
+            return true
+          }
+          if (gesture.type === "spread") {
+            latest.current?.runAction(getGestures().spread)
             return true
           }
           if (gesture.phase === "start") {
@@ -751,6 +776,13 @@ function WorkshopStage({
             <Tool icon={<Grid3x3Icon size={13} />} label="HOLO" onClick={() => sceneRef.current?.setAllModes("wire")} title="Show everything as a hologram" />
             <Tool icon={<BoxIcon size={13} />} label="SOLID" onClick={() => sceneRef.current?.setAllModes("solid")} title="Show everything in its real materials" />
             <Tool icon={<RotateCcwIcon size={13} />} label="CLEAR" onClick={() => sceneRef.current?.clear()} title="Clear everything off the stage" />
+            <Tool
+              icon={muted ? <VolumeXIcon size={13} /> : <Volume2Icon size={13} />}
+              label={muted ? "MUTED" : "SOUND"}
+              active={!muted}
+              onClick={() => sfx.toggleMuted()}
+              title={muted ? "Sound is off: turn it on" : "Turn the console's sound off"}
+            />
             <Tool icon={<SlidersHorizontalIcon size={13} />} label="FX" active={fxOpen} onClick={() => { setGesturesOpen(false); setFxOpen((o) => !o) }} title="Visual features: switch each on or off to compare" />
           </div>
           <div className="ws-group">
@@ -810,6 +842,7 @@ function WorkshopStage({
         {/* Spec readout, positioned over the focused item by the scene. */}
         <div
           ref={labelRef}
+          data-keepout
           className="pointer-events-none absolute top-0 left-0"
           style={{ opacity: 0, transition: "opacity 150ms ease", willChange: "transform" }}
         >
@@ -831,7 +864,7 @@ function WorkshopStage({
 
         {/* The latest render, top right, until dismissed. */}
         {render && (
-          <div className="holo-card" style={{ position: "absolute", top: 12, right: projectShown ? PANEL_WIDTH + 24 : 12, width: 360, zIndex: 2 }}>
+          <div data-keepout className="holo-card" style={{ position: "absolute", top: 12, right: projectShown ? PANEL_WIDTH + 24 : 12, width: 360, zIndex: 2 }}>
             <header className="holo-card-header">
               <span className="t-label truncate-1 flex items-center" style={{ gap: 6 }}>
                 <ImageIcon size={12} /> RENDER · {render.model.replace("gemini-", "").toUpperCase()}
@@ -878,8 +911,9 @@ function WorkshopStage({
         </div>
 
         <p
-          className="t-time pointer-events-none absolute right-0 bottom-3 left-0 text-center"
-          style={{ color: "var(--text-secondary)" }}
+          className="t-time truncate-1 pointer-events-none absolute bottom-3 px-4 text-center"
+          // Between the library dock and the project panel, never under them.
+          style={{ color: "var(--text-secondary)", left: 268, right: projectShown ? PANEL_WIDTH + 24 : 0 }}
         >
           {rendering
             ? "RENDERING WITH GEMINI..."
@@ -896,12 +930,13 @@ function WorkshopStage({
                     gestures.pinch_tap !== "none" && `QUICK PINCH: ${HINT[gestures.pinch_tap]}`,
                     gestures.fist_drag !== "none" && `FIST: ${HINT[gestures.fist_drag]}`,
                     gestures.peace !== "none" && `✌ HOLD: ${HINT[gestures.peace]}`,
+                    gestures.spread !== "none" && `FIST → OPEN: ${HINT[gestures.spread]}`,
                     "BOTH HANDS: RESIZE",
-                    "DROP ON BIN: DISCARD",
+                    "DROP OR FLICK AT BIN: DISCARD",
                   ]
                     .filter(Boolean)
                     .join(" · ")
-                : "DRAG: MOVE · RIGHT/SHIFT-DRAG: TURN PART · CLICK: HOLO/SOLID · WHEEL: ZOOM · E EXPLODE · G SNAP · R RESET VIEW"}
+                : "DRAG: MOVE · FLICK AT BIN: DISCARD · RIGHT/SHIFT-DRAG: TURN PART · CLICK: HOLO/SOLID · WHEEL: ZOOM · E EXPLODE · G SNAP · R RESET VIEW"}
         </p>
       </div>
     </>

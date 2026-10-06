@@ -38,6 +38,10 @@ const PEACE_STRAIGHT = 0.35
 const PEACE_CURLED = 0.6
 /** A peace sign held this long, and still, is one gesture. */
 const PEACE_HOLD_MS = 500
+/** A fist thrown open: every finger straight within this long of the fist
+ *  letting go. */
+const SPREAD_STRAIGHT = 0.3
+const SPREAD_WITHIN_MS = 600
 
 // The camera's edges are hard to reach with a hand that is also in
 // frame, so the middle 70% of the image maps onto the whole screen.
@@ -106,6 +110,7 @@ export interface HandPointer {
 /** A gesture beyond pinching, for the workshop to map to an action. */
 export type HandGesture =
   | { type: "peace"; id: string; x: number; y: number }
+  | { type: "spread"; id: string; x: number; y: number }
   | { type: "fist"; phase: "start" | "move" | "end"; id: string; x: number; y: number }
 
 type Listener = (pointers: HandPointer[]) => void
@@ -228,6 +233,9 @@ interface HandState {
   peaceSince: number
   /** Fired for this peace sign; re-armed when the pose changes. */
   peaceFired: boolean
+  /** When the last fist opened, and whether that opening has fired. */
+  fistOpenedAt: number
+  spreadFired: boolean
   /** Hologram this hand is holding, if any. */
   holding: string | null
   /** This pinch belongs to the spatial handler (the workshop). */
@@ -389,6 +397,8 @@ function newHand(id: string, now: number): HandState {
     fistClaimed: false,
     peaceSince: 0,
     peaceFired: false,
+    fistOpenedAt: 0,
+    spreadFired: false,
     holding: null,
     spatial: false,
     id,
@@ -533,6 +543,15 @@ function process(result: { landmarks: NormalizedLandmark[][]; handedness: { cate
         spatialHandler?.gesture?.({ type: "fist", phase: "move", id, x, y })
       } else if (!hand.fist && wasFist) {
         fistEnd(hand)
+        hand.fistOpenedAt = now
+        hand.spreadFired = false
+      }
+
+      // A fist thrown open, fingers spread: one discrete gesture.
+      const open = tracked.curl.every((c) => c < SPREAD_STRAIGHT) && ratio > PINCH_OFF
+      if (open && !hand.spreadFired && hand.fistOpenedAt && now - hand.fistOpenedAt < SPREAD_WITHIN_MS) {
+        hand.spreadFired = true
+        spatialHandler?.gesture?.({ type: "spread", id, x, y })
       }
 
       // Peace sign held still: one discrete gesture.

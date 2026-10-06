@@ -73,6 +73,7 @@ export function ProjectPanel() {
     return (
       <button
         type="button"
+        data-keepout
         className="btn absolute flex items-center"
         style={{ top: 12, right: 12, zIndex: 3, gap: 6, padding: "6px 10px" }}
         onClick={() => (project ? setOpen(true) : setGallery(true))}
@@ -87,6 +88,7 @@ export function ProjectPanel() {
 
   return (
     <aside
+      data-keepout
       className="holo-card flex flex-col"
       style={{ position: "absolute", top: 12, right: 12, bottom: 12, width: PANEL_WIDTH, zIndex: 3 }}
       aria-label="Project folder"

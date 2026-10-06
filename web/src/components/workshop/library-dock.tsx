@@ -67,6 +67,7 @@ export function LibraryDock(props: LibraryDockProps) {
 
   return (
     <aside
+      data-keepout
       className="holo-card flex flex-col"
       style={{
         // Inline, not the `absolute` class: .holo-card sets position:

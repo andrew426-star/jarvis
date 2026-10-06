@@ -765,6 +765,36 @@ export const sfx = {
     blip(660, 0.06, 0.14, "sine")
     window.setTimeout(() => blip(440, 0.055, 0.28, "sine"), 110)
   },
+  // --- the workshop ---------------------------------------------------------
+  // Over a part: the faintest high tick, so moving across an assembly
+  // reads as touching its parts without becoming noise.
+  hover(): void {
+    blip(3400, 0.01, 0.03, "sine")
+  },
+  // A part picked or switched: a small two-note chirp.
+  select(): void {
+    blip(1760, 0.03, 0.07, "sine")
+    window.setTimeout(() => blip(2640, 0.022, 0.09, "sine"), 45)
+  },
+  // Coming apart (or back together): a filtered whoosh, rising or falling.
+  explode(open: boolean): void {
+    if (open) sweep(170, 1100, 0.5, 0.05, "sawtooth", [500, 5200])
+    else sweep(1100, 170, 0.45, 0.045, "sawtooth", [5200, 500])
+  },
+  // A design projected in: a slow rising shimmer.
+  materialize(): void {
+    sweep(220, 1500, 1.4, 0.03, "triangle", [400, 7000])
+    window.setTimeout(() => sweep(330, 2200, 1.1, 0.018, "sine", [800, 9000]), 120)
+  },
+  // One part of it drawn in: a sparkle, pitched by its turn.
+  sparkle(step: number): void {
+    blip(1900 + (step % 8) * 140, 0.012, 0.06, "sine")
+  },
+  // Thrown in the bin: falling away.
+  discard(): void {
+    sweep(700, 70, 0.5, 0.06, "sawtooth", [3000, 200])
+  },
+
   // A timer has run out: three bright rising chimes, unlike anything else
   // the console makes, so it reads across the room.
   alarm(): void {

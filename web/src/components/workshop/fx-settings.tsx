@@ -20,6 +20,8 @@ const SHOWN: (keyof Visuals)[] = [
   "lens",
   "atmosphere",
   "grid",
+  "materialize",
+  "callouts",
 ]
 
 /** `right`: clear of the project panel when it is open. */
@@ -28,6 +30,7 @@ export function FxSettings({ onClose, right = 12 }: { onClose: () => void; right
 
   return (
     <aside
+      data-keepout
       className="holo-card flex flex-col"
       // Inline, not the `absolute` class: .holo-card sets position: relative.
       style={{ position: "absolute", top: 12, right, width: 270, zIndex: 3 }}

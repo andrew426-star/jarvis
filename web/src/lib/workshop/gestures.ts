@@ -18,18 +18,22 @@ export interface GestureMap {
   peace: TapAction
   /** A closed fist, moved. */
   fist_drag: DragAction
+  /** A fist thrown open, fingers spread. */
+  spread: TapAction
 }
 
 export const DEFAULT_GESTURES: GestureMap = {
   pinch_tap: "toggle_mode",
   peace: "explode",
   fist_drag: "rotate_item",
+  spread: "explode",
 }
 
 export const GESTURE_LABELS: Record<keyof GestureMap, string> = {
   pinch_tap: "Quick pinch on a part",
   peace: "Peace sign, held",
   fist_drag: "Fist, moved",
+  spread: "Fist thrown open",
 }
 
 export const TAP_ACTIONS: { value: TapAction; label: string }[] = [
@@ -65,6 +69,7 @@ function load(): GestureMap {
         pinch_tap: tap(saved.pinch_tap) ? saved.pinch_tap : DEFAULT_GESTURES.pinch_tap,
         peace: tap(saved.peace) ? saved.peace : DEFAULT_GESTURES.peace,
         fist_drag: drag(saved.fist_drag) ? saved.fist_drag : DEFAULT_GESTURES.fist_drag,
+        spread: tap(saved.spread) ? saved.spread : DEFAULT_GESTURES.spread,
       }
     } catch {
       // Unreadable or blocked: the defaults.

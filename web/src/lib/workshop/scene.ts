@@ -5,7 +5,9 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js"
 import { STLExporter } from "three/addons/exporters/STLExporter.js"
 
 import { accentHex } from "@/lib/core-events"
+import { sfx } from "@/lib/sfx"
 import { holoMaterial } from "@/lib/workshop/holo-material"
+import { Callouts, type CostLookup } from "@/lib/workshop/callouts"
 import { StagePost } from "@/lib/workshop/post"
 import { Atmosphere, CASTER_LAYER, ContactShadows, loadStudio, radialGrid } from "@/lib/workshop/stage-fx"
 import { useVisuals, visuals } from "@/lib/workshop/visuals"
@@ -38,17 +40,16 @@ interface Item {
   wires: THREE.LineSegments[]
   /** Dense hologram-only lines (the helmet's contours), hidden when solid. */
   contours: THREE.LineSegments[]
-  wireMaterial: THREE.LineBasicMaterial
-  /** The hologram surface (holo-material.ts) on a ghost of every solid,
-   *  clipped by `ghostClip` - the scan's other side - so where the solid
-   *  is cut away the hologram is, and the reverse. */
-  holo: THREE.ShaderMaterial
-  ghostClip: THREE.Plane
+  /** Its ghosts (every solid's hologram twin; see Unit). */
   ghosts: THREE.Mesh[]
+  /** The pieces it materializes in, in assembly order. */
+  units: Unit[]
+  /** Seconds into a materialize, while one runs - counted in frame time,
+   *  so a stall (the build compiling its shaders) pauses it, not skips it. */
+  materializing: number | null
   /** What it lit with bloom: its edges and lit LEDs. */
   glowing: THREE.Object3D[]
   lights: THREE.PointLight[]
-  clip: THREE.Plane
   scanRing: THREE.LineLoop
   mode: ItemMode
   /** 0 = all hologram, 1 = all solid; animates toward the mode. */
@@ -61,10 +62,36 @@ interface Item {
   armed: boolean
   /** Clock time the discard began, while it breaks apart. */
   dying: number | null
-  /** Its parts and where each goes in the exploded view. */
-  parts: { node: THREE.Object3D; base: THREE.Vector3; offset: THREE.Vector3 }[]
+  /** Its parts, where each goes in the exploded view, and how long after
+   *  the explode starts it sets off. */
+  parts: { node: THREE.Object3D; base: THREE.Vector3; offset: THREE.Vector3; delay: number }[]
   /** Rotated by hand or mouse: no idle turn, it stays as set. */
   posed: boolean
+}
+
+/**
+ * One piece of an item as it materializes: a part of an assembly (or the
+ * whole of a simple model), with its own scan. Its solids are clipped by
+ * `clip` (solid below the cut) and their ghosts - the hologram surface
+ * (holo-material.ts) - by `ghostClip`, the other side of the same cut;
+ * its edges have their own material so they can be drawn in on its turn.
+ */
+interface Unit {
+  root: THREE.Object3D
+  solids: THREE.Mesh[]
+  ghosts: THREE.Mesh[]
+  clip: THREE.Plane
+  ghostClip: THREE.Plane
+  holo: THREE.ShaderMaterial
+  wire: THREE.LineBasicMaterial
+  /** Seconds into a materialize before its turn. */
+  delay: number
+  /** 0 = hologram, 1 = solid; its own while materializing. */
+  solidity: number
+  /** Its edges drawn in, 0-1. */
+  reveal: number
+  bounds: THREE.Box3
+  printed: boolean
 }
 
 type Grip =
@@ -74,6 +101,10 @@ type Grip =
       lastX: number
       lastY: number
       vx: number
+      /** Pointer velocity, px per second, for a flick. */
+      speedX: number
+      speedY: number
+      lastT: number
       /** The horizontal plane the item slides on (y at its centre), and
        *  where the pointer last met it. */
       height: number
@@ -116,8 +147,19 @@ const SNAP_ANGLE = THREE.MathUtils.degToRad(15)
 const SNAP_FACE = 0.35
 /** Radians of rotation per pixel of drag. */
 const ROTATE_RATE = 0.01
-/** Exploded view: how far parts travel, as a share of the item's size. */
+/** Exploded view: how far parts travel, as a share of the item's size;
+ *  how long each takes; the most the last one waits behind the first. */
 const EXPLODE_SPREAD = 0.55
+const EXPLODE_SECONDS = 0.85
+const EXPLODE_STAGGER = 0.6
+/** A new design materializing: each part's edges draw in, then it scans
+ *  solid; parts start this far apart at most, all within MATERIALIZE_SPAN. */
+const MATERIALIZE_DRAW = 0.45
+const MATERIALIZE_SCAN = 0.9
+const MATERIALIZE_STEP = 0.16
+const MATERIALIZE_SPAN = 2.2
+
+const easeInOut = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2)
 
 // Hands in the scene. Apparent hand size in the camera image stands in for
 // depth: a hand moving toward the webcam (toward the screen) grows, and
@@ -147,6 +189,8 @@ export interface WorkshopCallbacks {
   onFocus: (spec: (ItemSpec & { id: string; mode: ItemMode }) | null) => void
   /** Is this viewport point over the discard bin? */
   binAt?: (x: number, y: number) => boolean
+  /** Where the bin is on screen, for a part flicked at it. */
+  binCentre?: () => { x: number; y: number } | null
   /** The bin's state changed: an item is over it, or one was discarded. */
   onBin?: (state: "idle" | "armed" | "discarded") => void
   /** What is on the stage changed (added, removed, switched mode). */
@@ -157,6 +201,9 @@ export interface WorkshopCallbacks {
 }
 
 const DISCARD_SECONDS = 0.55
+/** A flick at the bin: this fast (px/s), within about 25 degrees of it. */
+const FLICK_SPEED = 1400
+const FLICK_AIM = 0.9
 
 /** Edges where two faces meet at more than `angle` degrees - and only
  *  those. Boolean-cut parts are full of T-junctions (a vertex sitting in the
@@ -284,6 +331,10 @@ export class WorkshopScene {
   private snap = false
   private twoHand: { a: string; b: string; start: number; startValue: number; item: Item | null } | null = null
   private hovered: Item | null = null
+  /** The part of the hovered item under the pointer (its callout). */
+  private hoverPart: THREE.Object3D | null = null
+  private lastPartPick = 0
+  private callouts!: Callouts
   private accent = accentHex()
   private focused: Item | null = null
   private accentTimer = 0
@@ -357,6 +408,7 @@ export class WorkshopScene {
     this.scene.add(this.atmosphere.group)
     this.post = new StagePost(this.renderer, this.scene, this.camera)
     this.post.glow(this.atmosphere.emitter)
+    this.callouts = new Callouts(container, this.scene, this.accent)
     this.post.configure(visuals())
     this.unsubscribeVisuals = useVisuals.subscribe((flags) => this.post.configure(flags))
     this.floorRings.traverse((node) => node !== this.floorRings && this.post.glow(node))
@@ -385,19 +437,53 @@ export class WorkshopScene {
 
   // --- public API --------------------------------------------------------
 
-  /** Put any built model on the stage - a catalogue piece or one Jarvis designed. */
-  spawnBuilt({ object, spec }: BuiltItem) {
+  /** Put any built model on the stage - a catalogue piece or one Jarvis
+   *  designed. A new one materializes (Visuals.materialize); `retained`
+   *  (a rebuild taking an old one's place) appears as it was. */
+  spawnBuilt({ object, spec }: BuiltItem, retained = false) {
     const root = new THREE.Group()
     const [x, z] = SLOTS[this.items.length % SLOTS.length]
     root.position.set(x, 0, z)
     root.add(object)
     this.scene.add(root)
 
-    const wireMaterial = this.accentLine(0.9)
-    const clip = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0)
-    const ghostClip = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
-    const holo = holoMaterial(this.accent)
-    holo.clippingPlanes = [ghostClip]
+    const parts = this.explodeParts(object)
+    // Units: each part the explode moves, and one for whatever is not in
+    // one (a project's cables) - in assembly order: printed parts first,
+    // then from the bottom up, the rest last.
+    const units: Unit[] = []
+    const unitOf = new Map<THREE.Object3D, Unit>()
+    const makeUnit = (unitRoot: THREE.Object3D): Unit => {
+      const ghostClip = new THREE.Plane(new THREE.Vector3(0, 1, 0), 1e6)
+      const holo = holoMaterial(this.accent)
+      holo.clippingPlanes = [ghostClip]
+      const unit: Unit = {
+        root: unitRoot,
+        solids: [],
+        ghosts: [],
+        clip: new THREE.Plane(new THREE.Vector3(0, -1, 0), -1e6),
+        ghostClip,
+        holo,
+        wire: this.accentLine(0.9),
+        delay: 0,
+        solidity: 0,
+        reveal: 1,
+        bounds: new THREE.Box3(),
+        printed: false,
+      }
+      units.push(unit)
+      return unit
+    }
+    if (parts.length > 1) for (const part of parts) unitOf.set(part.node, makeUnit(part.node))
+    let rest: Unit | null = null
+    const unitFor = (node: THREE.Object3D): Unit => {
+      for (let up: THREE.Object3D | null = node; up && up !== object; up = up.parent) {
+        const unit = unitOf.get(up)
+        if (unit) return unit
+      }
+      return (rest ??= makeUnit(object))
+    }
+
     const solids: THREE.Mesh[] = []
     const wires: THREE.LineSegments[] = []
     const contours: THREE.LineSegments[] = []
@@ -408,19 +494,22 @@ export class WorkshopScene {
         light.userData.intensity = light.intensity
         lights.push(light)
       }
-      // Model-supplied hologram lines (the helmet's contours) take the
-      // item's wire material like everything else.
+      // Model-supplied hologram lines (the helmet's contours) take their
+      // unit's edge material like everything else.
       if (node.userData.holoLines) {
-        ;(node as THREE.LineSegments).material = wireMaterial
+        ;(node as THREE.LineSegments).material = unitFor(node).wire
         contours.push(node as THREE.LineSegments)
         return
       }
       const mesh = node as THREE.Mesh
       if (!mesh.isMesh) return
+      const unit = unitFor(mesh)
       solids.push(mesh)
+      unit.solids.push(mesh)
+      if (mesh.userData.printPart) unit.printed = true
       // One material or several (the genuine UNO board's face and edge).
       for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-        material.clippingPlanes = [clip]
+        material.clippingPlanes = [unit.clip]
         // Otherwise the hidden part of a half-scanned item still casts a
         // full shadow.
         material.clipShadows = true
@@ -431,26 +520,40 @@ export class WorkshopScene {
       const edges = mesh.userData.printPart
         ? featureEdges(mesh.geometry, 30)
         : new THREE.EdgesGeometry(mesh.geometry, mesh.userData.edgeAngle ?? 22)
-      const wire = new THREE.LineSegments(edges, wireMaterial)
+      const wire = new THREE.LineSegments(edges, unit.wire)
       mesh.add(wire)
       wires.push(wire)
     })
 
     // The ghosts, added once the walk is done (not while it runs).
-    const ghosts = solids.map((mesh) => {
-      const instanced = mesh as THREE.InstancedMesh
-      let ghost: THREE.Mesh
-      if (instanced.isInstancedMesh) {
-        const copy = new THREE.InstancedMesh(mesh.geometry, holo, instanced.count)
-        copy.instanceMatrix = instanced.instanceMatrix
-        copy.frustumCulled = false
-        ghost = copy
-      } else ghost = new THREE.Mesh(mesh.geometry, holo)
-      ghost.userData.ghost = true
-      ghost.raycast = () => {}
-      mesh.add(ghost)
-      return ghost
-    })
+    const ghosts: THREE.Mesh[] = []
+    for (const unit of units) {
+      for (const mesh of unit.solids) {
+        const instanced = mesh as THREE.InstancedMesh
+        let ghost: THREE.Mesh
+        if (instanced.isInstancedMesh) {
+          const copy = new THREE.InstancedMesh(mesh.geometry, unit.holo, instanced.count)
+          copy.instanceMatrix = instanced.instanceMatrix
+          copy.frustumCulled = false
+          ghost = copy
+        } else ghost = new THREE.Mesh(mesh.geometry, unit.holo)
+        ghost.userData.ghost = true
+        ghost.raycast = () => {}
+        mesh.add(ghost)
+        unit.ghosts.push(ghost)
+        ghosts.push(ghost)
+      }
+    }
+
+    // Assembly order, and each unit's turn in it.
+    const floor = (unit: Unit) => (unit === rest ? Infinity : new THREE.Box3().setFromObject(unit.root).min.y)
+    const order = [...units].sort(
+      (a, b) => Number(a === rest) - Number(b === rest) || Number(b.printed) - Number(a.printed) || floor(a) - floor(b)
+    )
+    const step = Math.min(MATERIALIZE_STEP, MATERIALIZE_SPAN / Math.max(1, order.length))
+    order.forEach((unit, i) => (unit.delay = i * step))
+    const materialize = visuals().materialize && !retained
+    if (materialize) units.forEach((unit) => (unit.reveal = 0))
 
     const scanRing = new THREE.LineLoop(this.circle(1, 96), this.accentLine(0))
     scanRing.rotation.x = Math.PI / 2
@@ -464,12 +567,10 @@ export class WorkshopScene {
       solids,
       wires,
       contours,
-      wireMaterial,
-      holo,
-      ghostClip,
       ghosts,
+      units,
+      materializing: materialize ? 0 : null,
       lights,
-      clip,
       scanRing,
       glowing: [],
       mode: "wire",
@@ -480,7 +581,7 @@ export class WorkshopScene {
       born: this.clock.elapsedTime,
       armed: false,
       dying: null,
-      parts: this.explodeParts(object),
+      parts,
       posed: false,
     }
     // Bloom on its edges and on the LEDs that light (their epoxy).
@@ -503,7 +604,7 @@ export class WorkshopScene {
    *  changes. With nothing by that name it is simply spawned. */
   replaceBuilt(name: string | null, built: BuiltItem) {
     const old = name ? this.live().find((item) => item.spec.name === name) : undefined
-    this.spawnBuilt(built)
+    this.spawnBuilt(built, !!old)
     if (!old) return
     const fresh = this.items[this.items.length - 1]
     fresh.root.position.copy(old.root.position)
@@ -513,6 +614,8 @@ export class WorkshopScene {
     fresh.scale = old.scale
     fresh.mode = old.mode
     fresh.solidity = old.solidity
+    // A rebuild arriving mid-materialize carries on from where it was.
+    fresh.materializing = old.materializing
     fresh.born = old.born
     this.removeItem(old)
   }
@@ -769,6 +872,8 @@ export class WorkshopScene {
     if (clean) {
       for (const item of this.live()) item.model.traverse((node) => node.userData.helper && hide(node))
       ;[this.floor, this.floorGrid, this.floorRings, this.atmosphere.group, this.contact.group].forEach(hide)
+      this.callouts.setVisible(false)
+      restore.push(() => this.callouts.setVisible(true))
       const background = this.scene.background
       const fog = this.scene.fog
       this.scene.background = new THREE.Color(0xb8bec6)
@@ -778,19 +883,19 @@ export class WorkshopScene {
         this.scene.fog = fog
       })
       for (const item of this.live()) {
-        const constant = item.clip.constant
-        const opacity = item.wireMaterial.opacity
-        const ghostConstant = item.ghostClip.constant
-        item.clip.constant = 1e6
-        item.ghostClip.constant = -1e6
-        restore.push(() => (item.ghostClip.constant = ghostConstant))
-        item.wireMaterial.opacity = 0
+        for (const unit of item.units) {
+          const [constant, ghostConstant, opacity] = [unit.clip.constant, unit.ghostClip.constant, unit.wire.opacity]
+          unit.clip.constant = 1e6
+          unit.ghostClip.constant = -1e6
+          unit.wire.opacity = 0
+          restore.push(() => {
+            unit.clip.constant = constant
+            unit.ghostClip.constant = ghostConstant
+            unit.wire.opacity = opacity
+          })
+        }
         item.contours.forEach(hide)
         hide(item.scanRing)
-        restore.push(() => {
-          item.clip.constant = constant
-          item.wireMaterial.opacity = opacity
-        })
       }
     }
     const ratio = this.renderer.getPixelRatio()
@@ -866,6 +971,9 @@ export class WorkshopScene {
         lastX: x,
         lastY: y,
         vx: 0,
+        speedX: 0,
+        speedY: 0,
+        lastT: performance.now(),
         height,
         lastHit: this.floorHit(x, y, height),
         rawX: item.root.position.x,
@@ -924,6 +1032,11 @@ export class WorkshopScene {
         this.callbacks.onBin?.(armed ? "armed" : "idle")
       }
       grip.vx = grip.vx * 0.6 + (x - grip.lastX) * 0.4
+      const now = performance.now()
+      const span = Math.max(1, now - grip.lastT) / 1000
+      grip.speedX = grip.speedX * 0.5 + ((x - grip.lastX) / span) * 0.5
+      grip.speedY = grip.speedY * 0.5 + ((y - grip.lastY) / span) * 0.5
+      grip.lastT = now
     } else {
       this.azimuth -= (x - grip.lastX) * 0.006
       this.elevation = THREE.MathUtils.clamp(this.elevation + (y - grip.lastY) * 0.004, 0.02, 1.25)
@@ -941,13 +1054,14 @@ export class WorkshopScene {
       return
     }
     if (!grip || grip.kind !== "item") return
-    if (grip.item.armed) {
+    if (grip.item.armed || this.flickedAtBin(grip, _x, _y)) {
       this.discard(grip.item)
       return
     }
     if (tap) {
       if (this.callbacks.onTap?.(grip.item.id, id)) return
       grip.item.mode = grip.item.mode === "wire" ? "solid" : "wire"
+      sfx.select()
       this.focus(grip.item)
       this.emitItems()
     } else if (this.snap) {
@@ -957,6 +1071,18 @@ export class WorkshopScene {
       // Thrown: the release speed becomes spin, then friction takes over.
       grip.item.spin += grip.vx * 0.06
     }
+  }
+
+  /** Let go moving fast, straight at the bin: thrown away. */
+  private flickedAtBin(grip: { speedX: number; speedY: number; lastT: number }, x: number, y: number): boolean {
+    const bin = this.callbacks.binCentre?.()
+    // A pause before letting go is a set-down, not a throw.
+    if (!bin || performance.now() - grip.lastT > 120) return false
+    const speed = Math.hypot(grip.speedX, grip.speedY)
+    if (speed < FLICK_SPEED) return false
+    const toBin = Math.hypot(bin.x - x, bin.y - y) || 1
+    const aim = (grip.speedX * (bin.x - x) + grip.speedY * (bin.y - y)) / (speed * toBin)
+    return aim > FLICK_AIM
   }
 
   /** Start rotating the part under (x, y), or the selected one. False if
@@ -979,6 +1105,7 @@ export class WorkshopScene {
   /** Exploded view on or off (toggled when `on` is left out). Returns the
    *  new state and how many items have parts to spread. */
   setExploded(on = !this.exploded): { exploded: boolean; explodable: number } {
+    if (on !== this.exploded) sfx.explode(on)
     this.exploded = on
     return { exploded: on, explodable: this.live().filter((item) => item.parts.length > 1).length }
   }
@@ -996,9 +1123,36 @@ export class WorkshopScene {
 
   hover(x: number | null, y: number | null) {
     this.hovered = x === null || y === null ? null : this.pick(x, y)
+    // Which part, for its callout: a ray against the item's own meshes,
+    // no more than twenty times a second.
+    if (!this.hovered || x === null || y === null) {
+      this.hoverPart = null
+      return
+    }
+    const now = performance.now()
+    if (now - this.lastPartPick < 50) return
+    this.lastPartPick = now
+    this.raycaster.setFromCamera(this.ndc(x, y), this.camera)
+    const was = this.hoverPart
+    this.hoverPart = null
+    hits: for (const hit of this.raycaster.intersectObjects(this.hovered.solids, false)) {
+      for (let node: THREE.Object3D | null = hit.object; node && node !== this.hovered.model; node = node.parent) {
+        if (node.userData.callout) {
+          this.hoverPart = node
+          break hits
+        }
+      }
+    }
+    if (this.hoverPart && this.hoverPart !== was) sfx.hover()
+  }
+
+  /** How a part's cost and source are found (the project's BOM). */
+  setCalloutCost(lookup: CostLookup) {
+    this.callouts.setCost(lookup)
   }
 
   private discard(item: Item) {
+    sfx.discard()
     item.armed = false
     item.dying = this.clock.elapsedTime
     for (const [id, grip] of this.grips) if ((grip.kind === "item" || grip.kind === "rotate") && grip.item === item) this.grips.delete(id)
@@ -1024,22 +1178,65 @@ export class WorkshopScene {
     const children = level.children.filter(isPart)
     if (children.length < 2) return []
     object.updateMatrixWorld(true)
-    const whole = new THREE.Box3().setFromObject(level)
-    const size = whole.getSize(new THREE.Vector3()).length() || 1
-    const centre = level.worldToLocal(whole.getCenter(new THREE.Vector3()))
+    // The base - the biggest part - stays put, and the rest come away from
+    // it by a reach in proportion to it: a controller mounted far off on
+    // the arm should not push the centre into the air or the reach to
+    // half a metre.
+    const boxes = new Map(children.map((node) => [node, new THREE.Box3().setFromObject(node)]))
+    const volume = (b: THREE.Box3) => {
+      const v = b.getSize(new THREE.Vector3())
+      return v.x * v.y * v.z
+    }
+    const base = children.reduce((best, node) => (volume(boxes.get(node)!) > volume(boxes.get(best)!) ? node : best), children[0])
+    const baseBox = boxes.get(base)!
+    const size = baseBox.getSize(new THREE.Vector3()).length() || new THREE.Box3().setFromObject(level).getSize(new THREE.Vector3()).length() || 1
+    const centre = level.worldToLocal(baseBox.getCenter(new THREE.Vector3()))
     // Local units: the level may be scaled, so the spread is converted too.
     const scale = level.getWorldScale(new THREE.Vector3()).x || 1
-    return children.map((node, index) => {
-      const middle = level.worldToLocal(new THREE.Box3().setFromObject(node).getCenter(new THREE.Vector3()))
-      const direction = middle.sub(centre)
-      // A part at the very centre goes straight up, staggered.
-      if (direction.lengthSq() < 1e-6) direction.set(0, 0.3 + index * 0.05, 0)
-      return {
-        node,
-        base: node.position.clone(),
-        offset: direction.normalize().multiplyScalar((size * EXPLODE_SPREAD) / scale),
+    // Up, in the level's own frame (z for a project's assembly, y else).
+    const upLocal = new THREE.Vector3(0, 1, 0).applyQuaternion(level.getWorldQuaternion(new THREE.Quaternion()).invert())
+    const upIndex = [0, 1, 2].reduce((best, k) => (Math.abs(upLocal.getComponent(k)) > Math.abs(upLocal.getComponent(best)) ? k : best), 0)
+    const upSign = Math.sign(upLocal.getComponent(upIndex)) || 1
+    // Along the assembly's own axes: each part goes out along whichever of
+    // its axes it already sits furthest along, so a stack comes apart as a
+    // stack and a row as a row; one at the very centre goes up.
+    const lanes = new Map<string, { node: THREE.Object3D; along: number; axis: THREE.Vector3 }[]>()
+    for (const node of children) {
+      if (node === base) continue
+      const d = level.worldToLocal(boxes.get(node)!.getCenter(new THREE.Vector3())).sub(centre)
+      let k = [0, 1, 2].reduce((best, i) => (Math.abs(d.getComponent(i)) > Math.abs(d.getComponent(best)) ? i : best), 0)
+      let sign = Math.sign(d.getComponent(k))
+      if (d.lengthSq() < 1e-6 || !sign) {
+        k = upIndex
+        sign = upSign
       }
-    })
+      // Never down through the floor: what sits low is the base. It goes
+      // out sideways if it is off to one side, else it stays where it is.
+      if (k === upIndex && sign !== upSign) {
+        const across = [0, 1, 2].filter((i) => i !== upIndex)
+        const side = across.reduce((best, i) => (Math.abs(d.getComponent(i)) > Math.abs(d.getComponent(best)) ? i : best), across[0])
+        if (Math.abs(d.getComponent(side)) < Math.abs(d.getComponent(k)) * 0.25) continue
+        k = side
+        sign = Math.sign(d.getComponent(side))
+      }
+      const key = `${k}${sign}`
+      if (!lanes.has(key)) lanes.set(key, [])
+      lanes.get(key)!.push({ node, along: Math.abs(d.getComponent(k)), axis: new THREE.Vector3().setComponent(k, sign) })
+    }
+    // Further out goes further: each lane layered by how far out it sits,
+    // so parts in the same direction do not land on one another.
+    const reach = (size * EXPLODE_SPREAD) / scale
+    const out: { node: THREE.Object3D; base: THREE.Vector3; offset: THREE.Vector3; rank: number }[] = []
+    for (const lane of lanes.values()) {
+      lane.sort((a, b) => a.along - b.along)
+      lane.forEach((p, i) =>
+        out.push({ node: p.node, base: p.node.position.clone(), offset: p.axis.multiplyScalar(reach * (0.45 + (0.75 * (i + 1)) / lane.length)), rank: p.along })
+      )
+    }
+    // The outermost leaves first, a beat ahead of the next.
+    out.sort((a, b) => b.rank - a.rank)
+    const beat = Math.min(0.07, EXPLODE_STAGGER / Math.max(1, out.length))
+    return out.map(({ node, base, offset }, i) => ({ node, base, offset, delay: i * beat }))
   }
 
   /** Set down within SNAP_FACE of another item's side: pulled flush to it,
@@ -1133,6 +1330,7 @@ export class WorkshopScene {
     this.roomEnv.dispose()
     this.contact.dispose()
     this.unsubscribeVisuals()
+    this.callouts.dispose()
     this.post.dispose()
     this.renderer.dispose()
     this.renderer.domElement.remove()
@@ -1241,6 +1439,7 @@ export class WorkshopScene {
     if (!width || !height) return
     this.renderer.setSize(width, height, false)
     this.post.setSize(width, height)
+    this.callouts.setSize(width, height)
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
   }
@@ -1315,10 +1514,13 @@ export class WorkshopScene {
       mesh.geometry?.dispose()
       // One material or several (the genuine UNO board's face and edge).
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
-      for (const m of materials) if (m && m !== item.wireMaterial) m.dispose()
+      for (const m of materials) if (m && !item.units.some((u) => u.wire === m || u.holo === m)) m.dispose()
     })
-    item.wireMaterial.dispose()
-    item.holo.dispose()
+    for (const unit of item.units) {
+      unit.wire.dispose()
+      unit.holo.dispose()
+      this.accentMaterials.splice(this.accentMaterials.indexOf(unit.wire), 1)
+    }
     item.glowing.forEach((node) => this.post.glow(node, false))
   }
 
@@ -1337,6 +1539,7 @@ export class WorkshopScene {
       this.accent = hex
       this.accentMaterials.forEach((m) => m.color.setHex(hex))
       ;((this.floorGrid.material as THREE.ShaderMaterial).uniforms.uColor.value as THREE.Color).setHex(hex)
+      this.callouts.setColor(hex)
       this.rim.color.setHex(hex)
     }
 
@@ -1371,15 +1574,17 @@ export class WorkshopScene {
         item.model.rotation.y += dt * (6 + 30 * p)
         item.root.position.y += dt * 1.5
         item.solidity = Math.max(0, item.solidity - dt * 4)
-        item.clip.constant = item.bounds.min.y - 1 + (item.bounds.max.y - item.bounds.min.y + 2) * item.solidity
-        item.wireMaterial.color.setHex(ARMED_COLOR)
-        item.wireMaterial.opacity = 1 - p * 0.6
-        item.ghostClip.constant = -item.clip.constant
-        ;(item.holo.uniforms.uColor.value as THREE.Color).setHex(ARMED_COLOR)
-        item.holo.uniforms.uOpacity.value = 1 - p
+        const constant = item.bounds.min.y - 1 + (item.bounds.max.y - item.bounds.min.y + 2) * item.solidity
+        for (const unit of item.units) {
+          unit.clip.constant = constant
+          unit.ghostClip.constant = -constant
+          unit.wire.color.setHex(ARMED_COLOR)
+          unit.wire.opacity = 1 - p * 0.6
+          ;(unit.holo.uniforms.uColor.value as THREE.Color).setHex(ARMED_COLOR)
+          unit.holo.uniforms.uOpacity.value = 1 - p
+        }
         continue
       }
-      item.wireMaterial.color.setHex(item.armed ? ARMED_COLOR : this.accent)
 
       const age = t - item.born
       // Spawn: grows in over half a second with an overshoot.
@@ -1394,41 +1599,90 @@ export class WorkshopScene {
       item.model.rotation.y += item.spin * dt
       item.model.position.y = (item.model.userData.baseY ??= item.model.position.y) + Math.sin(t * 1.3 + item.born) * 0.05
 
-      // Hologram <-> materials scan.
-      item.solidity += ((item.mode === "solid" ? 1 : 0) - item.solidity) * Math.min(1, dt * 1.6)
-      if (Math.abs(item.solidity - (item.mode === "solid" ? 1 : 0)) < 0.002) item.solidity = item.mode === "solid" ? 1 : 0
+      // Hologram <-> materials: one scan up the whole item - or, while a
+      // new design materializes, each unit on its turn: its edges drawn
+      // in, then its own scan.
+      const goal = item.mode === "solid" ? 1 : 0
+      // The whole-item scan waits while the units materialize on their own.
+      if (item.materializing === null) item.solidity += (goal - item.solidity) * Math.min(1, dt * 1.6)
+      if (Math.abs(item.solidity - goal) < 0.002) item.solidity = goal
       item.bounds.setFromObject(item.model)
       const { min, max } = item.bounds
-      const cut = min.y + (max.y - min.y) * item.solidity
-      item.clip.constant = item.solidity >= 1 ? max.y + 1 : item.solidity <= 0 ? min.y - 1 : cut
-      // The ghosts keep the other side of the same cut.
-      item.ghostClip.constant = -item.clip.constant
-      for (const mesh of item.solids) mesh.visible = true
-      const hologram = 1 - item.solidity
-      for (const ghost of item.ghosts) ghost.visible = holoOn && hologram > 0.001
-      for (const lines of item.contours) lines.visible = hologram > 0.05
+      let cut = min.y + (max.y - min.y) * item.solidity
+      let scanning = item.solidity > 0.01 && item.solidity < 0.99
+      let ringBox = item.bounds
+      if (item.materializing !== null) {
+        if (item.materializing === 0) sfx.materialize()
+        const before = item.materializing
+        item.materializing += dt
+        const since = item.materializing
+        item.units.forEach((unit, i) => {
+          if (before <= unit.delay && since > unit.delay && i % 2 === 0) sfx.sparkle(Math.round(unit.delay / 0.16))
+        })
+        let done = true
+        scanning = false
+        for (const unit of item.units) {
+          unit.reveal = THREE.MathUtils.clamp((since - unit.delay) / MATERIALIZE_DRAW, 0, 1)
+          const scan = THREE.MathUtils.clamp((since - unit.delay - MATERIALIZE_DRAW * 0.6) / MATERIALIZE_SCAN, 0, 1)
+          unit.solidity = goal * easeInOut(scan)
+          if (unit.reveal < 1 || unit.solidity < goal) done = false
+          if (unit.solidity > 0 && unit.solidity < 1) {
+            unit.bounds.setFromObject(unit.root)
+            unit.clip.constant = unit.bounds.min.y + (unit.bounds.max.y - unit.bounds.min.y) * unit.solidity
+            scanning = true
+            cut = unit.clip.constant
+            ringBox = unit.bounds
+          } else unit.clip.constant = unit.solidity >= 1 ? 1e6 : -1e6
+        }
+        if (done) {
+          item.materializing = null
+          item.solidity = goal
+        }
+      } else {
+        const constant = item.solidity >= 1 ? 1e6 : item.solidity <= 0 ? -1e6 : cut
+        for (const unit of item.units) {
+          unit.reveal = 1
+          unit.solidity = item.solidity
+          unit.clip.constant = constant
+        }
+      }
       const lit = item === this.hovered || held.has(item) || item === this.focused
-      item.wireMaterial.opacity = (0.1 + hologram * 0.55) * (lit ? 1.25 : 1) * (0.92 + Math.sin(t * 20) * 0.04)
-      ;(item.holo.uniforms.uColor.value as THREE.Color).setHex(item.armed ? ARMED_COLOR : this.accent)
-      item.holo.uniforms.uOpacity.value = lit ? 1.3 : 1
+      const color = item.armed ? ARMED_COLOR : this.accent
+      const flicker = 0.92 + Math.sin(t * 20) * 0.04
+      for (const unit of item.units) {
+        // The ghosts keep the other side of the same cut.
+        unit.ghostClip.constant = -unit.clip.constant
+        const hologram = 1 - unit.solidity
+        for (const ghost of unit.ghosts) ghost.visible = holoOn && hologram > 0.001 && unit.reveal > 0
+        unit.wire.color.setHex(color)
+        unit.wire.opacity = (0.1 + hologram * 0.55) * (lit ? 1.25 : 1) * flicker * unit.reveal
+        ;(unit.holo.uniforms.uColor.value as THREE.Color).setHex(color)
+        unit.holo.uniforms.uOpacity.value = (lit ? 1.3 : 1) * unit.reveal
+      }
+      for (const mesh of item.solids) mesh.visible = true
+      for (const lines of item.contours) lines.visible = 1 - item.solidity > 0.05
       for (const light of item.lights) light.intensity = (light.userData.intensity as number) * (0.25 + item.solidity * 0.75)
 
-      // The scan ring sits at the cut while it is moving.
-      const scanning = item.solidity > 0.01 && item.solidity < 0.99
+      // The scan ring sits at the cut while it is moving (the unit's own,
+      // sized to it, while materializing).
       const ringMaterial = item.scanRing.material as THREE.LineBasicMaterial
       ringMaterial.opacity += ((scanning ? 1 : 0) - ringMaterial.opacity) * Math.min(1, dt * 8)
-      const span = Math.max(max.x - min.x, max.z - min.z) / item.root.scale.x
+      const span = Math.max(ringBox.max.x - ringBox.min.x, ringBox.max.z - ringBox.min.z) / item.root.scale.x
       item.scanRing.scale.setScalar(span * 0.62)
       item.scanRing.position.y = (cut - item.root.position.y) / item.root.scale.y
     }
 
-    // Exploded view, eased in and out.
-    const explodeTarget = this.exploded ? 1 : 0
+    // Exploded view: each part eased out along its axis on its own beat,
+    // the outermost first; coming back together runs the same in reverse.
+    const explodeTarget = this.exploded ? 1 + EXPLODE_STAGGER : 0
     if (this.explodeT !== explodeTarget) {
-      this.explodeT += (explodeTarget - this.explodeT) * Math.min(1, dt * 5)
-      if (Math.abs(this.explodeT - explodeTarget) < 0.002) this.explodeT = explodeTarget
+      const step = dt / EXPLODE_SECONDS
+      this.explodeT = explodeTarget > this.explodeT ? Math.min(explodeTarget, this.explodeT + step) : Math.max(explodeTarget, this.explodeT - step)
       for (const item of this.items) {
-        for (const part of item.parts) part.node.position.copy(part.base).addScaledVector(part.offset, this.explodeT)
+        for (const part of item.parts) {
+          const p = easeInOut(THREE.MathUtils.clamp(this.explodeT - part.delay, 0, 1))
+          part.node.position.copy(part.base).addScaledVector(part.offset, p)
+        }
         // Cables run between parts that are flying apart: hide them meanwhile.
         item.model.traverse((node) => {
           if (node.userData.cables) node.visible = this.explodeT < 0.02
@@ -1453,8 +1707,11 @@ export class WorkshopScene {
         (this.focused.bounds.min.z + this.focused.bounds.max.z) / 2
       ).project(this.camera)
       const rect = this.renderer.domElement.getBoundingClientRect()
-      const lx = (top.x * 0.5 + 0.5) * rect.width
-      const ly = (-top.y * 0.5 + 0.5) * rect.height
+      // Kept wholly on the stage: a tall item's top would push it off.
+      const w = this.label.offsetWidth
+      const h = this.label.offsetHeight
+      const lx = THREE.MathUtils.clamp((top.x * 0.5 + 0.5) * rect.width, w / 2 + 8, Math.max(w / 2 + 8, rect.width - w / 2 - 8))
+      const ly = THREE.MathUtils.clamp((-top.y * 0.5 + 0.5) * rect.height, h + 8, Math.max(h + 8, rect.height - 8))
       this.label.style.transform = `translate(${lx}px, ${ly}px) translate(-50%, -100%)`
       this.label.style.opacity = top.z < 1 ? "1" : "0"
     } else {
@@ -1487,6 +1744,31 @@ export class WorkshopScene {
       this.contact.update(this.renderer, this.scene)
     }
     this.post.draw(dt)
+    // Callouts: every part while exploded, else the one under the pointer
+    // (with its dimensions when it is printed).
+    const tagged: THREE.Object3D[] = []
+    let dimension: THREE.Object3D | null = null
+    if (fx.callouts) {
+      if (this.explodeT > 0.5) {
+        for (const item of this.live()) item.model.traverse((node) => node.userData.callout && tagged.length < 30 && tagged.push(node))
+      } else if (this.hoverPart && this.hoverPart.parent) {
+        tagged.push(this.hoverPart)
+        if (this.hoverPart.userData.callout.printed) dimension = this.hoverPart
+      }
+    }
+    const around = (this.focused ?? this.hovered)?.bounds.getCenter(new THREE.Vector3()) ?? TARGET
+    // The panels over the stage (marked data-keepout) are taken space.
+    const stage = this.container.getBoundingClientRect()
+    const keepOut = tagged.length
+      ? [...(this.container.parentElement?.querySelectorAll<HTMLElement>("[data-keepout]") ?? [])]
+          .filter((el) => el.offsetParent !== null && getComputedStyle(el).opacity !== "0")
+          .map((el) => {
+            const r = el.getBoundingClientRect()
+            return { x0: r.left - stage.left, y0: r.top - stage.top, x1: r.right - stage.left, y1: r.bottom - stage.top }
+          })
+      : []
+    this.callouts.update(tagged, around, dimension, this.camera, keepOut)
+    this.callouts.render(this.camera)
     this.sample(dt)
   }
 
@@ -1500,6 +1782,7 @@ export class WorkshopScene {
     if (this.stats.time < 1) return
     const info = this.renderer.info
     ;(this.rafView as Window & { __workshopScene?: THREE.Scene }).__workshopScene = this.scene
+    ;(this.rafView as Window & { __workshopItems?: Item[] }).__workshopItems = this.items
     ;(this.rafView as Window & { __workshopStats?: object }).__workshopStats = {
       fps: Math.round(this.stats.frames / this.stats.time),
       calls: info.render.calls,
