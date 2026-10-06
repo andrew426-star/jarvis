@@ -7,6 +7,7 @@ import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { accentHex } from "@/lib/core-events"
 import { compileScadCached } from "@/lib/workshop/openscad"
 import { buildAssembly } from "@/lib/workshop/project/assembly"
+import { setHoloOpacity } from "@/lib/workshop/holo-material"
 import { fitTo, hologram } from "@/lib/workshop/project/holo"
 import { emptyProject, type GalleryProject } from "@/lib/workshop/project/types"
 
@@ -247,7 +248,7 @@ export class GalleryScene {
       slot.root.scale.setScalar(scale)
       const flicker = 0.95 + Math.sin(t * 23 + i * 3) * 0.025 + Math.sin(t * 7.3) * 0.025
       if (slot.materials.line) slot.materials.line.opacity = 0.5 * focus * flicker
-      if (slot.materials.fill) (slot.materials.fill as THREE.MeshBasicMaterial).opacity = 0.035 * focus
+      if (slot.materials.fill) setHoloOpacity(slot.materials.fill, 0.5 * focus)
       slot.materials.ring.opacity = (front ? 0.5 : 0.18) * flicker
       slot.materials.beam.opacity = front ? 0.03 : 0.012
       if (slot.loading) slot.loading.rotation.z -= dt * 4

@@ -31,7 +31,8 @@ export function HoloViewer({ project, version }: { project: Project; version: nu
     let raf = 0
     const color = accentHex()
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    // A thumbnail: a sharp pixel ratio buys nothing at this size.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 0.95
     renderer.shadowMap.enabled = true
@@ -46,7 +47,7 @@ export function HoloViewer({ project, version }: { project: Project; version: nu
     const key = new THREE.DirectionalLight(0xffffff, 2.4)
     key.position.set(2.5, 5, 3)
     key.castShadow = true
-    key.shadow.mapSize.set(1024, 1024)
+    key.shadow.mapSize.set(512, 512)
     key.shadow.radius = 6
     key.shadow.bias = -0.0005
     const sc = key.shadow.camera
@@ -84,10 +85,22 @@ export function HoloViewer({ project, version }: { project: Project; version: nu
     observer.observe(host)
     size()
 
+    // A slow turntable reads as smooth at 12 frames a second, and a second
+    // full assembly drawn at the screen's rate cost the stage a third of
+    // its frame rate. Nothing at all while it is scrolled away or the tab
+    // is hidden.
     const clock = new THREE.Clock()
+    let since = 1
+    let onScreen = true
+    const seen = new IntersectionObserver(([entry]) => (onScreen = entry.isIntersecting))
+    seen.observe(host)
     const frame = () => {
       raf = requestAnimationFrame(frame)
-      turntable.rotation.y += clock.getDelta() * 0.4
+      const dt = clock.getDelta()
+      since += dt
+      if (!onScreen || document.hidden || since < 1 / 12) return
+      turntable.rotation.y += since * 0.4
+      since = 0
       renderer.render(scene, camera)
     }
     frame()
@@ -107,6 +120,7 @@ export function HoloViewer({ project, version }: { project: Project; version: nu
       disposed = true
       cancelAnimationFrame(raf)
       observer.disconnect()
+      seen.disconnect()
       scene.traverse((node) => {
         const mesh = node as THREE.Mesh
         mesh.geometry?.dispose()

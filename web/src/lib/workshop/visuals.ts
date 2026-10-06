@@ -11,8 +11,12 @@ export interface Visuals {
   realParts: boolean
   /** Wires gathered into looms with zip ties, routed around the parts. */
   looms: boolean
+  /** The studio HDRI as the light (else the generated room). */
+  hdri: boolean
   /** Ambient occlusion in the contact creases. */
   ao: boolean
+  /** Soft contact shadows on the floor under solid parts. */
+  contactShadows: boolean
   /** Bloom on the lit things: LEDs, holo edges. */
   bloom: boolean
   /** Lens touches: chromatic fringe, film grain, vignette. */
@@ -32,7 +36,9 @@ export interface Visuals {
 export const VISUAL_LABELS: Record<keyof Visuals, string> = {
   realParts: "Real parts",
   looms: "Wire looms",
+  hdri: "Studio HDRI light",
   ao: "Ambient occlusion",
+  contactShadows: "Contact shadows",
   bloom: "Bloom",
   lens: "Lens (fringe, grain, vignette)",
   holoShader: "Hologram shader",
@@ -45,7 +51,9 @@ export const VISUAL_LABELS: Record<keyof Visuals, string> = {
 const DEFAULTS: Visuals = {
   realParts: true,
   looms: true,
+  hdri: true,
   ao: true,
+  contactShadows: true,
   bloom: true,
   lens: true,
   holoShader: true,

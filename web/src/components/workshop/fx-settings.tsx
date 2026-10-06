@@ -9,7 +9,18 @@ import { useVisuals, VISUAL_LABELS, type Visuals } from "@/lib/workshop/visuals"
 // Top right under the header, like the gesture map; kept in this browser.
 
 /** The features that are in so far, in the order they are listed. */
-const SHOWN: (keyof Visuals)[] = ["realParts", "looms"]
+const SHOWN: (keyof Visuals)[] = [
+  "realParts",
+  "looms",
+  "holoShader",
+  "hdri",
+  "ao",
+  "contactShadows",
+  "bloom",
+  "lens",
+  "atmosphere",
+  "grid",
+]
 
 /** `right`: clear of the project panel when it is open. */
 export function FxSettings({ onClose, right = 12 }: { onClose: () => void; right?: number }) {

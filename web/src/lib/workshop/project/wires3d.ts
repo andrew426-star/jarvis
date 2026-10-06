@@ -1,4 +1,5 @@
 import * as THREE from "three"
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js"
 
 import { libraryPins } from "@/lib/workshop/project/library"
 import { real } from "@/lib/workshop/project/materials"
@@ -234,8 +235,8 @@ interface End {
   anchor: PinAnchor
   /** How many wires sit beside this one on the same pin. */
   stack: number
-  /** The DuPont housing and pin, or none for a part's own lead. */
-  plug: THREE.Object3D[]
+  /** Its DuPont plug's instance, or -1 for a part's own lead. */
+  plug: number
 }
 
 interface Run {
@@ -243,7 +244,6 @@ interface Run {
   a: End
   b: End
   hex: number
-  tube: THREE.Mesh | null
   mm: number
 }
 
@@ -288,8 +288,15 @@ export class Cabling {
   private readonly materials = new Map<number, THREE.Material>()
   private readonly m = new THREE.Matrix4()
   private readonly obstacles: { object: THREE.Object3D; local: THREE.Box3 }[]
-  private readonly ties = new THREE.Group()
-  private readonly tieMaterial = real.plastic(0x101010, 0.55)
+  // Drawn in as few calls as possible: every wire of one colour is one
+  // mesh, every plug one instance of two instanced meshes, every zip tie
+  // part of one mesh. Rebuilt on each re-route.
+  private readonly tubes = new Map<number, THREE.Mesh>()
+  private pendingTubes = new Map<number, THREE.BufferGeometry[]>()
+  private readonly ties: THREE.Mesh
+  private pendingTies: THREE.BufferGeometry[] = []
+  private readonly housings: THREE.InstancedMesh
+  private readonly pins: THREE.InstancedMesh
   private readonly looms: boolean
 
   constructor(
@@ -302,12 +309,13 @@ export class Cabling {
     this.group.name = "cables"
     this.group.userData.cables = true
     this.looms = visuals().looms
+    this.ties = new THREE.Mesh(new THREE.BufferGeometry(), real.plastic(0x101010, 0.55))
     this.ties.name = "zip-ties"
+    this.ties.userData.noEdges = true
     this.group.add(this.ties)
     this.obstacles = [...placed.values(), ...solids].map((object) => ({ object, local: localBounds(object) }))
     const anchors = new Map(parts.map((p) => [p.id, pinAnchors(p)]))
-    const housing = real.plastic(0x121212, 0.5)
-    const pinMetal = real.metal(0xd8b25a, 0.25)
+    let plugs = 0
     // How many wires already land on each pin: they fan out rather than overlap.
     const used = new Map<string, number>()
     const end = (ref: string): End | null => {
@@ -330,24 +338,26 @@ export class Cabling {
       // More wires on one pin than it has room for (in a real build they
       // would meet on a breadboard rail): set each beside the last.
       const stack = unoGround ? Math.floor(k / 3) : k
-      const plug: THREE.Object3D[] = []
-      if (anchor.end === "dupont") {
-        const body = new THREE.Mesh(new THREE.BoxGeometry(2.5, 2.5, PLUG), housing)
-        const metal = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 3, 8), pinMetal)
-        plug.push(body, metal)
-        this.group.add(body, metal)
-      }
+      const plug = anchor.end === "dupont" ? plugs++ : -1
       return { model, anchor, stack, plug }
     }
     for (const wire of wires) {
       const a = end(wire.a)
       const b = end(wire.b)
       if (!a || !b) continue
-      this.runs.push({ wire, a, b, hex: insulation(wire.color, wire.a, wire.b), tube: null, mm: 0 })
+      this.runs.push({ wire, a, b, hex: insulation(wire.color, wire.a, wire.b), mm: 0 })
+    }
+    this.housings = new THREE.InstancedMesh(new THREE.BoxGeometry(2.5, 2.5, PLUG), real.plastic(0x121212, 0.5), Math.max(1, plugs))
+    this.pins = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.32, 0.32, 3, 8), real.metal(0xd8b25a, 0.25), Math.max(1, plugs))
+    for (const plugged of [this.housings, this.pins]) {
+      plugged.count = plugs
+      plugged.userData.noEdges = true
+      plugged.frustumCulled = false
+      this.group.add(plugged)
     }
     this.update()
     this.group.traverse((n) => {
-      if ((n as THREE.Mesh).isMesh) n.castShadow = n.receiveShadow = true
+      if ((n as THREE.Mesh).isMesh) n.receiveShadow = true
     })
   }
 
@@ -387,37 +397,66 @@ export class Cabling {
       const side = new THREE.Vector3().crossVectors(dir, Math.abs(dir.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0)).normalize()
       pos.addScaledVector(side, e.stack * 2.6)
     }
-    if (!e.plug.length) return { pin: pos, dir, out: pos.clone() }
-    const [body, pin] = e.plug
-    body.position.copy(pos).addScaledVector(dir, PLUG / 2)
-    body.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir)
-    pin.position.copy(pos).addScaledVector(dir, -1)
-    pin.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir)
+    if (e.plug < 0) return { pin: pos, dir, out: pos.clone() }
+    const one = new THREE.Vector3(1, 1, 1)
+    this.housings.setMatrixAt(
+      e.plug,
+      new THREE.Matrix4().compose(pos.clone().addScaledVector(dir, PLUG / 2), new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir), one)
+    )
+    this.pins.setMatrixAt(
+      e.plug,
+      new THREE.Matrix4().compose(pos.clone().addScaledVector(dir, -1), new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir), one)
+    )
     return { pin: pos, dir, out: pos.clone().addScaledVector(dir, PLUG) }
   }
 
-  /** Set a run's tube along `curve`. */
+  /** Lay a run's tube along `curve` (drawn with its colour's others). */
   private lay(run: Run, curve: THREE.Curve<THREE.Vector3>, detail: number) {
     const length = curve.getLength()
-    run.mm = length + (run.a.plug.length ? PLUG : 0) + (run.b.plug.length ? PLUG : 0)
-    const segments = THREE.MathUtils.clamp(Math.round((length / 2.5) * detail), 12, 220)
-    const geometry = new THREE.TubeGeometry(curve, segments, WIRE_R, 8, false)
-    if (!run.tube) {
-      run.tube = new THREE.Mesh(geometry, this.material(run.hex))
-      run.tube.userData.wire = `${run.wire.a}-${run.wire.b}`
-      run.tube.castShadow = run.tube.receiveShadow = true
-      this.group.add(run.tube)
-      return
-    }
-    run.tube.geometry.dispose()
-    run.tube.geometry = geometry
-    // The hologram edge lines the stage or the try-on hung on it.
-    for (const child of run.tube.children) {
+    run.mm = length + (run.a.plug >= 0 ? PLUG : 0) + (run.b.plug >= 0 ? PLUG : 0)
+    const segments = THREE.MathUtils.clamp(Math.round((length / 3.5) * detail), 10, 160)
+    const list = this.pendingTubes.get(run.hex) ?? []
+    list.push(new THREE.TubeGeometry(curve, segments, WIRE_R, 6, false))
+    this.pendingTubes.set(run.hex, list)
+  }
+
+  /** Swap a mesh's geometry for `geometry`, and the hologram edge lines
+   *  the stage or the try-on hung on it with it. */
+  private swap(mesh: THREE.Mesh, geometry: THREE.BufferGeometry) {
+    mesh.geometry.dispose()
+    mesh.geometry = geometry
+    for (const child of mesh.children) {
       const lines = child as THREE.LineSegments
       if (!lines.isLineSegments) continue
       lines.geometry.dispose()
       lines.geometry = new THREE.EdgesGeometry(geometry, 22)
     }
+  }
+
+  /** Merge what this update laid into the colour meshes and the ties. */
+  private commit() {
+    for (const [hex, list] of this.pendingTubes) {
+      const merged = mergeGeometries(list) ?? new THREE.BufferGeometry()
+      list.forEach((g) => g.dispose())
+      let mesh = this.tubes.get(hex)
+      if (!mesh) {
+        mesh = new THREE.Mesh(merged, this.material(hex))
+        // A tube's facets meet at 60 degrees, so an edge outline would trace
+        // every one of them along every wire: the hologram's rim light
+        // outlines a cable instead. Too thin to need the shadow map either.
+        mesh.userData.noEdges = true
+        mesh.receiveShadow = true
+        this.tubes.set(hex, mesh)
+        this.group.add(mesh)
+      } else this.swap(mesh, merged)
+    }
+    this.pendingTubes = new Map()
+    const ties = this.pendingTies.length ? (mergeGeometries(this.pendingTies) ?? new THREE.BufferGeometry()) : new THREE.BufferGeometry()
+    this.pendingTies.forEach((g) => g.dispose())
+    this.pendingTies = []
+    this.swap(this.ties, ties)
+    this.housings.instanceMatrix.needsUpdate = true
+    this.pins.instanceMatrix.needsUpdate = true
   }
 
   /** A single wire, routed on its own: up out of a header and over, or
@@ -507,27 +546,17 @@ export class Cabling {
 
   /** A zip tie round the bundle at `at`, square to `along`. */
   private tie(at: THREE.Vector3, along: THREE.Vector3, radius: number) {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(radius + 0.5, 0.45, 6, 20), this.tieMaterial)
-    ring.position.copy(at)
-    ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), along)
+    const place = new THREE.Matrix4().compose(at, new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), along), new THREE.Vector3(1, 1, 1))
+    const ring = new THREE.TorusGeometry(radius + 0.5, 0.45, 5, 18).applyMatrix4(place)
     // The tie's head, the square lock on one side.
-    const head = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.4, 2.2), this.tieMaterial)
-    head.position.set(radius + 1.2, 0, 0)
-    ring.add(head)
-    ring.castShadow = true
-    this.ties.add(ring)
+    const head = new THREE.BoxGeometry(2.6, 2.4, 2.2).translate(radius + 1.2, 0, 0).applyMatrix4(place)
+    this.pendingTies.push(ring.toNonIndexed(), head.toNonIndexed())
   }
 
   /** Re-route every cable from where its two ends are now. `detail`
    *  below 1 draws coarser tubes (the try-on, re-routing every frame). */
   update(detail = 1) {
     const ends = new Map(this.runs.map((run) => [run, [this.locate(run.a), this.locate(run.b)] as [Located, Located]]))
-    for (const tie of [...this.ties.children]) {
-      const mesh = tie as THREE.Mesh
-      mesh.geometry.dispose()
-      ;(mesh.children[0] as THREE.Mesh | undefined)?.geometry.dispose()
-      this.ties.remove(tie)
-    }
     const looms = this.looms ? this.plan(ends) : null
     const bundled = new Set<Run>()
     if (looms) {
@@ -542,6 +571,7 @@ export class Cabling {
       const [a, b] = ends.get(run)!
       this.lay(run, this.single(a, b), detail)
     }
+    this.commit()
   }
 
   /** One loom: breakouts at both places, a trunk between them clear of

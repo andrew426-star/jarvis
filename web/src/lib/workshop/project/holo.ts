@@ -1,19 +1,26 @@
 import * as THREE from "three"
 
+import { holoMaterial } from "@/lib/workshop/holo-material"
+import { visuals } from "@/lib/workshop/visuals"
+
 // Turning a built assembly into a hologram: every surface becomes a faint
 // additive fill with its edges drawn in light, the workshop's projection
 // look. `solid` keeps the real materials and only adds the edges, for the
 // folder's view of the finished product.
 
 export function hologram(object: THREE.Object3D, color: number, { solid = false, opacity = 1 } = {}) {
-  const fill = new THREE.MeshBasicMaterial({
-    color,
-    transparent: true,
-    opacity: 0.07 * opacity,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  })
+  // The workshop's hologram surface (holo-material.ts), or the plain
+  // additive fill it replaced when that is switched off.
+  const fill: THREE.Material = visuals().holoShader
+    ? holoMaterial(color, { opacity })
+    : new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.07 * opacity,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      })
   const line = new THREE.LineBasicMaterial({
     color,
     transparent: true,
@@ -28,9 +35,12 @@ export function hologram(object: THREE.Object3D, color: number, { solid = false,
     if ((node as THREE.PointLight).isPointLight) node.visible = false
   })
   for (const mesh of meshes) {
-    // Printed parts are dense triangle soups: only their sharp edges.
-    const edges = new THREE.EdgesGeometry(mesh.geometry, mesh.userData.printPart ? 30 : 20)
-    mesh.add(new THREE.LineSegments(edges, line))
+    // Printed parts are dense triangle soups: only their sharp edges. Cables
+    // and instanced plugs get none (wires3d.ts).
+    if (!mesh.userData.noEdges && !(mesh as THREE.InstancedMesh).isInstancedMesh) {
+      const edges = new THREE.EdgesGeometry(mesh.geometry, mesh.userData.printPart ? 30 : 20)
+      mesh.add(new THREE.LineSegments(edges, line))
+    }
     if (!solid) mesh.material = fill
     mesh.castShadow = false
   }

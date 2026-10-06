@@ -1,14 +1,14 @@
 "use client"
 
 import * as THREE from "three"
-import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js"
-import { OutputPass } from "three/addons/postprocessing/OutputPass.js"
-import { RenderPass } from "three/addons/postprocessing/RenderPass.js"
-import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js"
 import { STLExporter } from "three/addons/exporters/STLExporter.js"
 
 import { accentHex } from "@/lib/core-events"
+import { holoMaterial } from "@/lib/workshop/holo-material"
+import { StagePost } from "@/lib/workshop/post"
+import { Atmosphere, CASTER_LAYER, ContactShadows, loadStudio, radialGrid } from "@/lib/workshop/stage-fx"
+import { useVisuals, visuals } from "@/lib/workshop/visuals"
 import { toViewport, type HandPointer } from "@/lib/hand-tracking"
 import type { BuiltItem, ItemSpec } from "@/lib/workshop/models"
 
@@ -39,6 +39,14 @@ interface Item {
   /** Dense hologram-only lines (the helmet's contours), hidden when solid. */
   contours: THREE.LineSegments[]
   wireMaterial: THREE.LineBasicMaterial
+  /** The hologram surface (holo-material.ts) on a ghost of every solid,
+   *  clipped by `ghostClip` - the scan's other side - so where the solid
+   *  is cut away the hologram is, and the reverse. */
+  holo: THREE.ShaderMaterial
+  ghostClip: THREE.Plane
+  ghosts: THREE.Mesh[]
+  /** What it lit with bloom: its edges and lit LEDs. */
+  glowing: THREE.Object3D[]
   lights: THREE.PointLight[]
   clip: THREE.Plane
   scanRing: THREE.LineLoop
@@ -243,8 +251,8 @@ const ARMED_COLOR = 0xff3355
 
 export class WorkshopScene {
   private readonly renderer: THREE.WebGLRenderer
-  private readonly composer: EffectComposer
-  private readonly bloom: UnrealBloomPass
+  private readonly post: StagePost
+  private readonly unsubscribeVisuals: () => void
   private readonly scene = new THREE.Scene()
   private readonly camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200)
   private readonly clock = new THREE.Clock()
@@ -255,7 +263,13 @@ export class WorkshopScene {
   private readonly rim: THREE.DirectionalLight
   private readonly floorRings = new THREE.Group()
   private floor!: THREE.Mesh
-  private floorGrid!: THREE.GridHelper
+  private floorGrid!: THREE.Mesh
+  private readonly contact = new ContactShadows()
+  private atmosphere!: Atmosphere
+  /** The generated room, and the studio HDRI once it has loaded. */
+  private roomEnv!: THREE.Texture
+  private studioEnv: THREE.Texture | null = null
+  private frameNo = 0
   private readonly hands: HandRig[] = []
   private raf = 0
   /** The window the loop is scheduled on: the one showing the canvas. */
@@ -295,7 +309,10 @@ export class WorkshopScene {
   ) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
+    // Counted per frame (every pass of it), not per render call.
+    this.renderer.info.autoReset = false
+    // Tone mapping is the post chain's (post.ts), on the HDR buffer.
+    this.renderer.toneMapping = THREE.NoToneMapping
     this.renderer.toneMappingExposure = 0.9
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
@@ -310,8 +327,11 @@ export class WorkshopScene {
 
     // Reflections for the metals, from a neutral studio room.
     const pmrem = new THREE.PMREMGenerator(this.renderer)
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+    this.roomEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+    this.scene.environment = this.roomEnv
     this.scene.environmentIntensity = 0.55
+    // The studio HDRI replaces it when it arrives (and the flag is on).
+    void loadStudio(this.renderer).then((env) => (this.studioEnv = env))
     pmrem.dispose()
 
     this.scene.add(new THREE.HemisphereLight(0x9cc8ff, 0x050505, 0.45))
@@ -332,11 +352,14 @@ export class WorkshopScene {
     this.itemFrame.scale.setScalar(0.01)
     this.scene.add(this.itemFrame, this.itemAnchor)
 
-    this.composer = new EffectComposer(this.renderer)
-    this.composer.addPass(new RenderPass(this.scene, this.camera))
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.55, 0.35, 0.85)
-    this.composer.addPass(this.bloom)
-    this.composer.addPass(new OutputPass())
+    this.scene.add(this.contact.group)
+    this.atmosphere = new Atmosphere(this.accent)
+    this.scene.add(this.atmosphere.group)
+    this.post = new StagePost(this.renderer, this.scene, this.camera)
+    this.post.glow(this.atmosphere.emitter)
+    this.post.configure(visuals())
+    this.unsubscribeVisuals = useVisuals.subscribe((flags) => this.post.configure(flags))
+    this.floorRings.traverse((node) => node !== this.floorRings && this.post.glow(node))
 
     this.observer = new ResizeObserver(() => this.resize())
     this.observer.observe(container)
@@ -372,6 +395,9 @@ export class WorkshopScene {
 
     const wireMaterial = this.accentLine(0.9)
     const clip = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0)
+    const ghostClip = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+    const holo = holoMaterial(this.accent)
+    holo.clippingPlanes = [ghostClip]
     const solids: THREE.Mesh[] = []
     const wires: THREE.LineSegments[] = []
     const contours: THREE.LineSegments[] = []
@@ -392,17 +418,38 @@ export class WorkshopScene {
       const mesh = node as THREE.Mesh
       if (!mesh.isMesh) return
       solids.push(mesh)
-      const material = mesh.material as THREE.Material
-      material.clippingPlanes = [clip]
-      // Otherwise the hidden part of a half-scanned item still casts a
-      // full shadow.
-      material.clipShadows = true
+      // One material or several (the genuine UNO board's face and edge).
+      for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        material.clippingPlanes = [clip]
+        // Otherwise the hidden part of a half-scanned item still casts a
+        // full shadow.
+        material.clipShadows = true
+      }
+      // Instanced (a cable's plugs): one outline at the origin would be
+      // wrong, and they are too small to need their own.
+      if ((mesh as THREE.InstancedMesh).isInstancedMesh || mesh.userData.noEdges) return
       const edges = mesh.userData.printPart
         ? featureEdges(mesh.geometry, 30)
         : new THREE.EdgesGeometry(mesh.geometry, mesh.userData.edgeAngle ?? 22)
       const wire = new THREE.LineSegments(edges, wireMaterial)
       mesh.add(wire)
       wires.push(wire)
+    })
+
+    // The ghosts, added once the walk is done (not while it runs).
+    const ghosts = solids.map((mesh) => {
+      const instanced = mesh as THREE.InstancedMesh
+      let ghost: THREE.Mesh
+      if (instanced.isInstancedMesh) {
+        const copy = new THREE.InstancedMesh(mesh.geometry, holo, instanced.count)
+        copy.instanceMatrix = instanced.instanceMatrix
+        copy.frustumCulled = false
+        ghost = copy
+      } else ghost = new THREE.Mesh(mesh.geometry, holo)
+      ghost.userData.ghost = true
+      ghost.raycast = () => {}
+      mesh.add(ghost)
+      return ghost
     })
 
     const scanRing = new THREE.LineLoop(this.circle(1, 96), this.accentLine(0))
@@ -418,9 +465,13 @@ export class WorkshopScene {
       wires,
       contours,
       wireMaterial,
+      holo,
+      ghostClip,
+      ghosts,
       lights,
       clip,
       scanRing,
+      glowing: [],
       mode: "wire",
       solidity: 0,
       bounds: new THREE.Box3(),
@@ -432,6 +483,15 @@ export class WorkshopScene {
       parts: this.explodeParts(object),
       posed: false,
     }
+    // Bloom on its edges and on the LEDs that light (their epoxy).
+    const lit = new Set<THREE.Material>()
+    object.traverse((node) => (node.userData.glow as THREE.Material[] | undefined)?.forEach((m) => lit.add(m)))
+    object.traverse((node) => {
+      const mesh = node as THREE.Mesh
+      if (mesh.isMesh && !node.userData.ghost && lit.has(mesh.material as THREE.Material)) item.glowing.push(mesh)
+    })
+    item.glowing.push(...wires, ...contours, scanRing)
+    item.glowing.forEach((node) => this.post.glow(node))
     this.items.push(item)
     this.showAxes(item)
     this.focus(item)
@@ -676,6 +736,9 @@ export class WorkshopScene {
         }
       } else {
         const copy = item.model.clone(true)
+        const ghosts: THREE.Object3D[] = []
+        copy.traverse((node) => node.userData.ghost && ghosts.push(node))
+        ghosts.forEach((ghost) => ghost.removeFromParent())
         copy.position.set(0, 0, 0)
         copy.rotation.set(0, 0, 0)
         copy.scale.setScalar(100)
@@ -705,7 +768,7 @@ export class WorkshopScene {
     hide(this.gizmo)
     if (clean) {
       for (const item of this.live()) item.model.traverse((node) => node.userData.helper && hide(node))
-      ;[this.floor, this.floorGrid, this.floorRings].forEach(hide)
+      ;[this.floor, this.floorGrid, this.floorRings, this.atmosphere.group, this.contact.group].forEach(hide)
       const background = this.scene.background
       const fog = this.scene.fog
       this.scene.background = new THREE.Color(0xb8bec6)
@@ -717,7 +780,10 @@ export class WorkshopScene {
       for (const item of this.live()) {
         const constant = item.clip.constant
         const opacity = item.wireMaterial.opacity
+        const ghostConstant = item.ghostClip.constant
         item.clip.constant = 1e6
+        item.ghostClip.constant = -1e6
+        restore.push(() => (item.ghostClip.constant = ghostConstant))
         item.wireMaterial.opacity = 0
         item.contours.forEach(hide)
         hide(item.scanRing)
@@ -730,7 +796,7 @@ export class WorkshopScene {
     const ratio = this.renderer.getPixelRatio()
     this.renderer.setPixelRatio(2)
     this.resize()
-    this.composer.render()
+    this.post.draw(0)
     const url = this.renderer.domElement.toDataURL("image/png")
     restore.reverse().forEach((undo) => undo())
     this.renderer.setPixelRatio(ratio)
@@ -1064,8 +1130,10 @@ export class WorkshopScene {
       const material = mesh.material as THREE.Material | undefined
       material?.dispose?.()
     })
-    this.scene.environment?.dispose()
-    this.composer.dispose()
+    this.roomEnv.dispose()
+    this.contact.dispose()
+    this.unsubscribeVisuals()
+    this.post.dispose()
     this.renderer.dispose()
     this.renderer.domElement.remove()
   }
@@ -1122,6 +1190,8 @@ export class WorkshopScene {
     group.add(joints, bones)
     group.visible = false
     this.scene.add(group)
+    this.post.glow(joints)
+    this.post.glow(bones)
     return { group, joints, bones }
   }
 
@@ -1137,13 +1207,10 @@ export class WorkshopScene {
     this.floor = floor
     this.scene.add(floor)
 
-    const grid = new THREE.GridHelper(18, 36, accentHex(), accentHex())
-    const gridMaterial = grid.material as THREE.LineBasicMaterial
-    gridMaterial.transparent = true
-    gridMaterial.opacity = 0.12
-    gridMaterial.depthWrite = false
-    this.accentMaterials.push(gridMaterial)
-    grid.position.y = 0.002
+    // A faint grid fading out from the middle (off unless asked for: the
+    // pad's rings are the stage's floor marking).
+    const grid = radialGrid(accentHex())
+    grid.visible = false
     this.scene.add(grid)
     this.floorGrid = grid
 
@@ -1173,8 +1240,7 @@ export class WorkshopScene {
     const { clientWidth: width, clientHeight: height } = this.container
     if (!width || !height) return
     this.renderer.setSize(width, height, false)
-    this.composer.setSize(width, height)
-    this.bloom.resolution.set(width, height)
+    this.post.setSize(width, height)
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
   }
@@ -1252,12 +1318,16 @@ export class WorkshopScene {
       for (const m of materials) if (m && m !== item.wireMaterial) m.dispose()
     })
     item.wireMaterial.dispose()
+    item.holo.dispose()
+    item.glowing.forEach((node) => this.post.glow(node, false))
   }
 
   private frame = () => {
     this.schedule()
+    this.renderer.info.reset()
     const dt = Math.min(this.clock.getDelta(), 0.05)
     const t = this.clock.elapsedTime
+    const holoOn = visuals().holoShader
 
     // Accent follows the console's mode.
     this.accentTimer -= dt
@@ -1266,10 +1336,22 @@ export class WorkshopScene {
       const hex = accentHex()
       this.accent = hex
       this.accentMaterials.forEach((m) => m.color.setHex(hex))
+      ;((this.floorGrid.material as THREE.ShaderMaterial).uniforms.uColor.value as THREE.Color).setHex(hex)
       this.rim.color.setHex(hex)
     }
 
     this.floorRings.rotation.y += dt * 0.05
+
+    const fx = visuals()
+    this.floorGrid.visible = fx.grid
+    this.atmosphere.group.visible = fx.atmosphere
+    if (fx.atmosphere) this.atmosphere.update(t, this.accent)
+    const environment = fx.hdri && this.studioEnv ? this.studioEnv : this.roomEnv
+    if (this.scene.environment !== environment) {
+      this.scene.environment = environment
+      this.scene.environmentIntensity = environment === this.roomEnv ? 0.55 : 0.85
+    }
+    this.contact.group.visible = fx.contactShadows
 
     const held = new Set(
       [...this.grips.values()].filter((g) => g.kind === "item").map((g) => (g as { item: Item }).item)
@@ -1292,6 +1374,9 @@ export class WorkshopScene {
         item.clip.constant = item.bounds.min.y - 1 + (item.bounds.max.y - item.bounds.min.y + 2) * item.solidity
         item.wireMaterial.color.setHex(ARMED_COLOR)
         item.wireMaterial.opacity = 1 - p * 0.6
+        item.ghostClip.constant = -item.clip.constant
+        ;(item.holo.uniforms.uColor.value as THREE.Color).setHex(ARMED_COLOR)
+        item.holo.uniforms.uOpacity.value = 1 - p
         continue
       }
       item.wireMaterial.color.setHex(item.armed ? ARMED_COLOR : this.accent)
@@ -1316,11 +1401,16 @@ export class WorkshopScene {
       const { min, max } = item.bounds
       const cut = min.y + (max.y - min.y) * item.solidity
       item.clip.constant = item.solidity >= 1 ? max.y + 1 : item.solidity <= 0 ? min.y - 1 : cut
+      // The ghosts keep the other side of the same cut.
+      item.ghostClip.constant = -item.clip.constant
       for (const mesh of item.solids) mesh.visible = true
       const hologram = 1 - item.solidity
+      for (const ghost of item.ghosts) ghost.visible = holoOn && hologram > 0.001
       for (const lines of item.contours) lines.visible = hologram > 0.05
       const lit = item === this.hovered || held.has(item) || item === this.focused
       item.wireMaterial.opacity = (0.1 + hologram * 0.55) * (lit ? 1.25 : 1) * (0.92 + Math.sin(t * 20) * 0.04)
+      ;(item.holo.uniforms.uColor.value as THREE.Color).setHex(item.armed ? ARMED_COLOR : this.accent)
+      item.holo.uniforms.uOpacity.value = lit ? 1.3 : 1
       for (const light of item.lights) light.intensity = (light.userData.intensity as number) * (0.25 + item.solidity * 0.75)
 
       // The scan ring sits at the cut while it is moving.
@@ -1372,6 +1462,51 @@ export class WorkshopScene {
     }
 
     this.placeGizmo()
-    this.composer.render()
+    // Contact shadows from whatever stands solid now (holograms cast none),
+    // every third frame: a soft blur moving slowly does not show it.
+    this.frameNo += 1
+    if (fx.contactShadows && this.frameNo % 3 === 0) {
+      for (const item of this.items) {
+        const casts = item.dying === null && item.solidity > 0.5
+        for (const mesh of item.solids) {
+          if (casts) mesh.layers.enable(CASTER_LAYER)
+          else mesh.layers.disable(CASTER_LAYER)
+        }
+      }
+    }
+    // With contact shadows grounding the small parts, only the printed
+    // parts (big surfaces that shade each other) render into the key
+    // light's shadow map; without them, everything that did still does.
+    if (this.frameNo % 30 === 0) {
+      for (const item of this.items) {
+        for (const mesh of item.solids) {
+          mesh.userData.castsShadow ??= mesh.castShadow
+          mesh.castShadow = fx.contactShadows ? !!mesh.userData.printPart && mesh.userData.castsShadow : mesh.userData.castsShadow
+        }
+      }
+      this.contact.update(this.renderer, this.scene)
+    }
+    this.post.draw(dt)
+    this.sample(dt)
+  }
+
+  // Development only: frame rate and draw cost, for profiling the stage
+  // (read from the console or a test as window.__workshopStats).
+  private stats = { frames: 0, time: 0 }
+  private sample(dt: number) {
+    if (process.env.NODE_ENV === "production") return
+    this.stats.frames += 1
+    this.stats.time += dt
+    if (this.stats.time < 1) return
+    const info = this.renderer.info
+    ;(this.rafView as Window & { __workshopScene?: THREE.Scene }).__workshopScene = this.scene
+    ;(this.rafView as Window & { __workshopStats?: object }).__workshopStats = {
+      fps: Math.round(this.stats.frames / this.stats.time),
+      calls: info.render.calls,
+      triangles: info.render.triangles,
+      geometries: info.memory.geometries,
+      textures: info.memory.textures,
+    }
+    this.stats = { frames: 0, time: 0 }
   }
 }
