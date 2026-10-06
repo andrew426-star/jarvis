@@ -23,6 +23,7 @@ import {
 } from "@/lib/ar/tracker"
 import { accentHex } from "@/lib/core-events"
 import { hologram } from "@/lib/workshop/project/holo"
+import type { Rig } from "@/lib/workshop/project/rig"
 import type { Anchor, Cue, Wear, WearAction } from "@/lib/workshop/project/types"
 
 // A project shown on Andrew through his own camera: the model drawn at
@@ -45,6 +46,17 @@ import type { Anchor, Cue, Wear, WearAction } from "@/lib/workshop/project/types
 // covers it as it would a real thing.
 
 const LOST_MS = 400
+/** Cables are re-routed at most this often while segments are tracked. */
+const REWIRE_MS = 50
+
+/** A segment that follows its own body point (rig.ts), and its smoothing. */
+interface TrackedSegment {
+  name: string
+  anchor: Anchor
+  filter: PoseFilter
+  pose: AnchorPose | null
+  lastSeen: number
+}
 /** Real surfaces count as "in front" only by this much (cm), so the body
  *  part the model is worn on does not swallow it through the map's noise. */
 const OCCLUSION_MARGIN = 3
@@ -183,7 +195,7 @@ export class TryOnScene {
   private desk: DeskPlacement = { ...DEFAULT_DESK }
   private depth: DepthField | null = null
   private actions: WearAction[] = []
-  private rig: ActionRig | null = null
+  private actionRig: ActionRig | null = null
   private gestures = true
   private pending: (string | undefined)[] = []
   private cues = new Set<Cue>()
@@ -195,6 +207,10 @@ export class TryOnScene {
   private lastFrame = performance.now()
   private frameCount = 0
   private smoothed: AnchorPose | null = null
+  private bodyRig: Rig | null = null
+  private tracked: TrackedSegment[] = []
+  private segmentSensors = new Set<Sensor>()
+  private lastRewire = 0
   private raf = 0
   private disposed = false
   private status: TryOnStatus = "loading"
@@ -241,6 +257,72 @@ export class TryOnScene {
     this.rebuildRig()
   }
 
+  /** The model's rig: segments with an anchor of their own (a gauntlet's
+   *  hand plate on the hand while the bracer is on the wrist, the
+   *  controller on the upper arm) are each set from that body point every
+   *  frame, and the wires re-routed between them - articulation from the
+   *  same tracking as the rest. Untracked, a segment rests as edited. */
+  setRig(rig: Rig | null) {
+    this.bodyRig = rig
+    this.tracked = []
+    for (const s of rig?.segments ?? []) {
+      if (!s.anchor || s.anchor === this.anchor) continue
+      this.tracked.push({ name: s.name, anchor: s.anchor, filter: new PoseFilter(), pose: null, lastSeen: 0 })
+    }
+    this.segmentSensors = new Set(
+      this.tracked.flatMap((t) => {
+        const { need, extra } = sensorsFor(t.anchor)
+        return [...need, ...extra]
+      })
+    )
+    for (const sensor of this.segmentSensors) {
+      this.sensors.add(sensor)
+      void loadSensor(sensor).catch(() => {})
+    }
+    this.rebuildRig()
+  }
+
+  /** Each tracked segment where its body point is now, or back at rest. */
+  private poseSegments(poses: Map<Anchor, AnchorPose | null>, now: number) {
+    const rig = this.bodyRig
+    if (!rig || !this.model || !this.tracked.length) return false
+    let moved = false
+    const design = new THREE.Matrix4().makeScale(this.design.scale.x, this.design.scale.y, this.design.scale.z)
+    const wear = new THREE.Matrix4().makeRotationFromQuaternion(this.model.quaternion)
+    for (const t of this.tracked) {
+      const j = rig.joints.get(t.name)
+      if (!j) continue
+      const seen = poses.get(t.anchor)
+      if (seen) {
+        t.lastSeen = now
+        t.pose = t.anchor === "desk" ? seen : t.filter.apply(seen.position, seen.quaternion, now / 1000)
+      } else if (now - t.lastSeen > LOST_MS && t.pose) {
+        t.pose = null
+        t.filter.reset()
+        rig.rest(t.name)
+        moved = true
+      }
+      if (!t.pose) continue
+      // The joint's place in the camera: the anchor, then millimetres, the
+      // wear's turn, and the design point that sits on the anchor brought
+      // to it (with the segment as moved, and its pivot).
+      const s = j.segment
+      const at = rig.anchorAt(t.name)
+      const offset = new THREE.Vector3(...(s.move ?? [0, 0, 0])).sub(at).add(new THREE.Vector3(...(s.pivot ?? [0, 0, 0])))
+      const world = new THREE.Matrix4()
+        .compose(t.pose.position, t.pose.quaternion, new THREE.Vector3(1, 1, 1))
+        .multiply(design)
+        .multiply(wear)
+        .multiply(new THREE.Matrix4().makeTranslation(offset.x, offset.y, offset.z))
+      j.holder.updateMatrixWorld(true)
+      const local = j.holder.matrixWorld.clone().invert().multiply(world)
+      local.decompose(j.joint.position, j.joint.quaternion, j.joint.scale)
+      j.joint.updateMatrixWorld(true)
+      moved = true
+    }
+    return moved
+  }
+
   setWear(wear: Pick<Wear, "offset" | "rot" | "scale">) {
     const [ox = 0, oy = 0, oz = 0] = wear.offset ?? []
     const [rx = 0, ry = 0, rz = 0] = wear.rot ?? []
@@ -256,7 +338,9 @@ export class TryOnScene {
     this.filter.reset()
     this.placeStand()
     const { need, extra } = sensorsFor(anchor)
-    this.sensors = new Set([...need, ...extra, ...this.cueSensors])
+    this.sensors = new Set([...need, ...extra, ...this.cueSensors, ...this.segmentSensors])
+    // A segment on the anchor the whole build now follows needs no tracking of its own.
+    if (this.bodyRig) this.setRig(this.bodyRig)
     this.rebuildRig()
     this.report("loading")
     // Extras improve the fit; never wait for them, never fail on them.
@@ -292,16 +376,25 @@ export class TryOnScene {
 
   /** Fire an action by name (or the first), as its button does. */
   press(name?: string) {
-    if (!this.rig) this.pending.push(name)
-    else this.rig.press(name)
+    if (!this.actionRig) this.pending.push(name)
+    else this.actionRig.press(name)
   }
 
   private rebuildRig() {
-    this.rig?.dispose()
-    this.rig = null
+    this.actionRig?.dispose()
+    this.actionRig = null
     if (!this.model || !this.actions.length) return
-    this.rig = new ActionRig(this.scene, this.overlay, this.model, this.actions, (cue) => resolveCue(cue, this.anchor), this.onAction)
-    for (const name of this.pending.splice(0)) this.rig.press(name)
+    const rig = this.bodyRig
+    this.actionRig = new ActionRig(
+      this.scene,
+      this.overlay,
+      this.model,
+      this.actions,
+      (cue) => resolveCue(cue, this.anchor),
+      this.onAction,
+      (action) => rig?.frameFor(action.at, action.segment) ?? this.model!
+    )
+    for (const name of this.pending.splice(0)) this.actionRig.press(name)
   }
 
   setFlip(flip: boolean) {
@@ -384,12 +477,17 @@ export class TryOnScene {
     this.lighting.update(video, now)
 
     let pose: AnchorPose | null = null
+    const segmentPoses = new Map<Anchor, AnchorPose | null>()
     const fresh = video.currentTime !== this.lastVideoTime
     if (this.status !== "loading" && this.status !== "error" && fresh) {
       try {
         const senses = sense(video, this.running(), this.flip)
         const tracked = anchorPose(senses, this.anchor, this.flip)
         if (tracked) pose = tracked.pose
+        for (const t of this.tracked) {
+          if (segmentPoses.has(t.anchor)) continue
+          segmentPoses.set(t.anchor, t.anchor === "desk" ? this.deskPose() : (anchorPose(senses, t.anchor, this.flip)?.pose ?? null))
+        }
         const ref = referenceOf(senses, tracked)
         if (ref) this.depth?.setReference(ref)
         this.cues = readCues(senses)
@@ -419,7 +517,15 @@ export class TryOnScene {
       this.key.position.copy(this.smoothed.position).addScaledVector(KEY_FROM, 120)
     }
     this.anchorRoot.updateMatrixWorld(true)
-    this.rig?.update(dt, this.cues, this.gestures, visible, this.camera)
+    // Segments on their own body points, only on a new camera frame (no
+    // pose otherwise); the wires between them re-routed, a few times a
+    // second at most.
+    if (fresh && this.poseSegments(segmentPoses, now) && now - this.lastRewire > REWIRE_MS) {
+      this.lastRewire = now
+      this.anchorRoot.updateMatrixWorld(true)
+      this.bodyRig?.rewire(0.5)
+    }
+    this.actionRig?.update(dt, this.cues, this.gestures, visible, this.camera)
 
     this.renderer.clear()
     const depth = this.depth
@@ -436,7 +542,7 @@ export class TryOnScene {
     this.disposed = true
     cancelAnimationFrame(this.raf)
     this.depth?.stop()
-    this.rig?.dispose()
+    this.actionRig?.dispose()
     this.lighting.dispose()
     this.scene.traverse((node) => {
       const mesh = node as THREE.Mesh

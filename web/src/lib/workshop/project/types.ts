@@ -89,6 +89,36 @@ export interface WearAction {
   charge?: number
   /** projectile: shots per trigger. */
   burst?: number
+  /** The segment it rides on (default: the one whose parts are at `at`). */
+  segment?: string
+}
+
+/**
+ * A rigid piece of the build that moves on its own (app/tools/workshop_project.py
+ * SEGMENT_GUIDE): a gauntlet's hand plate hinged at the wrist, or the
+ * controller moved off the build onto a mount elsewhere on the body. Its
+ * members are part ids, printed part names or groups; the wires to them
+ * follow wherever it goes. Millimetres and degrees, in the design frame.
+ */
+export interface Segment {
+  name: string
+  members: string[]
+  /** The segment it hangs from (a finger from the hand); else the build. */
+  parent?: string
+  /** The joint it turns about. */
+  pivot?: number[]
+  /** Where it has been moved to, from where the layout puts its members. */
+  move?: number[]
+  /** How far the joint is turned (x, y, z degrees), shown on the stage. */
+  pose?: number[]
+  /** The joint's range per axis, [[min, max] x3] degrees. */
+  limits?: number[][]
+  /** Try-on: the body point it follows on its own (the hand, while the
+   *  bracer stays on the wrist). Without one it rides with its parent. */
+  anchor?: Anchor
+  /** The design point that sits on that anchor (default: where the
+   *  anchor is at rest relative to the main one, along the arm). */
+  at?: number[]
 }
 
 /** How the camera try-on wears it (app/tools/workshop_project.py WEAR_GUIDE). */
@@ -114,6 +144,7 @@ export interface Project {
   layout: Record<string, Placement>
   extras: { item: string; qty: number }[]
   wear?: Wear | null
+  segments?: Segment[]
   hex: string | null
   compiled_code: string | null
 }
@@ -130,6 +161,7 @@ export interface GalleryProject {
   parts: Part[]
   printed: PrintedPart[]
   layout: Record<string, Placement>
+  segments?: Segment[]
   wires: number
   compiled: boolean
   estimated_total: number

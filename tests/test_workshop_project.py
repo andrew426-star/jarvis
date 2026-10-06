@@ -224,3 +224,35 @@ def test_specialty_filaments():
     visor, badge = p["printed"]
     assert visor["material"] == "dual_silk" and visor["color2"] == "#b33a3a" and visor["texture"] == "smooth"
     assert badge["material"] == "glow" and "texture" not in badge
+
+
+def test_segments_are_kept_bounded_and_loop_free():
+    raw = {
+        "parts": [{"id": "U1", "type": "uno"}, {"id": "LED1", "type": "led", "group": "Hand"}],
+        "printed": [{"name": "Bracer", "code": "cube(1);"}],
+        "segments": [
+            {"name": "Hand", "members": ["hand", "Ghost"], "pivot": [0, 0, 0], "anchor": "hand",
+             "limits": [[70, -70], [-70, 70], [-30, 30]], "pose": [0, 400, 0], "parent": "Finger"},
+            {"name": "Finger", "members": ["LED1"], "parent": "Hand"},
+            {"name": "Controller", "members": ["u1"], "move": [-400, 0, 45], "anchor": "upper_arm"},
+            {"name": "hand", "members": ["Bracer"]},
+            {"name": "Elbow", "members": [], "anchor": "tail"},
+        ],
+        "wear": {"anchor": "wrist", "actions": [{"name": "Blast", "kind": "repulsor", "at": [70, 0, -20], "segment": "Hand"}]},
+    }
+    p, problems = wp.normalize(raw)
+    segs = {s["name"]: s for s in p["segments"]}
+    assert list(segs) == ["Hand", "Finger", "Controller", "Elbow"]
+    # Group names match whatever their case; unknown members are reported.
+    assert segs["Hand"]["members"] == ["Hand"]
+    assert any("Ghost" in m for m in problems)
+    assert segs["Hand"]["limits"][0] == [-70.0, 70.0]
+    assert segs["Hand"]["pose"] == [0.0, 180.0, 0.0]
+    # Hand -> Finger -> Hand loops: the first parent goes, the other stays.
+    assert "parent" not in segs["Hand"] and segs["Finger"]["parent"] == "Hand"
+    assert segs["Controller"] == {"name": "Controller", "members": ["U1"], "move": [-400.0, 0.0, 45.0], "anchor": "upper_arm"}
+    assert "anchor" not in segs["Elbow"]
+    assert any("own" in m for m in problems)
+    assert p["wear"]["actions"][0]["segment"] == "Hand"
+    assert wp.normalize({})[0]["segments"] == []
+    assert "segments" in wp.SECTIONS

@@ -155,92 +155,174 @@ function insulation(color: string | undefined, a: string, b: string): number {
 
 const WIRE_R = 0.8 // 22 AWG with its insulation, 1.6 mm across
 const PLUG = 14 // a DuPont housing's length
+/** The longest stock jumper; a run past it needs a longer lead or a splice. */
+export const JUMPER_MM = 200
+
+/** A part's model relative to `frame` (one of its ancestors), from the
+ *  local matrices: no world matrices, so it holds however deep the part
+ *  sits in moving segments and whatever the frame itself hangs from. */
+function relativeTo(node: THREE.Object3D, frame: THREE.Object3D, out: THREE.Matrix4) {
+  node.updateMatrix()
+  out.copy(node.matrix)
+  for (let up = node.parent; up && up !== frame; up = up.parent) {
+    up.updateMatrix()
+    out.premultiply(up.matrix)
+  }
+  return out
+}
+
+interface End {
+  model: THREE.Object3D
+  anchor: PinAnchor
+  /** How many wires sit beside this one on the same pin. */
+  stack: number
+  /** The DuPont housing and pin, or none for a part's own lead. */
+  plug: THREE.Object3D[]
+}
+
+interface Run {
+  wire: Wire
+  a: End
+  b: End
+  hex: number
+  tube: THREE.Mesh | null
+  mm: number
+}
 
 /**
- * The project's wires as cables, in the design frame. `placed` maps a part
- * id to its built model (placed by its layout); wires to parts not in it
- * are left out (the try-on, showing one sub-assembly).
+ * The project's wires as cables, in the design frame (`frame`, an ancestor
+ * of every part). `placed` maps a part id to its built model (placed by
+ * its layout); wires to parts not in it are left out (the try-on, showing
+ * one sub-assembly). `update()` re-routes every cable from where its parts
+ * are now - a segment moved on the stage or tracked on the body - so
+ * moving the controller or bending the wrist stretches the wires instead
+ * of leaving them behind.
  */
-export function buildCables(parts: Part[], wires: Wire[], placed: Map<string, THREE.Object3D>): THREE.Group {
-  const group = new THREE.Group()
-  group.name = "cables"
-  group.userData.cables = true
-  const anchors = new Map(parts.map((p) => [p.id, pinAnchors(p)]))
-  const housing = real.plastic(0x121212, 0.5)
-  const pinMetal = real.metal(0xd8b25a, 0.25)
-  const materials = new Map<number, THREE.Material>()
-  const material = (hex: number) => {
-    let m = materials.get(hex)
+export class Cabling {
+  readonly group = new THREE.Group()
+  private readonly runs: Run[] = []
+  private readonly materials = new Map<number, THREE.Material>()
+  private readonly m = new THREE.Matrix4()
+
+  constructor(parts: Part[], wires: Wire[], placed: Map<string, THREE.Object3D>, private readonly frame: THREE.Object3D) {
+    this.group.name = "cables"
+    this.group.userData.cables = true
+    const anchors = new Map(parts.map((p) => [p.id, pinAnchors(p)]))
+    const housing = real.plastic(0x121212, 0.5)
+    const pinMetal = real.metal(0xd8b25a, 0.25)
+    // How many wires already land on each pin: they fan out rather than overlap.
+    const used = new Map<string, number>()
+    const end = (ref: string): End | null => {
+      const [pid, pin] = ref.split(".")
+      const model = placed.get(pid)
+      let anchor = anchors.get(pid)?.[pin]
+      if (!model || !anchor) return null
+      const k = used.get(ref) ?? 0
+      used.set(ref, k + 1)
+      // The UNO has three GND sockets: spread the ground wires across them.
+      const unoGround = model.userData.partType === "uno" && pin === "GND"
+      if (unoGround) anchor = { pos: unoSocket(["GND", "GND_2", "GND_TOP"][k % 3]), dir: [0, 0, 1], end: "dupont" }
+      // More wires on one pin than it has room for (in a real build they
+      // would meet on a breadboard rail): set each beside the last.
+      const stack = unoGround ? Math.floor(k / 3) : k
+      const plug: THREE.Object3D[] = []
+      if (anchor.end === "dupont") {
+        const body = new THREE.Mesh(new THREE.BoxGeometry(2.5, 2.5, PLUG), housing)
+        const metal = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 3, 8), pinMetal)
+        plug.push(body, metal)
+        this.group.add(body, metal)
+      }
+      return { model, anchor, stack, plug }
+    }
+    for (const wire of wires) {
+      const a = end(wire.a)
+      const b = end(wire.b)
+      if (!a || !b) continue
+      this.runs.push({ wire, a, b, hex: insulation(wire.color, wire.a, wire.b), tube: null, mm: 0 })
+    }
+    this.update()
+    this.group.traverse((n) => {
+      if ((n as THREE.Mesh).isMesh) n.castShadow = n.receiveShadow = true
+    })
+  }
+
+  /** Each wire's run, plug to plug, in millimetres. */
+  get lengths(): { wire: string; mm: number }[] {
+    return this.runs.map((r) => ({ wire: `${r.wire.a} → ${r.wire.b}`, mm: r.mm }))
+  }
+
+  private material(hex: number) {
+    let m = this.materials.get(hex)
     if (!m) {
       m = new THREE.MeshPhysicalMaterial({ color: hex, roughness: 0.42, metalness: 0, clearcoat: 0.35, clearcoatRoughness: 0.3, sheen: 0.2, sheenColor: new THREE.Color(0xffffff) })
-      materials.set(hex, m)
+      this.materials.set(hex, m)
     }
     return m
   }
-  // How many wires already land on each pin: they fan out rather than overlap.
-  const used = new Map<string, number>()
 
-  const end = (ref: string) => {
-    const [pid, pin] = ref.split(".")
-    const model = placed.get(pid)
-    let anchor = anchors.get(pid)?.[pin]
-    if (!model || !anchor) return null
-    const k = used.get(ref) ?? 0
-    used.set(ref, k + 1)
-    // The UNO has three GND sockets: spread the ground wires across them.
-    const unoGround = model.userData.partType === "uno" && pin === "GND"
-    if (unoGround) anchor = { pos: unoSocket(["GND", "GND_2", "GND_TOP"][k % 3]), dir: [0, 0, 1], end: "dupont" }
-    model.updateMatrix()
-    const pos = new THREE.Vector3(...anchor.pos).applyMatrix4(model.matrix)
-    const dir = new THREE.Vector3(...anchor.dir).transformDirection(model.matrix)
-    // More wires on one pin than it has room for (in a real build they
-    // would meet on a breadboard rail): set each beside the last.
-    const stack = unoGround ? Math.floor(k / 3) : k
-    if (stack) {
+  /** Where a wire leaves its pin now, in the frame, with its plug set on it. */
+  private locate(e: End) {
+    relativeTo(e.model, this.frame, this.m)
+    const pos = new THREE.Vector3(...e.anchor.pos).applyMatrix4(this.m)
+    const dir = new THREE.Vector3(...e.anchor.dir).transformDirection(this.m)
+    if (e.stack) {
       const side = new THREE.Vector3().crossVectors(dir, Math.abs(dir.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0)).normalize()
-      pos.addScaledVector(side, stack * 2.6)
+      pos.addScaledVector(side, e.stack * 2.6)
     }
-    return { pos, dir, plug: anchor.end === "dupont" }
+    if (!e.plug.length) return { dir, out: pos }
+    const [body, pin] = e.plug
+    body.position.copy(pos).addScaledVector(dir, PLUG / 2)
+    body.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir)
+    pin.position.copy(pos).addScaledVector(dir, -1)
+    pin.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir)
+    return { dir, out: pos.clone().addScaledVector(dir, PLUG) }
   }
 
-  for (const wire of wires) {
-    const a = end(wire.a)
-    const b = end(wire.b)
-    if (!a || !b) continue
-    const hex = insulation(wire.color, wire.a, wire.b)
-    // A DuPont plug: a black housing along the pin, the wire out of its back.
-    const start = (e: NonNullable<typeof a>) => {
-      if (!e.plug) return e.pos.clone()
-      const body = new THREE.Mesh(new THREE.BoxGeometry(2.5, 2.5, PLUG), housing)
-      body.position.copy(e.pos).addScaledVector(e.dir, PLUG / 2)
-      body.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), e.dir)
-      const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 3, 8), pinMetal)
-      pin.position.copy(e.pos).addScaledVector(e.dir, -1)
-      pin.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), e.dir)
-      group.add(body, pin)
-      return e.pos.clone().addScaledVector(e.dir, PLUG)
+  /** Re-route every cable from where its two ends are now. `detail`
+   *  below 1 draws coarser tubes (the try-on, re-routing every frame). */
+  update(detail = 1) {
+    for (const run of this.runs) {
+      const a = this.locate(run.a)
+      const b = this.locate(run.b)
+      const p0 = a.out
+      const q0 = b.out
+      const span = p0.distanceTo(q0)
+      const lead = 6 + Math.min(span, 300) * 0.12
+      const p1 = p0.clone().addScaledVector(a.dir, lead)
+      const q1 = q0.clone().addScaledVector(b.dir, lead)
+      // Stiff jumper wire arcs up out of a header before it falls to its
+      // other end; between two low ends it sags under its own weight.
+      // Never below the lower of its ends, so never through the bench the
+      // parts stand on (z = 0).
+      const mid = p1.clone().add(q1).multiplyScalar(0.5)
+      const fromAbove = a.dir.z > 0.5 || b.dir.z > 0.5
+      mid.z += fromAbove ? Math.min(30, span * 0.1) : -Math.min(45, span * 0.16)
+      mid.z = Math.max(mid.z, Math.min(p0.z, q0.z, 0) + WIRE_R + 1)
+      const curve = new THREE.CatmullRomCurve3([p0, p1, mid, q1, q0], false, "centripetal")
+      const length = curve.getLength()
+      run.mm = length + (run.a.plug.length ? PLUG : 0) + (run.b.plug.length ? PLUG : 0)
+      const segments = THREE.MathUtils.clamp(Math.round((length / 2.5) * detail), 12, 160)
+      const geometry = new THREE.TubeGeometry(curve, segments, WIRE_R, 8, false)
+      if (!run.tube) {
+        run.tube = new THREE.Mesh(geometry, this.material(run.hex))
+        run.tube.userData.wire = `${run.wire.a}-${run.wire.b}`
+        this.group.add(run.tube)
+        continue
+      }
+      run.tube.geometry.dispose()
+      run.tube.geometry = geometry
+      // The hologram edge lines the stage or the try-on hung on it.
+      for (const child of run.tube.children) {
+        const lines = child as THREE.LineSegments
+        if (!lines.isLineSegments) continue
+        lines.geometry.dispose()
+        lines.geometry = new THREE.EdgesGeometry(geometry, 22)
+      }
     }
-    const p0 = start(a)
-    const q0 = start(b)
-    const span = p0.distanceTo(q0)
-    const lead = 6 + span * 0.12
-    const p1 = p0.clone().addScaledVector(a.dir, lead)
-    const q1 = q0.clone().addScaledVector(b.dir, lead)
-    // Stiff jumper wire arcs up out of a header before it falls to its
-    // other end; between two low ends it sags under its own weight. Never
-    // through the bench the parts stand on (z = 0).
-    const mid = p1.clone().add(q1).multiplyScalar(0.5)
-    const fromAbove = a.dir.z > 0.5 || b.dir.z > 0.5
-    mid.z += fromAbove ? Math.min(30, span * 0.1) : -Math.min(45, span * 0.16)
-    mid.z = Math.max(mid.z, WIRE_R + 1)
-    const curve = new THREE.CatmullRomCurve3([p0, p1, mid, q1, q0], false, "centripetal")
-    const segments = THREE.MathUtils.clamp(Math.round(curve.getLength() / 2.5), 16, 160)
-    const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, segments, WIRE_R, 8, false), material(hex))
-    tube.userData.wire = `${wire.a}-${wire.b}`
-    group.add(tube)
   }
-  group.traverse((n) => {
-    if ((n as THREE.Mesh).isMesh) n.castShadow = n.receiveShadow = true
-  })
-  return group
+}
+
+/** The cables as a plain group, routed once (Cabling re-routes them). */
+export function buildCables(parts: Part[], wires: Wire[], placed: Map<string, THREE.Object3D>, frame: THREE.Object3D): THREE.Group {
+  return new Cabling(parts, wires, placed, frame).group
 }

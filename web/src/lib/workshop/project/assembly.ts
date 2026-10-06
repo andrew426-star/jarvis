@@ -6,7 +6,9 @@ import type { BuiltItem } from "@/lib/workshop/models"
 import { componentModel } from "@/lib/workshop/project/components3d"
 import { loadGenuine } from "@/lib/workshop/project/genuine"
 import { filament } from "@/lib/workshop/project/materials"
-import { buildCables } from "@/lib/workshop/project/wires3d"
+import { buildAxes } from "@/lib/workshop/project/axes3d"
+import { Rig, rigOf } from "@/lib/workshop/project/rig"
+import { Cabling } from "@/lib/workshop/project/wires3d"
 import { PARTS, type Project } from "@/lib/workshop/project/types"
 import type { SimSnapshot } from "@/lib/workshop/sim/runner"
 
@@ -52,8 +54,11 @@ export async function buildDesign(
   project: Project,
   compile: (code: string) => Promise<Uint8Array>,
   { placedOnly = false }: { placedOnly?: boolean } = {}
-): Promise<{ zUp: THREE.Group; bindings: Bindings; failures: { name: string; error: string }[] }> {
+): Promise<{ zUp: THREE.Group; bindings: Bindings; rig: Rig; failures: { name: string; error: string }[] }> {
   const zUp = new THREE.Group()
+  // The pieces that move on their own (rig.ts): each part goes into its
+  // segment's group, the rest straight into the design frame.
+  const rig = new Rig(zUp, rigOf(project), project.wear?.anchor ?? null)
   const bindings: Bindings = { glow: new Map(), horn: new Map(), spin: new Map() }
   const failures: { name: string; error: string }[] = []
 
@@ -81,7 +86,7 @@ export async function buildDesign(
       cursor += w + 12
     }
     model.userData.group = part.group
-    zUp.add(model)
+    rig.container(part.id, part.group).add(model)
     if (model.userData.glow) {
       const materials = model.userData.glow as THREE.MeshStandardMaterial[]
       bindings.glow.set(part.id, { materials, rgb: !!model.userData.rgb, base: materials[0].color.clone() })
@@ -91,9 +96,6 @@ export async function buildDesign(
     const spin = model.getObjectByName("spin")
     if (spin) bindings.spin.set(part.id, spin)
   }
-
-  // The wiring, as real cables between the real pins.
-  if (project.wires.length) zUp.add(buildCables(project.parts, project.wires, placed))
 
   const loader = new STLLoader()
   for (const printed of project.printed) {
@@ -112,13 +114,23 @@ export async function buildDesign(
       mesh.userData.scad = printed.code
       const spot = project.layout[printed.name]
       if (spot) place(mesh, spot.pos, spot.rot)
-      zUp.add(mesh)
+      rig.container(printed.name, printed.group).add(mesh)
     } catch (err) {
       failures.push({ name: printed.name, error: err instanceof Error ? err.message : String(err) })
     }
   }
 
-  return { zUp, bindings, failures }
+  // Segments where the editor last left them, then the wiring, as real
+  // cables between the real pins, routed from there (and re-routed
+  // whenever a segment moves).
+  rig.measure()
+  rig.apply(rig.segments, false)
+  if (project.wires.length) {
+    rig.cabling = new Cabling(project.parts, project.wires, placed, zUp)
+    zUp.add(rig.cabling.group)
+  }
+
+  return { zUp, bindings, rig, failures }
 }
 
 /** Build the assembly; printed parts are compiled by `compile` (the
@@ -129,8 +141,8 @@ export async function buildAssembly(
   project: Project,
   compile: (code: string) => Promise<Uint8Array>,
   { bind = true }: { bind?: boolean } = {}
-): Promise<{ item: BuiltItem; failures: { name: string; error: string }[] }> {
-  const { zUp, bindings, failures } = await buildDesign(project, compile)
+): Promise<{ item: BuiltItem; rig: Rig; failures: { name: string; error: string }[] }> {
+  const { zUp, bindings, rig, failures } = await buildDesign(project, compile)
   // OpenSCAD's z up into the workshop's y up, sat on the floor and centred.
   zUp.rotation.x = -Math.PI / 2
   const turned = new THREE.Group()
@@ -142,6 +154,8 @@ export async function buildAssembly(
   turned.position.set(-centre.x, -bounds.min.y, -centre.z)
   const largest = Math.max(size.x, size.y, size.z, 1) * MM
   const fit = Math.min(1, MAX_UNITS / largest)
+  // The design frame's axes, sized to the build (left out of its bounds).
+  if (bind) zUp.add(buildAxes(Math.max(size.x, size.y, size.z) * 0.6))
 
   const g = new THREE.Group()
   g.add(turned)
@@ -164,6 +178,7 @@ export async function buildAssembly(
         ].slice(0, 4),
       },
     },
+    rig,
     failures,
   }
 }

@@ -167,7 +167,10 @@ export class ActionRig {
     private readonly model: THREE.Object3D,
     actions: WearAction[],
     cueFor: (cue: Cue) => Cue,
-    private readonly onFire: (name: string) => void
+    private readonly onFire: (name: string) => void,
+    /** The frame an action's `at` is in (the segment it rides on: a palm
+     *  repulsor moves with the tracked hand); default the whole model. */
+    private readonly frameFor: (action: WearAction) => THREE.Object3D = () => model
   ) {
     for (const action of actions) {
       const color = new THREE.Color(action.color ?? "#bfe6ff")
@@ -258,13 +261,20 @@ export class ActionRig {
   private findTargets(names: string[]): Target[] {
     const wanted = new Set(names.map((n) => n.toLowerCase()))
     const out: Target[] = []
-    for (const child of this.model.children) {
-      const keys = [child.userData.partId, child.userData.printedName, child.userData.group].filter(Boolean).map((k: string) => k.toLowerCase())
-      if (keys.some((k) => wanted.has(k))) {
-        child.updateMatrix()
-        out.push({ object: child, base: child.matrix.clone() })
+    // Anywhere in the model, segments included (their frames are the
+    // design frame, so the pivot maths holds); not inside a match.
+    const visit = (node: THREE.Object3D) => {
+      for (const child of node.children) {
+        const keys = [child.userData.partId, child.userData.printedName, child.userData.group].filter(Boolean).map((k: string) => k.toLowerCase())
+        if (keys.some((k) => wanted.has(k))) {
+          child.updateMatrix()
+          out.push({ object: child, base: child.matrix.clone() })
+        } else if (child.userData.segment || child.userData.joint || child.parent?.userData.joint) {
+          visit(child)
+        }
       }
     }
+    visit(this.model)
     return out
   }
 
@@ -277,9 +287,10 @@ export class ActionRig {
     local.normalize()
     // A few millimetres out of its surface, so the glow sits in front of it.
     this.emit.set(x, y, z).addScaledVector(local, 5)
-    this.model.localToWorld(this.emit)
+    const frame = this.frameFor(action)
+    frame.localToWorld(this.emit)
     const rotation = new THREE.Quaternion()
-    this.model.getWorldQuaternion(rotation)
+    frame.getWorldQuaternion(rotation)
     this.aim.copy(local).applyQuaternion(rotation).normalize()
     return { at: this.emit.clone(), dir: this.aim.clone() }
   }

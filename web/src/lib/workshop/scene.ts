@@ -76,6 +76,22 @@ type Grip =
     }
   | { kind: "orbit"; lastX: number; lastY: number }
   | { kind: "rotate"; item: Item; lastX: number; lastY: number; yaw: number; tilt: number }
+  | { kind: "axis"; axis: 0 | 1 | 2; lastX: number; lastY: number }
+
+/** What the move gizmo is on: a segment of a project (rig.ts), moved in
+ *  its design frame. `object` is where the handles sit (the segment's
+ *  joint), `frame` the design frame whose x, y, z they point along. */
+export interface GizmoTarget {
+  object: THREE.Object3D
+  frame: THREE.Object3D
+  /** Dragged `mm` along a design axis. */
+  onDrag: (axis: 0 | 1 | 2, mm: number) => void
+  onEnd: () => void
+}
+
+const GIZMO_COLORS = [0xff5a5a, 0x5aff8c, 0x5aa8ff]
+/** The gizmo's size, as a share of its distance from the camera. */
+const GIZMO_SCALE = 0.11
 
 const TARGET = new THREE.Vector3(0, 1.1, 0)
 const SLOTS: [number, number][] = [
@@ -254,6 +270,10 @@ export class WorkshopScene {
   private accent = accentHex()
   private focused: Item | null = null
   private accentTimer = 0
+  private axesShown = true
+  private readonly gizmo = new THREE.Group()
+  private readonly gizmoHandles: THREE.Mesh[] = []
+  private gizmoTarget: GizmoTarget | null = null
 
   constructor(
     private readonly container: HTMLElement,
@@ -294,6 +314,7 @@ export class WorkshopScene {
     this.scene.add(this.rim)
 
     this.buildFloor()
+    this.buildGizmo()
 
     this.composer = new EffectComposer(this.renderer)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
@@ -380,6 +401,7 @@ export class WorkshopScene {
       posed: false,
     }
     this.items.push(item)
+    this.showAxes(item)
     this.focus(item)
     this.emitItems()
   }
@@ -403,6 +425,103 @@ export class WorkshopScene {
     this.removeItem(old)
   }
 
+  /** The design axes on projects (assembly.ts) shown or hidden; toggled
+   *  when `on` is left out. */
+  setAxes(on = !this.axesShown): boolean {
+    this.axesShown = on
+    for (const item of this.items) this.showAxes(item)
+    return on
+  }
+
+  private showAxes(item: Item) {
+    item.model.traverse((node) => {
+      if (node.name === "axes" && node.userData.helper) node.visible = this.axesShown
+    })
+  }
+
+  /** Put the move gizmo on a segment, or take it off (null). */
+  setGizmo(target: GizmoTarget | null) {
+    for (const [id, grip] of this.grips) if (grip.kind === "axis") this.grips.delete(id)
+    this.gizmoTarget = target
+    this.gizmo.visible = !!target
+  }
+
+  /** Three arrows, X red, Y green, Z blue, each with a fat invisible
+   *  handle that is easy to catch with a hand. Drawn over everything. */
+  private buildGizmo() {
+    const up = new THREE.Vector3(0, 1, 0)
+    for (let axis = 0; axis < 3; axis += 1) {
+      const dir = new THREE.Vector3().setComponent(axis, 1)
+      const color = GIZMO_COLORS[axis]
+      const material = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 })
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.8, 8), material)
+      shaft.position.copy(dir).multiplyScalar(0.4)
+      shaft.quaternion.setFromUnitVectors(up, dir)
+      const head = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.2, 16), material)
+      head.position.copy(dir).multiplyScalar(0.9)
+      head.quaternion.setFromUnitVectors(up, dir)
+      const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 1.05, 8), new THREE.MeshBasicMaterial({ visible: false }))
+      handle.position.copy(dir).multiplyScalar(0.55)
+      handle.quaternion.setFromUnitVectors(up, dir)
+      handle.userData.axis = axis
+      handle.userData.material = material
+      for (const m of [shaft, head]) m.renderOrder = 40
+      this.gizmo.add(shaft, head, handle)
+      this.gizmoHandles.push(handle)
+    }
+    const hub = new THREE.Mesh(new THREE.SphereGeometry(0.05, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false }))
+    hub.renderOrder = 40
+    this.gizmo.add(hub)
+    this.gizmo.visible = false
+    this.scene.add(this.gizmo)
+  }
+
+  /** The gizmo axis under the pointer, if it is showing. */
+  private pickGizmo(x: number, y: number): 0 | 1 | 2 | null {
+    if (!this.gizmoTarget || !this.gizmo.visible) return null
+    this.raycaster.setFromCamera(this.ndc(x, y), this.camera)
+    const hit = this.raycaster.intersectObjects(this.gizmoHandles, false)[0]
+    return hit ? (hit.object.userData.axis as 0 | 1 | 2) : null
+  }
+
+  /** Pixels of pointer travel to millimetres along a design axis: the
+   *  travel along the axis as it appears on screen, through the design
+   *  frame's scale on the stage. */
+  private dragAlong(axis: 0 | 1 | 2, dx: number, dy: number): number {
+    const target = this.gizmoTarget
+    if (!target) return 0
+    const origin = target.object.getWorldPosition(new THREE.Vector3())
+    const q = target.frame.getWorldQuaternion(new THREE.Quaternion())
+    const dir = new THREE.Vector3().setComponent(axis, 1).applyQuaternion(q)
+    const reach = this.gizmo.scale.x
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    const toScreen = (p: THREE.Vector3) => {
+      const n = p.clone().project(this.camera)
+      return new THREE.Vector2((n.x * 0.5 + 0.5) * rect.width, (-n.y * 0.5 + 0.5) * rect.height)
+    }
+    const a = toScreen(origin)
+    const along = toScreen(origin.clone().addScaledVector(dir, reach)).sub(a)
+    const pixels = along.length()
+    // Pointing straight at the camera: no sensible way to drag along it.
+    if (pixels < 8) return 0
+    const world = ((dx * along.x + dy * along.y) / pixels / pixels) * reach
+    const mmPerWorld = 1 / (target.frame.getWorldScale(new THREE.Vector3()).x || 1)
+    return world * mmPerWorld
+  }
+
+  private placeGizmo() {
+    const target = this.gizmoTarget
+    if (!target) return
+    target.object.getWorldPosition(this.gizmo.position)
+    target.frame.getWorldQuaternion(this.gizmo.quaternion)
+    this.gizmo.scale.setScalar(this.gizmo.position.distanceTo(this.camera.position) * GIZMO_SCALE)
+    const held = new Set([...this.grips.values()].flatMap((g) => (g.kind === "axis" ? [g.axis] : [])))
+    for (const handle of this.gizmoHandles) {
+      const material = handle.userData.material as THREE.MeshBasicMaterial
+      material.opacity = held.size ? (held.has(handle.userData.axis) ? 1 : 0.3) : 0.9
+    }
+  }
+
   /** Take an item off the stage at once, without the discard effect. */
   removeWhere(name: string) {
     const old = this.live().find((item) => item.spec.name === name)
@@ -410,7 +529,7 @@ export class WorkshopScene {
   }
 
   private removeItem(item: Item) {
-    for (const [id, grip] of this.grips) if (grip.kind !== "orbit" && grip.item === item) this.grips.delete(id)
+    for (const [id, grip] of this.grips) if ((grip.kind === "item" || grip.kind === "rotate") && grip.item === item) this.grips.delete(id)
     if (this.twoHand?.item === item) this.twoHand = null
     if (this.hovered === item) this.hovered = null
     if (this.focused === item) this.focus(null)
@@ -506,7 +625,9 @@ export class WorkshopScene {
       restore.push(() => (object.visible = was))
     }
     this.hands.forEach((rig) => hide(rig.group))
+    hide(this.gizmo)
     if (clean) {
+      for (const item of this.live()) item.model.traverse((node) => node.userData.helper && hide(node))
       ;[this.floor, this.floorGrid, this.floorRings].forEach(hide)
       const background = this.scene.background
       const fog = this.scene.fog
@@ -587,6 +708,11 @@ export class WorkshopScene {
 
   /** Pointer pressed (mouse button or pinch). Always claims: empty space orbits. */
   down(id: string, x: number, y: number): boolean {
+    const axis = this.pickGizmo(x, y)
+    if (axis !== null) {
+      this.grips.set(id, { kind: "axis", axis, lastX: x, lastY: y })
+      return true
+    }
     const item = this.pick(x, y)
     if (item) {
       const height = item.bounds.getCenter(new THREE.Vector3()).y
@@ -618,7 +744,10 @@ export class WorkshopScene {
       grip.lastY = y
       return
     }
-    if (grip.kind === "rotate") {
+    if (grip.kind === "axis") {
+      const mm = this.dragAlong(grip.axis, x - grip.lastX, y - grip.lastY)
+      if (mm) this.gizmoTarget?.onDrag(grip.axis, mm)
+    } else if (grip.kind === "rotate") {
       grip.yaw += (x - grip.lastX) * ROTATE_RATE
       grip.tilt = THREE.MathUtils.clamp(grip.tilt + (y - grip.lastY) * ROTATE_RATE, -Math.PI / 2, Math.PI / 2)
       const step = (angle: number) => (this.snap ? Math.round(angle / SNAP_ANGLE) * SNAP_ANGLE : angle)
@@ -663,6 +792,10 @@ export class WorkshopScene {
     const grip = this.grips.get(id)
     this.grips.delete(id)
     if (this.twoHand && (this.twoHand.a === id || this.twoHand.b === id)) this.twoHand = null
+    if (grip?.kind === "axis") {
+      this.gizmoTarget?.onEnd()
+      return
+    }
     if (!grip || grip.kind !== "item") return
     if (grip.item.armed) {
       this.discard(grip.item)
@@ -724,7 +857,7 @@ export class WorkshopScene {
   private discard(item: Item) {
     item.armed = false
     item.dying = this.clock.elapsedTime
-    for (const [id, grip] of this.grips) if (grip.kind !== "orbit" && grip.item === item) this.grips.delete(id)
+    for (const [id, grip] of this.grips) if ((grip.kind === "item" || grip.kind === "rotate") && grip.item === item) this.grips.delete(id)
     if (this.twoHand?.item === item) this.twoHand = null
     if (this.focused === item) this.focus(null)
     if (this.hovered === item) this.hovered = null
@@ -737,7 +870,7 @@ export class WorkshopScene {
    *  one group), each pushed out along the line from the centre to it. */
   private explodeParts(object: THREE.Object3D): Item["parts"] {
     const isPart = (node: THREE.Object3D) =>
-      !(node as THREE.Light).isLight && !node.userData.holoLines && !node.userData.cables && ((node as THREE.Mesh).isMesh || (node as THREE.Group).isGroup)
+      !(node as THREE.Light).isLight && !node.userData.holoLines && !node.userData.cables && !node.userData.helper && ((node as THREE.Mesh).isMesh || (node as THREE.Group).isGroup)
     let level = object
     for (let depth = 0; depth < 4; depth += 1) {
       const children = level.children.filter(isPart)
@@ -1158,6 +1291,7 @@ export class WorkshopScene {
       this.label.style.opacity = "0"
     }
 
+    this.placeGizmo()
     this.composer.render()
   }
 }

@@ -10,6 +10,7 @@ import {
   DownloadIcon,
   FileTextIcon,
   LayersIcon,
+  Move3dIcon,
   Loader2Icon,
   PackageIcon,
   PauseIcon,
@@ -21,6 +22,7 @@ import {
 
 import { HoloViewer } from "@/components/workshop/holo-viewer"
 import { STATUS_LABEL } from "@/components/workshop/project-gallery"
+import { RigTab } from "@/components/workshop/rig-tab"
 import { Schematic } from "@/components/workshop/schematic"
 import { useJarvis } from "@/lib/store"
 import { compileScadCached } from "@/lib/workshop/openscad"
@@ -37,6 +39,7 @@ import { isRunning, resetSim, sendSerial, setSimInput, setSimSpeed, startSim, st
 const TABS: { key: ProjectTab; label: string; icon: typeof CpuIcon }[] = [
   { key: "overview", label: "OVERVIEW", icon: FileTextIcon },
   { key: "parts", label: "PARTS", icon: PackageIcon },
+  { key: "rig", label: "RIG", icon: Move3dIcon },
   { key: "circuit", label: "CIRCUIT", icon: CircuitBoardIcon },
   { key: "code", label: "CODE", icon: CodeIcon },
   { key: "sim", label: "SIM", icon: CpuIcon },
@@ -136,6 +139,7 @@ export function ProjectPanel() {
       <div className="min-h-0 flex-1 overflow-y-auto" style={{ padding: "var(--sp-2)" }}>
         {tab === "overview" && <OverviewTab />}
         {tab === "parts" && <PartsTab />}
+        {tab === "rig" && <RigTab />}
         {tab === "circuit" && <CircuitTab />}
         {tab === "code" && <CodeTab />}
         {tab === "sim" && <SimTab />}

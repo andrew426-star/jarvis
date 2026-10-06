@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import {
+  Axis3dIcon,
   BoxesIcon,
   DownloadIcon,
   FlaskConicalIcon,
@@ -37,6 +38,9 @@ import { PANEL_WIDTH, ProjectPanel } from "@/components/workshop/project-panel"
 import { MaterialLab } from "@/components/workshop/material-lab"
 import { ProjectGallery } from "@/components/workshop/project-gallery"
 import { buildAssembly, releaseAssembly } from "@/lib/workshop/project/assembly"
+import { rigOf, type Rig } from "@/lib/workshop/project/rig"
+import { editableRig, editSegment, saveRig } from "@/lib/workshop/project/rig-edit"
+import type { Project } from "@/lib/workshop/project/types"
 import { useLab } from "@/lib/workshop/lab/store"
 import { useProject } from "@/lib/workshop/project/store"
 import { useTryOn } from "@/lib/ar/store"
@@ -187,6 +191,13 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
   const labOpen = useLab((state) => state.open)
   // The open project's 3D assembly on the stage, by the name it was given.
   const assemblyRef = useRef<string | null>(null)
+  // Its rig (segments that move on their own, and the cables between
+  // them), and what it was built from: a save that only moves or turns a
+  // segment re-poses this one instead of rebuilding (and recompiling).
+  const rigRef = useRef<{ rig: Rig; signature: string } | null>(null)
+  const [rigBuilt, setRigBuilt] = useState(0)
+  const axesOn = useProject((state) => state.axes)
+  const rigEdit = useProject((state) => state.rigEdit)
 
   useEffect(() => {
     useProject.getState().setToken(token)
@@ -204,7 +215,15 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
     if (!project || (!project.parts.length && !project.printed.length)) {
       if (assemblyRef.current) scene.removeWhere(assemblyRef.current)
       assemblyRef.current = null
+      rigRef.current = null
       releaseAssembly()
+      return
+    }
+    const signature = buildSignature(project)
+    const built = rigRef.current
+    if (built && assemblyRef.current && built.signature === signature) {
+      built.rig.apply(rigOf(project))
+      useProject.getState().setRuns(built.rig.cabling?.lengths ?? [])
       return
     }
     let cancelled = false
@@ -213,12 +232,18 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
         if (project.printed.length && !cancelled) setCompiling(`${project.name} printed parts`)
         return buildAssembly(project, compileScad)
       })
-      .then(({ item, failures }) => {
+      .then(({ item, rig, failures }) => {
         const live = sceneRef.current
         if (cancelled || !live) return
         live.replaceBuilt(assemblyRef.current, item)
         live.setModeWhere(item.spec.name, "solid")
         assemblyRef.current = item.spec.name
+        // An edit made while it was building.
+        const draft = useProject.getState().rigDraft
+        if (draft) rig.apply(draft)
+        rigRef.current = { rig, signature }
+        setRigBuilt((n) => n + 1)
+        useProject.getState().setRuns(rig.cabling?.lengths ?? [])
         for (const failure of failures) {
           reportScadResult(failure.name, failure.error)
           useJarvis.getState().notify("warning", `${failure.name} did not compile`, failure.error.split("\n")[0].slice(0, 160))
@@ -230,6 +255,56 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
       cancelled = true
     }
   }, [ready, projectVersion])
+
+  // The rig as it is being edited, shown live: the segment where the
+  // panel or the gizmo has it and the wires re-routed to it.
+  useEffect(
+    () =>
+      useProject.subscribe((state, before) => {
+        const built = rigRef.current
+        if (!built || state.rigDraft === before.rigDraft || !state.rigDraft) return
+        built.rig.apply(state.rigDraft)
+        state.setRuns(built.rig.cabling?.lengths ?? [])
+      }),
+    []
+  )
+
+  // The design axes, as the toolbar has them.
+  useEffect(() => {
+    if (ready) sceneRef.current?.setAxes(axesOn)
+  }, [ready, axesOn, rigBuilt])
+
+  // The move gizmo on the segment the panel is editing: drag an arrow to
+  // move it along that design axis (0.5 mm steps; 5 mm with snapping on).
+  useEffect(() => {
+    const scene = sceneRef.current
+    const built = rigRef.current
+    const joint = rigEdit ? built?.rig.joints.get(rigEdit) : undefined
+    if (!scene || !built || !joint) {
+      scene?.setGizmo(null)
+      return
+    }
+    let raw: number[] | null = null
+    scene.setGizmo({
+      object: joint.joint,
+      frame: built.rig.zUp,
+      onDrag: (axis, mm) => {
+        const name = joint.segment.name
+        const current = editableRig().find((s) => s.name === name)
+        if (!current) return
+        raw ??= [...(current.move ?? [0, 0, 0])]
+        raw[axis] += mm
+        const step = snapOn ? 5 : 0.5
+        const move = raw.map((v) => Math.round(v / step) * step)
+        editSegment(name, (s) => ({ ...s, move }))
+      },
+      onEnd: () => {
+        raw = null
+        void saveRig()
+      },
+    })
+    return () => scene.setGizmo(null)
+  }, [rigEdit, rigBuilt, ready, snapOn])
 
   // Native tracking: the workshop brings up the camera and hands itself,
   // and on the way out puts back only what it switched on - a camera that
@@ -639,6 +714,18 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
           </button>
           <button
             type="button"
+            className="btn flex items-center"
+            style={{ gap: 6, padding: "4px 10px" }}
+            onClick={() => useProject.getState().setAxes(!axesOn)}
+            data-active={axesOn}
+            aria-pressed={axesOn}
+            disabled={!ready}
+            title="The project's X, Y and Z axes: the layout's frame, in mm (z up)"
+          >
+            <Axis3dIcon size={12} /> AXES
+          </button>
+          <button
+            type="button"
             className="btn"
             style={{ width: 28, height: 28, padding: 0 }}
             onClick={() => setGesturesOpen((o) => !o)}
@@ -808,4 +895,13 @@ function WorkshopStage({ token, onClose }: { token: string; onClose: () => void 
       </div>
     </>
   )
+}
+
+/** What the stage's assembly is built from, less what a rig edit changes
+ *  (a segment's move, pose, pivot, range or anchor) - those are applied
+ *  to the built one. */
+function buildSignature(project: Project): string {
+  const { parts, wires, printed, layout } = project
+  const rig = rigOf(project).map((s) => [s.name, s.members, s.parent ?? null])
+  return JSON.stringify({ id: project.id, parts, wires, printed, layout, rig })
 }

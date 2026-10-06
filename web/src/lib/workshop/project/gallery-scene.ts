@@ -125,7 +125,7 @@ export class GalleryScene {
   /** Build a project's hologram: its assembly, every surface in light. */
   private async loadHologram(slot: Slot) {
     const p = slot.project
-    const project = { ...emptyProject(p.name), id: p.id, goal: p.goal, status: p.status, parts: p.parts, printed: p.printed, layout: p.layout }
+    const project = { ...emptyProject(p.name), id: p.id, goal: p.goal, status: p.status, parts: p.parts, printed: p.printed, layout: p.layout, segments: p.segments }
     if (!p.parts.length && !p.printed.length) {
       this.placeholder(slot)
       return

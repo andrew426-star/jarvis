@@ -52,6 +52,27 @@ WEAR_GUIDE = (
     "group shows only that sub-assembly; parts with no layout position are left out of the "
     "try-on. offset (mm) and rot (degrees) nudge the whole thing in the anchor frame."
 )
+MAX_SEGMENTS = 12
+SEGMENT_GUIDE = (
+    "segments: the pieces that move on their own, so the workshop and the try-on articulate "
+    "like the body does: [{name, members, parent?, pivot?, move?, pose?, limits?, anchor?, at?}]. "
+    "members: part ids, printed part names or groups; the wires to them follow wherever the "
+    "segment goes (the workshop re-routes them and flags runs longer than a 20 cm jumper). "
+    "Anything worn across a joint MUST be split at it: a gauntlet is a bracer on the wrist "
+    "(the wear anchor) plus a hand plate segment with anchor 'hand' and pivot on the wrist "
+    "joint, limits [[-25,25],[-70,70],[-30,30]] (roll, flexion, side to side); fingers are "
+    "segments with parent the hand; a full arm adds forearm and upper_arm segments; shoulder "
+    "armour on a chest piece is a segment with anchor 'shoulder'. In the try-on a segment with "
+    "an anchor follows that body point on its own; one without rides with its parent. "
+    "pivot: the joint centre (mm, design frame); pose: how far it is turned (x, y, z degrees) "
+    "on the stage; limits: [[min,max] x3] degrees. "
+    "The controller (the UNO) is its own segment, 'Controller': where a board on the build "
+    "would be bulky or in the way, mount it off the build - move: [x,y,z] mm from where the "
+    "layout puts it - with anchor 'upper_arm', 'forearm', 'chest' or 'shoulder' for a worn "
+    "build, and a printed mount for it; plan the cable run (a harness, or longer leads). "
+    "at: the design point that sits on the segment's anchor (default: along the arm, x from "
+    "the wear anchor: upper_arm -400, forearm -100, wrist 0, hand +70 mm from the wrist joint)."
+)
 ACTION_KINDS = ("repulsor", "beam", "projectile", "deploy", "glow")
 CUES = ("auto", "palm", "fist", "point", "thwip", "jaw", "raise", "button")
 ACTION_GUIDE = (
@@ -136,6 +157,8 @@ def _actions(raw, problems: list[str]) -> list[dict]:
             v = _num(a.get(key), lo, hi)
             if v is not None:
                 action[key] = int(v) if key == "burst" else v
+        if str(a.get("segment") or "").strip():
+            action["segment"] = str(a["segment"]).strip()[:40]
         if kind == "deploy":
             action["targets"] = [str(t)[:60] for t in (a.get("targets") or [])[:12] if str(t).strip()]
             action["move"] = _vec(a.get("move"))
@@ -144,6 +167,58 @@ def _actions(raw, problems: list[str]) -> list[dict]:
                 problems.append(f"action {name}: a deploy needs targets (part ids, printed names or groups)")
                 continue
         out.append(action)
+    return out
+
+
+def _segments(raw, names: set[str], problems: list[str]) -> list[dict]:
+    """The rig (SEGMENT_GUIDE), bounded: members that exist, parents that
+    exist and do not loop, joints within a turn."""
+    out: list[dict] = []
+    known = {n.lower(): n for n in names}
+    for item in (raw if isinstance(raw, list) else [])[:MAX_SEGMENTS]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()[:40]
+        if not name or any(s["name"].lower() == name.lower() for s in out):
+            problems.append(f"segment {name or '?'}: needs a name of its own")
+            continue
+        members = []
+        for m in (item.get("members") or [])[:40] if isinstance(item.get("members"), list) else []:
+            key = known.get(str(m).strip().lower())
+            if key and key not in members:
+                members.append(key)
+            elif not key:
+                problems.append(f"segment {name}: no part, printed part or group {str(m)[:40]!r}")
+        segment: dict = {"name": name, "members": members}
+        if str(item.get("parent") or "").strip():
+            segment["parent"] = str(item["parent"]).strip()[:40]
+        for key in ("pivot", "move", "at"):
+            if isinstance(item.get(key), (list, tuple)):
+                segment[key] = [max(-5000.0, min(5000.0, v)) for v in _vec(item[key])]
+        if isinstance(item.get("pose"), (list, tuple)):
+            segment["pose"] = [max(-180.0, min(180.0, v)) for v in _vec(item["pose"])]
+        limits = item.get("limits")
+        if isinstance(limits, list) and len(limits) == 3:
+            pairs = [sorted(max(-180.0, min(180.0, v)) for v in _vec(pair, 2)) for pair in limits]
+            segment["limits"] = pairs
+        if item.get("anchor") in ANCHORS:
+            segment["anchor"] = item["anchor"]
+        out.append(segment)
+    # A parent must be another segment, and following parents must end.
+    by_name = {s["name"].lower(): s for s in out}
+    for s in out:
+        parent = s.get("parent")
+        if not parent:
+            continue
+        seen, at = {s["name"].lower()}, by_name.get(parent.lower())
+        while at and at["name"].lower() not in seen:
+            seen.add(at["name"].lower())
+            at = by_name.get(str(at.get("parent") or "").lower())
+        if parent.lower() not in by_name or at is not None:
+            problems.append(f"segment {s['name']}: parent {parent!r} is not another segment, or loops")
+            s.pop("parent")
+        else:
+            s["parent"] = by_name[parent.lower()]["name"]
     return out
 
 
@@ -258,6 +333,8 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         actions = _actions(w.get("actions"), problems)
         if actions:
             wear["actions"] = actions
+    groups = {p["group"] for p in parts + printed if p.get("group")}
+    segments = _segments(raw.get("segments"), set(by_id) | {p["name"] for p in printed} | groups, problems)
     project = {
         "id": raw.get("id"),
         "name": str(raw.get("name") or "Untitled project")[:80],
@@ -271,6 +348,7 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         "layout": layout,
         "extras": extras,
         "wear": wear,
+        "segments": segments,
         "hex": raw.get("hex") if isinstance(raw.get("hex"), str) else None,
         "compiled_code": raw.get("compiled_code") if isinstance(raw.get("compiled_code"), str) else None,
     }
@@ -833,6 +911,7 @@ def gallery() -> list[dict]:
             "parts": project["parts"],
             "printed": project["printed"],
             "layout": project["layout"],
+            "segments": project["segments"],
             "wires": len(project["wires"]),
             "compiled": bool(project["hex"]),
             "estimated_total": b["estimated_total"],
@@ -892,7 +971,10 @@ PROJECT_SCHEMA = {
             "Wires join pins: {a: 'U1.D9', b: 'SRV1.SIG'}. Only the UNO is emulated. Every servo Tech "
             "stocks is continuous rotation. Resistors stocked: 100, 1k, 10k ohm only. "
             "layout: {part id or printed part name: {pos: [x,y,z] mm, rot: [x,y,z] degrees}}, z up, "
-            "the same frame as your OpenSCAD, so printed mounts and the parts they hold line up."
+            "the same frame as your OpenSCAD, so printed mounts and the parts they hold line up. "
+            "The workshop draws these X, Y, Z axes on the stage. Anything worn gets segments "
+            "(see segments): split it at every joint it crosses, and decide where the controller "
+            "is mounted."
         ),
         "parameters": {
             "type": "object",
@@ -978,10 +1060,30 @@ PROJECT_SCHEMA = {
                                     "targets": {"type": "array", "items": {"type": "string"}},
                                     "move": {"type": "array", "items": {"type": "number"}},
                                     "turn": {"type": "array", "items": {"type": "number"}},
+                                    "segment": {"type": "string", "description": "The segment it rides on (default: the one whose parts are at `at`)."},
                                 },
                                 "required": ["name", "kind", "at"],
                             },
                         },
+                    },
+                },
+                "segments": {
+                    "type": "array",
+                    "description": SEGMENT_GUIDE,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "members": {"type": "array", "items": {"type": "string"}},
+                            "parent": {"type": "string"},
+                            "pivot": {"type": "array", "items": {"type": "number"}},
+                            "move": {"type": "array", "items": {"type": "number"}},
+                            "pose": {"type": "array", "items": {"type": "number"}},
+                            "limits": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+                            "anchor": {"type": "string", "enum": list(ANCHORS)},
+                            "at": {"type": "array", "items": {"type": "number"}},
+                        },
+                        "required": ["name", "members"],
                     },
                 },
                 "anchor": {"type": "string", "enum": list(ANCHORS), "description": "try_on: where to show it."},
@@ -995,7 +1097,7 @@ PROJECT_SCHEMA = {
     },
 }
 
-SECTIONS = ("name", "goal", "status", "notes", "wear", "parts", "wires", "code", "printed", "layout", "extras")
+SECTIONS = ("name", "goal", "status", "notes", "wear", "parts", "wires", "code", "printed", "layout", "extras", "segments")
 
 
 def _model_report(project: dict, report: dict) -> dict:

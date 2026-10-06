@@ -4,7 +4,7 @@ import { create } from "zustand"
 
 import { saveProject } from "@/lib/jarvis-client"
 import { useJarvis } from "@/lib/store"
-import type { Project, Report } from "@/lib/workshop/project/types"
+import type { Project, Report, Segment } from "@/lib/workshop/project/types"
 import type { SimSnapshot } from "@/lib/workshop/sim/runner"
 
 // The workshop's open project. Jarvis's project tool loads one in (through
@@ -13,7 +13,7 @@ import type { SimSnapshot } from "@/lib/workshop/sim/runner"
 // what is here. The simulation (sim/controller.ts) publishes its snapshot
 // here for the panel and for Jarvis's view of the console.
 
-export type ProjectTab = "overview" | "parts" | "circuit" | "code" | "sim"
+export type ProjectTab = "overview" | "parts" | "rig" | "circuit" | "code" | "sim"
 
 interface ProjectState {
   project: Project | null
@@ -28,6 +28,19 @@ interface ProjectState {
   tab: ProjectTab
   sim: SimSnapshot | null
   token: string | null
+  /** The rig as edited in the panel or with the stage's gizmo, before it
+   *  is saved (null: as the project has it). The stage shows it live. */
+  rigDraft: Segment[] | null
+  /** The segment the stage's move gizmo is on. */
+  rigEdit: string | null
+  /** The design axes on the stage. */
+  axes: boolean
+  /** Each wire's run on the stage as it is now, mm (for the panel). */
+  runs: { wire: string; mm: number }[]
+  setRigDraft: (segments: Segment[] | null) => void
+  setRigEdit: (name: string | null) => void
+  setAxes: (on: boolean) => void
+  setRuns: (runs: { wire: string; mm: number }[]) => void
   load: (project: Project, report: Report | null) => void
   close: () => void
   setTab: (tab: ProjectTab) => void
@@ -49,9 +62,24 @@ export const useProject = create<ProjectState>((set, get) => ({
   tab: "overview",
   sim: null,
   token: null,
+  rigDraft: null,
+  rigEdit: null,
+  axes: true,
+  runs: [],
+  setRigDraft: (rigDraft) => set({ rigDraft }),
+  setRigEdit: (rigEdit) => set({ rigEdit }),
+  setAxes: (axes) => set({ axes }),
+  setRuns: (runs) => set({ runs }),
   load: (project, report) =>
-    set((state) => ({ project, report, version: state.version + 1, panelOpen: true })),
-  close: () => set((state) => ({ project: null, report: null, sim: null, version: state.version + 1 })),
+    set((state) => ({
+      project,
+      report,
+      version: state.version + 1,
+      panelOpen: true,
+      rigDraft: null,
+      rigEdit: state.project?.id === project.id ? state.rigEdit : null,
+    })),
+  close: () => set((state) => ({ project: null, report: null, sim: null, version: state.version + 1, rigDraft: null, rigEdit: null, runs: [] })),
   setTab: (tab) => set({ tab }),
   setPanelOpen: (panelOpen) => set({ panelOpen }),
   setGalleryOpen: (galleryOpen) => set({ galleryOpen }),

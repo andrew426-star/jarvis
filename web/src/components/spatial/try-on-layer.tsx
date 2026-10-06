@@ -97,7 +97,7 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
       const shown = group
         ? { ...project, parts: project.parts.filter((p) => p.group === group), printed: project.printed.filter((p) => p.group === group) }
         : project
-      const { zUp, failures } = await buildDesign(shown, compileScadCached, { placedOnly: true })
+      const { zUp, rig, failures } = await buildDesign(shown, compileScadCached, { placedOnly: true })
       if (disposed) return
       if (failures.length) useJarvis.getState().notify("warning", "Try-on", `${failures.length} printed part(s) did not compile.`)
       if (!zUp.children.length) {
@@ -105,6 +105,9 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
         return
       }
       scene.setModel(zUp, useTryOn.getState().mode)
+      // Segments that follow a body point of their own (the hand plate on
+      // the hand, the controller on the arm), wires stretching between.
+      scene.setRig(rig)
       const wear = project.wear
       scene.setWear({ offset: wear?.offset ?? [0, 0, 0], rot: wear?.rot ?? [0, 0, 0], scale: (wear?.scale ?? 1) * useTryOn.getState().scale })
       scene.setFlip(useTryOn.getState().flip)
