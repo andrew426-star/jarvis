@@ -284,7 +284,8 @@ export function InboxPanel({
       {!loaded ? (
         <p style={{ color: "var(--text-secondary)" }}>Loading…</p>
       ) : pending.length === 0 ? (
-        <p style={{ color: "var(--text-secondary)" }}>
+        // "Nothing waiting" is only true when the inbox actually loaded.
+        !error && <p style={{ color: "var(--text-secondary)" }}>
           {filter === "all" ? "Nothing waiting, sir. Everything is in hand." : "Nothing waiting under " + filter + "."}
         </p>
       ) : (

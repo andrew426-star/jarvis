@@ -71,7 +71,7 @@ const THREAD_LIMIT = 40
 const SUGGESTIONS = ["Morning brief", "What's on my calendar today?", "Italian review", "How's the launch tracking?"]
 
 const SPEECH_LABEL: Record<SpeechMode, string> = {
-  voice: "When I speak",
+  voice: "On voice",
   always: "Always",
   off: "Never",
 }
@@ -552,7 +552,7 @@ function MobileChat({
         {inboxOpen && (
           <div
             className="fixed inset-0 z-40 flex flex-col"
-            style={{ background: "rgba(5, 5, 8, 0.97)", paddingTop: "env(safe-area-inset-top)" }}
+            style={{ background: "var(--bg-base)", paddingTop: "env(safe-area-inset-top)" }}
           >
             <header
               className="flex shrink-0 items-center px-4"
@@ -602,7 +602,7 @@ function MobileChat({
                     key={option}
                     type="button"
                     className="btn flex-1"
-                    style={{ height: 36, fontSize: 10, padding: 0 }}
+                    style={{ height: 36, fontSize: 11, padding: 0, whiteSpace: "nowrap" }}
                     data-active={speech === option}
                     onClick={() => setSpeech(option)}
                   >
@@ -690,7 +690,7 @@ function MobileChat({
               COMMS
             </span>
             {speaking && (
-              <button type="button" className="btn" style={{ height: 24, padding: "0 8px", fontSize: 10 }} onClick={() => stopNarration()}>
+              <button type="button" className="btn" style={{ height: 28, padding: "0 10px", fontSize: 11 }} onClick={() => stopNarration()}>
                 <SquareIcon size={10} /> STOP
               </button>
             )}
@@ -771,7 +771,7 @@ function MobileChat({
               value={draft}
               rows={1}
               enterKeyHint="send"
-              placeholder={listening ? "Listening…" : "Enter command or speak…"}
+              placeholder={listening ? "Listening…" : "Command or speak…"}
               onFocus={() => setTyping(true)}
               onBlur={() => setTyping(false)}
               onChange={(e) => {

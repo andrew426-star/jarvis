@@ -502,44 +502,46 @@ export function CameraPreview({
         )}
       </div>
 
+      {/* A container query: in the small docked window the labels give way
+          to icons (titles say what each does) instead of being cut off. */}
       <div
-        className="flex shrink-0 items-center"
+        className="@container flex shrink-0 items-center"
         style={{ gap: "var(--sp-2)", padding: "var(--sp-2)", display: showBody ? undefined : "none" }}
       >
         <button
           type="button"
-          className="btn flex flex-1 items-center justify-center"
+          className="btn flex min-w-0 flex-1 items-center justify-center"
           onClick={() => (tryingOn ? useTryOn.getState().stop() : useTryOn.getState().start())}
           disabled={!hasProject && !tryingOn}
           data-active={tryingOn}
           aria-pressed={tryingOn}
-          style={{ gap: 6, padding: "4px 8px" }}
+          style={{ gap: 6, height: 30, padding: "0 8px" }}
           title={hasProject ? "Wear the open project: a hologram of it on you, live" : "Open a project in the workshop to try it on"}
         >
-          <GlassesIcon size={13} /> TRY ON
+          <GlassesIcon size={13} className="shrink-0" /> <span className="hidden truncate @[300px]:inline">TRY ON</span>
         </button>
         <button
           type="button"
-          className="btn flex flex-1 items-center justify-center"
+          className="btn flex min-w-0 flex-1 items-center justify-center"
           onClick={onToggleHands}
           data-active={handsStatus === "tracking"}
           disabled={handsStatus === "loading"}
           aria-pressed={handsStatus === "tracking"}
-          style={{ gap: 6, padding: "4px 8px" }}
+          style={{ gap: 6, height: 30, padding: "0 8px" }}
           title="Control the console with your hands"
         >
-          <HandIcon size={13} /> {HANDS_LABEL[handsStatus]}
+          <HandIcon size={13} className="shrink-0" /> <span className="hidden truncate @[300px]:inline">{HANDS_LABEL[handsStatus]}</span>
         </button>
         <button
           type="button"
-          className="btn flex flex-1 items-center justify-center"
+          className="btn flex min-w-0 flex-1 items-center justify-center"
           onClick={() => onSetWatch(watching ? null : "normal")}
           data-active={Boolean(watching)}
           aria-pressed={Boolean(watching)}
-          style={{ gap: 6, padding: "4px 8px" }}
+          style={{ gap: 6, height: 30, padding: "0 8px" }}
           title="Let Jarvis follow your whiteboard and speak up when it helps"
         >
-          <ScanEyeIcon size={13} /> WATCH
+          <ScanEyeIcon size={13} className="shrink-0" /> <span className="hidden truncate @[300px]:inline">WATCH</span>
         </button>
       </div>
 
@@ -558,7 +560,7 @@ export function CameraPreview({
               onClick={() => onSetWatch(level)}
               data-active={watching === level}
               aria-pressed={watching === level}
-              style={{ padding: "2px 4px", fontSize: 10 }}
+              style={{ padding: "2px 4px", fontSize: 11 }}
               title={title}
             >
               {label}
