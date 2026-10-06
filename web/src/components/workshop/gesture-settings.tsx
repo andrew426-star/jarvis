@@ -17,7 +17,7 @@ import {
 // them with an air tap too (a script cannot open a native select); they
 // are kept in this browser.
 /** `right`: clear of the project panel when it is open. */
-export function GestureSettings({ onClose, right = 12 }: { onClose: () => void; right?: number }) {
+export function GestureSettings({ onClose, right = 12, top = 12 }: { onClose: () => void; right?: number; top?: number }) {
   const gestures = useGestures()
 
   function row<K extends keyof GestureMap>(gesture: K, options: { value: GestureMap[K]; label: string }[]) {
@@ -50,7 +50,7 @@ export function GestureSettings({ onClose, right = 12 }: { onClose: () => void; 
       data-keepout
       className="holo-card flex flex-col"
       // Inline, not the `absolute` class: .holo-card sets position: relative.
-      style={{ position: "absolute", top: 12, right, width: 290, zIndex: 3 }}
+      style={{ position: "absolute", top, right, width: 290, zIndex: 3 }}
       aria-label="Gesture mapping"
     >
       <header className="holo-card-header">

@@ -8,6 +8,7 @@ import { accentHex } from "@/lib/core-events"
 import { sfx } from "@/lib/sfx"
 import { holoMaterial } from "@/lib/workshop/holo-material"
 import { Callouts, type CostLookup } from "@/lib/workshop/callouts"
+import { findInterference, type Clash } from "@/lib/workshop/interference"
 import { StagePost } from "@/lib/workshop/post"
 import { Atmosphere, CASTER_LAYER, ContactShadows, loadStudio, radialGrid } from "@/lib/workshop/stage-fx"
 import { useVisuals, visuals } from "@/lib/workshop/visuals"
@@ -116,6 +117,7 @@ type Grip =
   | { kind: "orbit"; lastX: number; lastY: number }
   | { kind: "rotate"; item: Item; lastX: number; lastY: number; yaw: number; tilt: number }
   | { kind: "axis"; axis: 0 | 1 | 2; target: GizmoTarget; lastX: number; lastY: number }
+  | { kind: "section"; lastX: number; lastY: number }
 
 /** What the move gizmo is on: a segment of a project (rig.ts), moved in
  *  its design frame, or else the selected item, moved on the stage.
@@ -201,6 +203,21 @@ export interface WorkshopCallbacks {
 }
 
 const DISCARD_SECONDS = 0.55
+/** The section plane: which way it faces, how far through, which side is
+ *  kept. Axes are the design's: x, y across the floor, z up. */
+export interface SectionState {
+  on: boolean
+  axis: 0 | 1 | 2
+  /** 0-1 through the item, along the axis. */
+  offset: number
+  flip: boolean
+}
+
+/** Design axis -> stage axis (the stage is y up). */
+const STAGE_AXIS = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 1, 0)]
+const SECTION_CAP = 0xff6a3d
+const CLASH_COLOR = new THREE.Color(0xff2a3a)
+
 /** A flick at the bin: this fast (px/s), within about 25 degrees of it. */
 const FLICK_SPEED = 1400
 const FLICK_AIM = 0.9
@@ -335,6 +352,15 @@ export class WorkshopScene {
   private hoverPart: THREE.Object3D | null = null
   private lastPartPick = 0
   private callouts!: Callouts
+  // Cross-section: the plane, the item it cuts, the widget to drag it by.
+  private section: SectionState = { on: false, axis: 0, offset: 0.5, flip: false }
+  private readonly sectionPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0)
+  private sectionItem: Item | null = null
+  private sectionWidget!: THREE.Group
+  private onSectionMove: ((offset: number) => void) | null = null
+  // Fit check: what clashes, lit red, with a marker where.
+  private clashes: Clash[] = []
+  private clashMarkers = new THREE.Group()
   private accent = accentHex()
   private focused: Item | null = null
   private accentTimer = 0
@@ -409,6 +435,8 @@ export class WorkshopScene {
     this.post = new StagePost(this.renderer, this.scene, this.camera)
     this.post.glow(this.atmosphere.emitter)
     this.callouts = new Callouts(container, this.scene, this.accent)
+    this.sectionWidget = this.buildSectionWidget()
+    this.scene.add(this.sectionWidget)
     this.post.configure(visuals())
     this.unsubscribeVisuals = useVisuals.subscribe((flags) => this.post.configure(flags))
     this.floorRings.traverse((node) => node !== this.floorRings && this.post.glow(node))
@@ -956,6 +984,13 @@ export class WorkshopScene {
 
   /** Pointer pressed (mouse button or pinch). Always claims: empty space orbits. */
   down(id: string, x: number, y: number): boolean {
+    if (this.section.on && this.sectionWidget.visible) {
+      this.raycaster.setFromCamera(this.ndc(x, y), this.camera)
+      if (this.raycaster.intersectObject(this.sectionWidget.children[0], false).length) {
+        this.grips.set(id, { kind: "section", lastX: x, lastY: y })
+        return true
+      }
+    }
     const axis = this.pickGizmo(x, y)
     const target = this.activeTarget()
     if (axis !== null && target) {
@@ -992,6 +1027,12 @@ export class WorkshopScene {
     if (!grip) return
     if (this.twoHand && (this.twoHand.a === id || this.twoHand.b === id)) {
       this.applyTwoHand(id, x, y)
+      grip.lastX = x
+      grip.lastY = y
+      return
+    }
+    if (grip.kind === "section") {
+      this.dragSection(x - grip.lastX, y - grip.lastY)
       grip.lastX = x
       grip.lastY = y
       return
@@ -1144,6 +1185,192 @@ export class WorkshopScene {
       }
     }
     if (this.hoverPart && this.hoverPart !== was) sfx.hover()
+  }
+
+  // --- cross-section ---------------------------------------------------------
+
+  /** Set the section plane (on the focused item, or the last). `onMove`
+   *  hears the offset as the plane is dragged on the stage. */
+  setSection(state: SectionState, onMove?: (offset: number) => void) {
+    if (onMove) this.onSectionMove = onMove
+    const target = state.on ? (this.sectionItem && this.items.includes(this.sectionItem) ? this.sectionItem : (this.focused ?? this.live().slice(-1)[0] ?? null)) : null
+    if (target !== this.sectionItem) {
+      if (this.sectionItem) this.cutItem(this.sectionItem, false)
+      if (target) this.cutItem(target, true)
+      this.sectionItem = target
+    }
+    this.section = { ...state }
+  }
+
+  /** Put an item under the section (caps on its solids) or take it out. */
+  private cutItem(item: Item, on: boolean) {
+    for (const unit of item.units) {
+      for (const mesh of unit.solids) {
+        for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+          material.clippingPlanes = on ? [unit.clip, this.sectionPlane] : [unit.clip]
+        }
+        // The cut face: the inside of the solid, seen through the cut, in
+        // a colour of its own - so a section reads as solid material.
+        const cap = mesh.children.find((c) => c.userData.cap) as THREE.Mesh | undefined
+        if (on && !cap && !(mesh as THREE.InstancedMesh).isInstancedMesh) {
+          const material = new THREE.MeshBasicMaterial({ color: SECTION_CAP, side: THREE.BackSide, clippingPlanes: [unit.clip, this.sectionPlane] })
+          const face = new THREE.Mesh(mesh.geometry, material)
+          face.userData.cap = true
+          face.raycast = () => {}
+          mesh.add(face)
+        } else if (!on && cap) {
+          ;(cap.material as THREE.Material).dispose()
+          cap.removeFromParent()
+        }
+      }
+      unit.holo.clippingPlanes = on ? [unit.ghostClip, this.sectionPlane] : [unit.ghostClip]
+      unit.wire.clippingPlanes = on ? [this.sectionPlane] : []
+    }
+  }
+
+  private buildSectionWidget(): THREE.Group {
+    const group = new THREE.Group()
+    const pane = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ color: this.accent, transparent: true, opacity: 0.07, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+    )
+    const frame = new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-0.5, -0.5, 0), new THREE.Vector3(0.5, -0.5, 0), new THREE.Vector3(0.5, 0.5, 0), new THREE.Vector3(-0.5, 0.5, 0)]),
+      this.accentLine(0.9)
+    )
+    group.add(pane, frame)
+    group.visible = false
+    this.post.glow(frame)
+    return group
+  }
+
+  /** Move the plane by a pointer drag: along its normal as it shows on screen. */
+  private dragSection(dx: number, dy: number) {
+    const item = this.sectionItem
+    if (!item) return
+    const axis = STAGE_AXIS[this.section.axis]
+    const span = Math.abs(new THREE.Vector3().subVectors(item.bounds.max, item.bounds.min).dot(axis)) || 1
+    const centre = this.sectionWidget.position.clone()
+    const a = centre.clone().project(this.camera)
+    const b = centre.clone().addScaledVector(axis, span).project(this.camera)
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    const sx = ((b.x - a.x) * rect.width) / 2
+    const sy = (-(b.y - a.y) * rect.height) / 2
+    const length2 = sx * sx + sy * sy
+    if (length2 < 1) return
+    this.section.offset = THREE.MathUtils.clamp(this.section.offset + (dx * sx + dy * sy) / length2, 0, 1)
+    this.onSectionMove?.(this.section.offset)
+  }
+
+  /** The plane and its widget, through the item as it stands now. */
+  private placeSection() {
+    // The item it cut was rebuilt or removed: cut whatever is there now.
+    if (this.section.on && !this.sectionItem) this.setSection(this.section)
+    const item = this.sectionItem
+    this.sectionWidget.visible = !!(this.section.on && item)
+    if (!this.section.on || !item) return
+    const axis = STAGE_AXIS[this.section.axis]
+    const { min, max } = item.bounds
+    const along = (v: THREE.Vector3) => v.dot(axis)
+    const lo = Math.min(along(min), along(max))
+    const hi = Math.max(along(min), along(max))
+    const cut = lo + (hi - lo) * this.section.offset
+    // Keep the side below the cut (above, flipped).
+    const normal = axis.clone().multiplyScalar(this.section.flip ? 1 : -1)
+    this.sectionPlane.normal.copy(normal)
+    this.sectionPlane.constant = this.section.flip ? -cut : cut
+    const centre = item.bounds.getCenter(new THREE.Vector3())
+    centre.addScaledVector(axis, cut - along(centre))
+    this.sectionWidget.position.copy(centre)
+    this.sectionWidget.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), axis)
+    const size = item.bounds.getSize(new THREE.Vector3())
+    const across = [size.x, size.y, size.z].sort((p, q) => q - p)
+    this.sectionWidget.scale.set(across[0] * 1.15, across[1] * 1.15, 1)
+  }
+
+  // --- fit check ---------------------------------------------------------------
+
+  /** Check the focused design (a project's assembly) for parts running
+   *  into each other; clashes are lit red until cleared. */
+  async checkFit(): Promise<{ checked: boolean; clashes: { a: string; b: string; depth: number; count: number }[] }> {
+    this.clearFit()
+    const item = this.focused ?? this.live().slice(-1)[0]
+    let frame: THREE.Object3D | null = null
+    item?.model.traverse((node) => node.userData.designFrame && !frame && (frame = node))
+    if (!item || !frame) return { checked: false, clashes: [] }
+    const parts: THREE.Object3D[] = []
+    ;(frame as THREE.Object3D).traverse((node) => node.userData.callout && parts.push(node))
+    this.clashes = await findInterference(parts, frame)
+    for (const clash of this.clashes) {
+      const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(Math.max(1.5, Math.min(6, clash.depth)), 16, 12),
+        new THREE.MeshBasicMaterial({ color: CLASH_COLOR, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthTest: false })
+      )
+      marker.position.copy(clash.at)
+      marker.renderOrder = 5
+      ;(frame as THREE.Object3D).add(marker)
+      this.clashMarkers.add(marker)
+      this.post.glow(marker)
+    }
+    // The same two kinds of part clashing again (ten resistors in a row)
+    // read as one line, with how many and the worst depth.
+    const name = (node: THREE.Object3D) => (node.userData.callout?.title as string) ?? node.name
+    const grouped = new Map<string, { a: string; b: string; depth: number; count: number }>()
+    for (const clash of this.clashes) {
+      const [a, b] = [name(clash.a), name(clash.b)]
+      const key = [a, b].sort().join("|")
+      const line = grouped.get(key)
+      if (line) {
+        line.count += 1
+        line.depth = Math.max(line.depth, clash.depth)
+      } else grouped.set(key, { a, b, depth: clash.depth, count: 1 })
+    }
+    return { checked: true, clashes: [...grouped.values()].sort((x, y) => y.depth - x.depth) }
+  }
+
+  clearFit() {
+    for (const clash of this.clashes) {
+      for (const node of [clash.a, clash.b]) {
+        node.traverse((child) => {
+          const material = (child as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined
+          if (!material?.emissive || material.userData.emissiveWas === undefined) return
+          material.emissive.setHex(material.userData.emissiveWas)
+          material.emissiveIntensity = material.userData.emissiveIntensityWas
+          delete material.userData.emissiveWas
+        })
+      }
+    }
+    for (const marker of [...this.clashMarkers.children]) {
+      this.post.glow(marker, false)
+      ;(marker as THREE.Mesh).geometry.dispose()
+      ;((marker as THREE.Mesh).material as THREE.Material).dispose()
+      marker.removeFromParent()
+    }
+    this.clashMarkers.clear()
+    this.clashes = []
+  }
+
+  /** Clashing parts glow red, pulsing. */
+  private showClashes(t: number) {
+    const level = 0.45 + 0.35 * Math.sin(t * 5)
+    for (const clash of this.clashes) {
+      for (const node of [clash.a, clash.b]) {
+        node.traverse((child) => {
+          const mesh = child as THREE.Mesh
+          if (!mesh.isMesh || child.userData.ghost || child.userData.cap) return
+          for (const material of (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.MeshStandardMaterial[]) {
+            if (!material.emissive) continue
+            if (material.userData.emissiveWas === undefined) {
+              material.userData.emissiveWas = material.emissive.getHex()
+              material.userData.emissiveIntensityWas = material.emissiveIntensity
+            }
+            material.emissive.copy(CLASH_COLOR)
+            material.emissiveIntensity = level
+          }
+        })
+      }
+    }
+    for (const marker of this.clashMarkers.children) marker.scale.setScalar(0.8 + 0.4 * level)
   }
 
   /** How a part's cost and source are found (the project's BOM). */
@@ -1508,6 +1735,8 @@ export class WorkshopScene {
   }
 
   private disposeItem(item: Item) {
+    if (this.sectionItem === item) this.sectionItem = null
+    if (this.clashes.some((c) => item.model.getObjectById(c.a.id))) this.clearFit()
     this.scene.remove(item.root)
     item.root.traverse((node) => {
       const mesh = node as THREE.Mesh
@@ -1719,6 +1948,8 @@ export class WorkshopScene {
     }
 
     this.placeGizmo()
+    this.placeSection()
+    if (this.clashes.length) this.showClashes(t)
     // Contact shadows from whatever stands solid now (holograms cast none),
     // every third frame: a soft blur moving slowly does not show it.
     this.frameNo += 1

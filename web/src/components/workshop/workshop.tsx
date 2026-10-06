@@ -10,6 +10,8 @@ import {
   Grid3x3Icon,
   MinimizeIcon,
   SlidersHorizontalIcon,
+  ScissorsIcon,
+  ScanSearchIcon,
   Volume2Icon,
   VolumeXIcon,
   Move3dIcon,
@@ -40,11 +42,12 @@ import { setSpatialHandler, startHands, stopHands, subscribeHands } from "@/lib/
 import { sfx } from "@/lib/sfx"
 import { useSpatial } from "@/lib/spatial-store"
 import { renderView } from "@/lib/jarvis-client"
-import type { ItemMode, WorkshopScene } from "@/lib/workshop/scene"
+import type { ItemMode, SectionState, WorkshopScene } from "@/lib/workshop/scene"
 import { buildGenerated, type ItemSpec } from "@/lib/workshop/models"
 import { getGestures, KEYS, useGestures, type TapAction } from "@/lib/workshop/gestures"
 import { GestureSettings } from "@/components/workshop/gesture-settings"
 import { FxSettings } from "@/components/workshop/fx-settings"
+import { FitPanel, SectionPanel, type FitResult } from "@/components/workshop/section-fit"
 import { useVisuals } from "@/lib/workshop/visuals"
 import { LibraryDock, type StageItem } from "@/components/workshop/library-dock"
 import { PANEL_WIDTH, ProjectPanel } from "@/components/workshop/project-panel"
@@ -233,8 +236,13 @@ function WorkshopStage({
   const [exploded, setExploded] = useState(false)
   const [snapOn, setSnapOn] = useState(false)
   const [arrowsOn, setArrowsOn] = useState(true)
-  const [gesturesOpen, setGesturesOpen] = useState(false)
-  const [fxOpen, setFxOpen] = useState(false)
+  // One panel at a time on the right: gestures, FX, section or fit.
+  const [panel, setPanel] = useState<"gestures" | "fx" | "section" | "fit" | null>(null)
+  const gesturesOpen = panel === "gestures"
+  const fxOpen = panel === "fx"
+  const togglePanel = (which: NonNullable<typeof panel>) => setPanel((open) => (open === which ? null : which))
+  const [section, setSection] = useState<SectionState>({ on: false, axis: 2, offset: 0.5, flip: false })
+  const [fit, setFit] = useState<FitResult>({ running: false, checked: false, clashes: [] })
   // The console's mute, here too: a popped-out workshop has no top bar.
   const muted = useSyncExternalStore(sfx.subscribeMuted, sfx.isMuted, () => false)
   // Features the assembly is built with: switching one rebuilds it.
@@ -295,6 +303,13 @@ function WorkshopStage({
   useEffect(() => {
     useProject.getState().setToken(token)
   }, [token])
+
+  // The cross-section, kept in step both ways: the panel sets it, dragging
+  // the plane on the stage moves the panel's slider.
+  useEffect(() => {
+    if (!ready) return
+    sceneRef.current?.setSection(section, (offset) => setSection((s) => (Math.abs(s.offset - offset) < 0.001 ? s : { ...s, offset })))
+  }, [ready, section])
 
   // Callouts price each part from the project's bill of materials.
   useEffect(() => {
@@ -756,7 +771,7 @@ function WorkshopStage({
               onClick={() => void toggleTryOn()}
               title={hasProject ? "Wear the open project, live in the camera" : "Open a project to try it on"}
             />
-            <Tool icon={<HandIcon size={13} />} label="GESTURES" active={gesturesOpen} onClick={() => { setFxOpen(false); setGesturesOpen((o) => !o) }} title="Choose what each hand gesture does" />
+            <Tool icon={<HandIcon size={13} />} label="GESTURES" active={gesturesOpen} onClick={() => togglePanel("gestures")} title="Choose what each hand gesture does" />
           </div>
           <div className="ws-group">
             <Tool icon={<BoxesIcon size={13} />} label="EXPLODE" active={exploded} disabled={!ready} onClick={() => runAction("explode")} title={`Exploded view: parts drawn apart (${KEYS.explode})`} />
@@ -776,6 +791,32 @@ function WorkshopStage({
             <Tool icon={<Grid3x3Icon size={13} />} label="HOLO" onClick={() => sceneRef.current?.setAllModes("wire")} title="Show everything as a hologram" />
             <Tool icon={<BoxIcon size={13} />} label="SOLID" onClick={() => sceneRef.current?.setAllModes("solid")} title="Show everything in its real materials" />
             <Tool icon={<RotateCcwIcon size={13} />} label="CLEAR" onClick={() => sceneRef.current?.clear()} title="Clear everything off the stage" />
+          </div>
+          <div className="ws-group">
+            <Tool
+              icon={<ScissorsIcon size={13} />}
+              label="SECTION"
+              active={section.on || panel === "section"}
+              disabled={!ready}
+              onClick={() => {
+                if (panel !== "section" && !section.on) setSection((s) => ({ ...s, on: true }))
+                togglePanel("section")
+              }}
+              title="Cross-section: cut the design with a plane you can drag"
+            />
+            <Tool
+              icon={<ScanSearchIcon size={13} />}
+              label="FIT"
+              active={panel === "fit"}
+              disabled={!ready}
+              onClick={async () => {
+                setPanel("fit")
+                setFit({ running: true, checked: false, clashes: [] })
+                const result = await sceneRef.current?.checkFit()
+                setFit({ running: false, checked: !!result?.checked, clashes: result?.clashes ?? [] })
+              }}
+              title="Fit check: find parts that run into each other"
+            />
             <Tool
               icon={muted ? <VolumeXIcon size={13} /> : <Volume2Icon size={13} />}
               label={muted ? "MUTED" : "SOUND"}
@@ -783,7 +824,7 @@ function WorkshopStage({
               onClick={() => sfx.toggleMuted()}
               title={muted ? "Sound is off: turn it on" : "Turn the console's sound off"}
             />
-            <Tool icon={<SlidersHorizontalIcon size={13} />} label="FX" active={fxOpen} onClick={() => { setGesturesOpen(false); setFxOpen((o) => !o) }} title="Visual features: switch each on or off to compare" />
+            <Tool icon={<SlidersHorizontalIcon size={13} />} label="FX" active={fxOpen} onClick={() => togglePanel("fx")} title="Visual features: switch each on or off to compare" />
           </div>
           <div className="ws-group">
             <Tool icon={<DownloadIcon size={13} />} label="STL" disabled={!ready || !focus} onClick={() => sceneRef.current && download(sceneRef.current.exportStl())} title="Download the selected item as STL, in millimetres" />
@@ -832,8 +873,20 @@ function WorkshopStage({
           onDoubleClick={() => focus && sceneRef.current?.toggle(focus.id)}
         />
 
-        {gesturesOpen && <GestureSettings onClose={() => setGesturesOpen(false)} right={projectShown ? PANEL_WIDTH + 24 : 12} />}
-        {fxOpen && <FxSettings onClose={() => setFxOpen(false)} right={projectShown ? PANEL_WIDTH + 24 : 12} />}
+        {gesturesOpen && <GestureSettings onClose={() => setPanel(null)} right={projectShown ? PANEL_WIDTH + 24 : 12} top={projectShown ? 12 : 56} />}
+        {fxOpen && <FxSettings onClose={() => setPanel(null)} right={projectShown ? PANEL_WIDTH + 24 : 12} top={projectShown ? 12 : 56} />}
+        {panel === "section" && <SectionPanel state={section} onChange={setSection} onClose={() => setPanel(null)} right={projectShown ? PANEL_WIDTH + 24 : 12} top={projectShown ? 12 : 56} />}
+        {panel === "fit" && (
+          <FitPanel
+            result={fit}
+            onClose={() => {
+              setPanel(null)
+              sceneRef.current?.clearFit()
+              setFit({ running: false, checked: false, clashes: [] })
+            }}
+            right={projectShown ? PANEL_WIDTH + 24 : 12} top={projectShown ? 12 : 56}
+          />
+        )}
 
         <ProjectPanel />
         {galleryOpen && <ProjectGallery />}

@@ -58,6 +58,8 @@ export async function buildDesign(
   { placedOnly = false }: { placedOnly?: boolean } = {}
 ): Promise<{ zUp: THREE.Group; bindings: Bindings; rig: Rig; failures: { name: string; error: string }[] }> {
   const zUp = new THREE.Group()
+  // The design frame (mm, z up): what the fit check measures in.
+  zUp.userData.designFrame = true
   // The pieces that move on their own (rig.ts): each part goes into its
   // segment's group, the rest straight into the design frame.
   const rig = new Rig(zUp, rigOf(project), project.wear?.anchor ?? null)

@@ -25,7 +25,7 @@ const SHOWN: (keyof Visuals)[] = [
 ]
 
 /** `right`: clear of the project panel when it is open. */
-export function FxSettings({ onClose, right = 12 }: { onClose: () => void; right?: number }) {
+export function FxSettings({ onClose, right = 12, top = 12 }: { onClose: () => void; right?: number; top?: number }) {
   const flags = useVisuals()
 
   return (
@@ -33,7 +33,7 @@ export function FxSettings({ onClose, right = 12 }: { onClose: () => void; right
       data-keepout
       className="holo-card flex flex-col"
       // Inline, not the `absolute` class: .holo-card sets position: relative.
-      style={{ position: "absolute", top: 12, right, width: 270, zIndex: 3 }}
+      style={{ position: "absolute", top, right, width: 270, zIndex: 3 }}
       aria-label="Visual features"
     >
       <header className="holo-card-header">
