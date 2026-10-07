@@ -155,7 +155,7 @@ def generate(
             if _cooling.get(model, 0) > time.time():
                 continue
         try:
-            return client.models.generate_content(model=model, contents=contents, config=config), model
+            return client.models.generate_content(model=model, contents=contents, config=_for_model(model, config)), model
         except errors.APIError as exc:
             rest = _cooldown_for(exc)
             if rest is None:
@@ -184,6 +184,21 @@ def _reason(exc: errors.APIError) -> str:
 
 def _with_thinking(config: types.GenerateContentConfig, level: str) -> types.GenerateContentConfig:
     return config.model_copy(update={"thinking_config": types.ThinkingConfig(thinking_level=level)})
+
+
+# Gemini 2.x takes a thinking budget (tokens), not the 3.x thinking level:
+# asked for a level it answers 400, which would stop the whole ladder.
+# "minimal" is no thinking (0, which 2.5 Flash and Flash-Lite allow).
+_BUDGET = {"minimal": 0, "low": 1024, "medium": 4096, "high": 8192}
+
+
+def _for_model(model: str, config: types.GenerateContentConfig) -> types.GenerateContentConfig:
+    thinking = config.thinking_config
+    if not model.startswith("gemini-2") or not thinking or thinking.thinking_level is None:
+        return config
+    level = str(getattr(thinking.thinking_level, "value", thinking.thinking_level)).lower()
+    budget = _BUDGET.get(level, 1024)
+    return config.model_copy(update={"thinking_config": types.ThinkingConfig(thinking_budget=budget)})
 
 
 def _open_stream(client: genai.Client, model: str, contents, config: types.GenerateContentConfig):
@@ -243,7 +258,7 @@ def generate_stream(
             if _cooling.get(model, 0) > time.time():
                 continue
         try:
-            return _open_stream(client, model, contents, config), model
+            return _open_stream(client, model, contents, _for_model(model, config)), model
         except errors.APIError as exc:
             rest = _cooldown_for(exc)
             if rest is None:

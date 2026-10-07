@@ -23,9 +23,13 @@ class Settings(BaseSettings):
     # models take "minimal" thinking and answered in 0.5-2.5s; 3.8 and 3.7
     # refuse "minimal", run at "low" and took 7-30s or reported overload
     # (Oct 2026). gemini.py also demotes any model that refuses the level.
+    # Gemini 2.5 Flash and Flash-Lite close the ladder: more free-tier
+    # headroom on their own quotas, asked with a thinking budget instead of
+    # a level (gemini.py: _for_model).
     gemini_models: str = (
         "gemini-3.6-flash,gemini-3.1-flash-lite,gemini-3.5-flash-lite,"
-        "gemini-3.8-flash,gemini-3.7-flash,gemini-3.5-flash"
+        "gemini-3.8-flash,gemini-3.7-flash,gemini-3.5-flash,"
+        "gemini-2.5-flash,gemini-2.5-flash-lite"
     )
     # Image models for workshop renders (app/integrations/gemini_render.py),
     # best first, on the same quota-aware fallback.
