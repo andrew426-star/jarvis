@@ -276,9 +276,9 @@ function OverviewTab() {
 }
 
 function bomCsv(lines: BomLine[], subtotal: number, total: number): Blob {
-  const rows = [["Item", "Buy", "Unit", "Price", "Cost", "Where", "Part #", "For"]]
-  for (const l of lines) rows.push([l.item, String(l.buy), l.unit, l.price.toFixed(2), l.cost.toFixed(2), l.where, l.part_number, l.for.join(" ")])
-  rows.push(["Subtotal", "", "", "", subtotal.toFixed(2)], ["Estimated with tax (x1.13)", "", "", "", total.toFixed(2)])
+  const rows = [["Item", "Buy", "Unit", "Price", "Cost", "Where", "Part #", "For", "Link"]]
+  for (const l of lines) rows.push([l.item, String(l.buy), l.unit, l.price.toFixed(2), l.cost.toFixed(2), l.where, l.part_number, l.for.join(" "), l.url ?? ""])
+  rows.push(["Subtotal", "", "", "", subtotal.toFixed(2)], ["Estimated (campus with tax x1.13, online before shipping)", "", "", "", total.toFixed(2)])
   return new Blob([rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n")], { type: "text/csv" })
 }
 
@@ -381,7 +381,7 @@ function PartsTab() {
                         <span className="t-label shrink-0" style={{ width: 52, color: "var(--accent)" }}>{p.id}</span>
                         <span className="min-w-0 flex-1">
                           <span className="wrap-words" style={{ color: "var(--text-primary)" }}>{describe(p)}</span>
-                          <span className="t-time" style={{ display: "block" }}>{l ? `${l.where} · $${l.price.toFixed(2)} / ${l.unit}` : "Not stocked at Tech"}</span>
+                          <span className="t-time" style={{ display: "block" }}>{l ? `${l.where} · $${l.price.toFixed(2)} / ${l.unit}` : "Not stocked at Tech or online"}</span>
                         </span>
                       </div>
                     )
@@ -441,7 +441,18 @@ function PartsTab() {
               <tr key={l.item + l.where} style={{ borderBottom: "1px solid rgba(var(--accent-rgb), 0.12)" }}>
                 <td style={{ padding: "4px 0", verticalAlign: "top" }}>
                   <div className="wrap-words" style={{ color: "var(--text-primary)" }}>{l.buy} × {l.item}</div>
-                  <div className="t-time">{l.where}{l.part_number ? ` · ${l.part_number}` : ""}</div>
+                  <div className="t-time">
+                    {l.where}
+                    {l.part_number ? ` · ${l.part_number}` : ""}
+                    {l.url ? (
+                      <>
+                        {" · "}
+                        <a href={l.url} target="_blank" rel="noreferrer noopener" style={{ color: "var(--accent)", textDecoration: "underline" }}>
+                          BUY
+                        </a>
+                      </>
+                    ) : null}
+                  </div>
                 </td>
                 <td className="t-label" style={{ padding: "4px 0 4px 8px", textAlign: "right", verticalAlign: "top", whiteSpace: "nowrap" }}>${l.cost.toFixed(2)}</td>
               </tr>
@@ -450,8 +461,14 @@ function PartsTab() {
               <td className="t-label" style={{ paddingTop: 6 }}>SUBTOTAL</td>
               <td className="t-label" style={{ paddingTop: 6, textAlign: "right" }}>${b.subtotal.toFixed(2)}</td>
             </tr>
+            {b.online_subtotal ? (
+              <tr>
+                <td className="t-time">CAMPUS ${(b.campus_subtotal ?? 0).toFixed(2)} · ONLINE ${b.online_subtotal.toFixed(2)} (+ SHIPPING)</td>
+                <td />
+              </tr>
+            ) : null}
             <tr>
-              <td className="t-label" style={{ color: "var(--accent)" }}>WITH TAX + CARD FEES (≈1.13×)</td>
+              <td className="t-label" style={{ color: "var(--accent)" }}>{b.online_subtotal ? "ESTIMATED (CAMPUS ≈1.13× TAX + FEES)" : "WITH TAX + CARD FEES (≈1.13×)"}</td>
               <td className="t-label" style={{ textAlign: "right", color: "var(--accent)" }}>${b.estimated_total.toFixed(2)}</td>
             </tr>
           </tbody>
@@ -459,7 +476,7 @@ function PartsTab() {
       )}
       {b?.not_stocked.length ? (
         <>
-          <Heading>NOT STOCKED AT TECH</Heading>
+          <Heading>NOT STOCKED (TECH OR ONLINE LIST)</Heading>
           {b.not_stocked.map((n) => <Muted key={n}>{n}</Muted>)}
         </>
       ) : null}
@@ -499,7 +516,9 @@ function CodeEditor() {
     <div className="flex h-full flex-col" style={{ gap: 6 }}>
       <div className="flex items-center justify-between">
         <span className="t-time">
-          {compile?.ok
+          {compile?.skipped
+            ? "ESP32 SKETCH · CHECKED · BUILD IN THE ARDUINO IDE"
+            : compile?.ok
             ? `COMPILED · ${compile.flash_bytes ?? "?"} / 32256 B FLASH · ${compile.ram_bytes ?? "?"} / 2048 B RAM`
             : compile?.unavailable
               ? "NO COMPILER ON THIS SERVER"
@@ -535,7 +554,7 @@ function CodeEditor() {
             requestAnimationFrame(() => t.setSelectionRange(at + 2, at + 2))
           }
         }}
-        placeholder="// The UNO sketch. Ask Jarvis to write it, or write your own."
+        placeholder="// The controller's sketch (UNO or ESP32). Ask Jarvis to write it, or write your own."
         style={{
           flex: 1,
           minHeight: 300,
@@ -560,6 +579,7 @@ function CodeEditor() {
           {compile.error}
         </pre>
       )}
+      {compile?.skipped && compile.note ? <Muted>{compile.note}</Muted> : null}
       {compile?.warnings?.length ? <Muted>{compile.warnings.join("\n")}</Muted> : null}
     </div>
   )
@@ -579,7 +599,7 @@ function SimTab() {
   }, [sim?.serial])
 
   const inputs = project.parts.filter((p) =>
-    ["button", "switch", "limit_switch", "hall", "pot", "photoresistor", "thermistor", "ping", "adxl335"].includes(p.type)
+    ["button", "switch", "limit_switch", "hall", "pot", "photoresistor", "thermistor", "ping", "adxl335", "fuel_gauge"].includes(p.type)
   )
 
   return (
@@ -732,6 +752,7 @@ function InputControl({ part }: { part: Part }) {
     light: Number(prop(part, "light", 0.5)),
     temp_c: Number(prop(part, "temp_c", 25)),
     distance_cm: Number(prop(part, "distance_cm", 50)),
+    percent: Number(prop(part, "percent", 76)),
     x_g: Number(prop(part, "x_g", 0)),
     y_g: Number(prop(part, "y_g", 0)),
     z_g: Number(prop(part, "z_g", 1)),
@@ -784,6 +805,8 @@ function InputControl({ part }: { part: Part }) {
       return <Slider label={`${id} TEMP`} min={-10} max={90} step={1} value={values.temp_c as number} unit=" °C" onChange={(v) => set("temp_c", v)} />
     case "ping":
       return <Slider label={`${id} DISTANCE`} min={2} max={300} step={1} value={values.distance_cm as number} unit=" cm" onChange={(v) => set("distance_cm", v)} />
+    case "fuel_gauge":
+      return <Slider label={`${id} BATTERY`} min={0} max={100} step={1} value={values.percent as number} unit=" %" onChange={(v) => set("percent", v)} />
     case "adxl335":
       return (
         <>

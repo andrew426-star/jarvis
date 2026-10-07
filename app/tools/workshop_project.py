@@ -398,15 +398,20 @@ class Nets:
 
     def is_ground(self, ref: str) -> bool:
         t, pin = self.type_of(ref), ref.split(".", 1)[1]
-        return (t, pin) in GROUND_SOURCES or (self.lib[t]["kind"] == "power" and pin == "-")
+        kind = self.lib[t]["kind"]
+        # A controller's GND (the UNO, an ESP32) is the reference, as is a supply's -.
+        return (t, pin) in GROUND_SOURCES or (kind == "power" and pin == "-") or (kind == "mcu" and self.role(ref) == "gnd")
 
     def source_volts(self, ref: str) -> float | None:
         """The voltage a pin forces on its net, if it is a supply."""
         t, pin = self.type_of(ref), ref.split(".", 1)[1]
-        if t == "uno" and pin == "5V":
-            return 5.0
-        if t == "uno" and pin == "3V3":
-            return 3.3
+        if self.lib[t]["kind"] == "mcu":
+            role = self.role(ref)
+            if role == "out5v":
+                return 5.0
+            if role == "out3v3":
+                return 3.3
+            return None
         if self.lib[t]["kind"] == "power" and pin == "+":
             return float(self.lib[t]["volts"])
         return None
@@ -418,11 +423,18 @@ class Nets:
         found = [v for v in (self.source_volts(r) for r in net) if v is not None]
         if found:
             return found[0]
-        # The L298N's onboard regulator puts out 5V when it has 7V+ on 12V.
+        # The L298N's onboard regulator puts out 5V when it has 7V+ on 12V;
+        # a 5V boost does from about 1.8V up.
         for r in net:
             if self.type_of(r) == "l298n" and r.endswith(".5V"):
                 v12 = self.net_volts_shallow(r.split(".")[0] + ".12V")
                 if v12 is not None and v12 >= 7:
+                    return 5.0
+            if self.type_of(r) == "boost_5v" and r.endswith(".5V"):
+                vin = self.net_volts_shallow(r.split(".")[0] + ".VIN")
+                if vin is None:
+                    vin = self.switched_volts(r.split(".")[0] + ".VIN")
+                if vin is not None and vin >= 1.8:
                     return 5.0
         return None
 
@@ -433,8 +445,21 @@ class Nets:
         found = [v for v in (self.source_volts(r) for r in net) if v is not None]
         return found[0] if found else None
 
+    def switched_volts(self, ref: str) -> float | None:
+        """The voltage a net gets with the switches in it closed: a part
+        behind a power toggle is powered when it is on."""
+        for r in self.net(ref):
+            if self.type_of(r) in ("switch", "button"):
+                pid, pin = r.split(".", 1)
+                other = f"{pid}.{'2' if pin == '1' else '1'}"
+                if other in self.parent and self.find(other) != self.find(ref):
+                    v = self.net_volts(other)
+                    if v is not None:
+                        return v
+        return None
+
     def mcu_pins(self, ref: str) -> list[str]:
-        return [r for r in self.net(ref) if self.type_of(r) == "uno" and self.role(r) == "io"]
+        return [r for r in self.net(ref) if self.lib[self.type_of(r)]["kind"] == "mcu" and self.role(r) == "io"]
 
     def of_type(self, ref: str, *types: str) -> list[str]:
         return [r for r in self.net(ref) if self.type_of(r) in types]
@@ -444,15 +469,20 @@ class Nets:
 
 _DEFINE = re.compile(r"#define\s+(\w+)\s+(A?\d+)\b")
 _CONST = re.compile(r"(?:const\s+)?(?:int|byte|uint8_t|short|long|unsigned\s+int)\s+(\w+)\s*=\s*(A?\d+)\s*;")
-_CALL = re.compile(r"\b(pinMode|digitalWrite|digitalRead|analogWrite|analogRead|tone|noTone|pulseIn|attach)\s*\(\s*(\w+)\s*(?:,\s*(\w+))?")
+_CALL = re.compile(r"\b(pinMode|digitalWrite|digitalRead|analogWrite|analogRead|tone|noTone|pulseIn|attach|ledcAttach)\s*\(\s*(\w+)\s*(?:,\s*(\w+))?")
 
 
-def _pin_name(token: str, symbols: dict[str, str]) -> str | None:
+def _pin_name(token: str, symbols: dict[str, str], board: str = "uno") -> str | None:
     token = symbols.get(token, token)
     if re.fullmatch(r"A[0-5]", token):
         return token
     if token.isdigit():
         n = int(token)
+        if board == "esp32":
+            # Arduino-ESP32 pins are the GPIO numbers, silk-screened IOn.
+            return f"IO{n}"
+        if board == "feather_s3":
+            return f"D{n}"
         if 0 <= n <= 13:
             return f"D{n}"
         if 14 <= n <= 19:
@@ -460,19 +490,20 @@ def _pin_name(token: str, symbols: dict[str, str]) -> str | None:
     return None
 
 
-def code_pins(code: str) -> dict[str, set[str]]:
-    """Which UNO pins the sketch uses, and how: {"D9": {"attach"}, ...}.
+def code_pins(code: str, board: str = "uno") -> dict[str, set[str]]:
+    """Which controller pins the sketch uses, and how: {"D9": {"attach"}, ...}.
     Reads literal pins and simple #define / const int names; pins chosen
-    at run time (arrays, arithmetic) are not seen."""
+    at run time (arrays, arithmetic) are not seen. board: the controller's
+    type, for how a bare number names a pin (D9 on the UNO, IO25 on an ESP32)."""
     stripped = re.sub(r"//[^\n]*|/\*.*?\*/", "", code or "", flags=re.S)
     symbols = {m.group(1): m.group(2) for m in _DEFINE.finditer(stripped)}
     symbols.update({m.group(1): m.group(2) for m in _CONST.finditer(stripped)})
     used: dict[str, set[str]] = {}
     for m in _CALL.finditer(stripped):
-        pin = _pin_name(m.group(2), symbols)
+        pin = _pin_name(m.group(2), symbols, board)
         if not pin:
             continue
-        how = m.group(1)
+        how = "analogWrite" if m.group(1) == "ledcAttach" else m.group(1)
         if how == "pinMode" and m.group(3):
             how = f"pinMode:{m.group(3)}"
         used.setdefault(pin, set()).add(how)
@@ -492,9 +523,11 @@ def check(project: dict) -> list[dict]:
         out.append({"level": level, "part": part, "text": text})
 
     unos = [p for p in project["parts"] if p["type"] == "uno"]
-    if len(unos) > 1:
-        say("error", "Only one UNO can be simulated per project.")
+    boards = [p for p in project["parts"] if lib[p["type"]]["kind"] == "mcu"]
+    if len(boards) > 1:
+        say("error", "One controller per project: the checks and the simulator follow one board.")
     uno = unos[0]["id"] if unos else None
+    board = boards[0] if boards else None
 
     # Shorts: two supplies, or a supply and ground, on one net.
     for members in nets.members.values():
@@ -517,7 +550,7 @@ def check(project: dict) -> list[dict]:
     # Common ground: every ground source on one net.
     ground_nets = {nets.find(r) for r in nets.parent if nets.is_ground(r) and nets.wired(r)}
     if len(ground_nets) > 1:
-        say("error", "Grounds are not common: wire every supply's - (and the L298N/A4988 GND) to the UNO's GND, or signals have no reference.")
+        say("error", "Grounds are not common: wire every supply's - (and every driver's GND) to the controller's GND, or signals have no reference.")
     for p in project["parts"]:
         for pin, role in (lib[p["type"]].get("pins") or {}).items():
             ref = f"{p['id']}.{pin}"
@@ -536,23 +569,58 @@ def check(project: dict) -> list[dict]:
             if not nets.wired(ref):
                 continue
             if v is None:
+                v = nets.switched_volts(ref)
+            if v is None:
                 say("warning", f"{ref} has no power source on its net.", p["id"])
             elif v > hi:
                 say("error", f"{ref} gets {v:g}V; {spec['label']} takes {lo:g}-{hi:g}V and will be damaged.", p["id"])
             elif v < lo:
                 say("error" if v < lo * 0.8 else "warning", f"{ref} gets {v:g}V; {spec['label']} needs {lo:g}-{hi:g}V.", p["id"])
 
-    # The UNO's own power.
-    if uno:
-        vin = nets.net_volts(f"{uno}.VIN")
+    # The board's own power.
+    if board and "VIN" in lib[board["type"]]["pins"]:
+        bid = board["id"]
+        vin = nets.net_volts(f"{bid}.VIN")
         if vin is not None and vin > 0:
             if vin > 12:
-                say("warning", f"{uno}.VIN gets {vin:g}V; above 12V the UNO's regulator overheats.", uno)
+                say("warning", f"{bid}.VIN gets {vin:g}V; above 12V the board's regulator overheats.", bid)
             elif vin < 7:
-                say("warning", f"{uno}.VIN gets {vin:g}V; below 7V the 5V rail sags.", uno)
+                say("warning", f"{bid}.VIN gets {vin:g}V; below 7V the 5V rail sags.", bid)
 
-    used = code_pins(project["code"]) if project["code"] else {}
+    used = code_pins(project["code"], board["type"] if board else "uno") if project["code"] else {}
     outputs = {pin for pin, hows in used.items() if "pinMode:OUTPUT" in hows or "digitalWrite" in hows and "pinMode:INPUT" not in hows}
+
+    # An ESP32 board's pins: 3.3V logic, input-only and ADC pins.
+    if board and board["type"] != "uno":
+        bid, spec = board["id"], lib[board["type"]]
+        logic = spec.get("logic_v", 3.3)
+        for pin, role in spec["pins"].items():
+            if role != "io":
+                continue
+            ref = f"{bid}.{pin}"
+            if not nets.wired(ref):
+                continue
+            v = nets.net_volts(ref)
+            if v is not None and v > logic + 0.3:
+                say("error", f"{ref} is on a {v:g}V net; the board's pins take {logic:g}V and will be damaged. Level-shift it or use a divider.", bid)
+            for r in nets.net(ref):
+                if r == ref:
+                    continue
+                if nets.role(r) == "load":
+                    say("error", f"{r.split('.')[0]} ({lib[nets.type_of(r)]['label']}) is wired straight to {ref}. A pin gives about 12 mA; switch it with a MOSFET (and a diode across it).", r.split(".")[0])
+                if nets.role(r) == "speaker":
+                    say("error", f"{r.split('.')[0]} (a speaker) is wired straight to {ref}; drive it from an amplifier.", r.split(".")[0])
+        for pin, hows in sorted(used.items()):
+            ref = f"{bid}.{pin}"
+            if pin not in spec["pins"]:
+                say("warning", f"The sketch uses pin {pin}, which {spec['label']} does not break out.", bid)
+                continue
+            if not nets.wired(ref):
+                say("warning", f"The sketch uses {pin} but nothing is wired to {ref}.", bid)
+            if "analogRead" in hows and spec.get("adc") and pin not in spec["adc"]:
+                say("error", f"analogRead on {pin}: with WiFi on, only {', '.join(spec['adc'])} read voltages.", bid)
+            if pin in spec.get("input_only", []) and ({"digitalWrite", "analogWrite", "attach", "pinMode:OUTPUT"} & hows):
+                say("error", f"{pin} is input-only on the ESP32; it cannot drive anything.", bid)
 
     # The UNO's pins.
     if uno:
@@ -573,6 +641,8 @@ def check(project: dict) -> list[dict]:
                 t = nets.type_of(r)
                 if t == "uno" and nets.role(r) == "io":
                     say("warning", f"{ref} and {r} are wired together; if both are outputs they fight.", uno)
+                elif nets.role(r) == "speaker":
+                    say("error", f"{r.split('.')[0]} (a speaker) is wired straight to {ref}; drive it from an amplifier.", r.split(".")[0])
                 elif lib[t]["pins"][r.split(".", 1)[1]] == "load":
                     say("error", f"{r.split('.')[0]} ({lib[t]['label']}) is wired straight to {ref}. A pin gives 20 mA; a motor needs a driver (L298N, or a MOSFET with a diode).", r.split(".")[0])
                 elif t == "relay" and r.split(".", 1)[1] in ("C1", "C2"):
@@ -659,8 +729,8 @@ def check(project: dict) -> list[dict]:
         if p["type"] == "stepper":
             if not all(nets.of_type(f"{pid}.{c}", "a4988") for c in ("A+", "A-", "B+", "B-")):
                 say("error", f"{pid} needs all four coil wires on an A4988's 1A/1B/2A/2B.", pid)
-        if p["type"] == "hall":
-            sig = f"{pid}.OUT"
+        for oc in (["OUT"] if p["type"] == "hall" else lib[p["type"]].get("open_collector") or []):
+            sig = f"{pid}.{oc}"
             pins = nets.mcu_pins(sig)
             pulled = any(
                 nets.type_of(r) == "resistor"
@@ -669,7 +739,29 @@ def check(project: dict) -> list[dict]:
             )
             pullup_code = any("pinMode:INPUT_PULLUP" in used.get(r.split(".", 1)[1], set()) for r in pins)
             if nets.wired(sig) and not pulled and not pullup_code:
-                say("warning", f"{sig} is open collector: use pinMode(pin, INPUT_PULLUP) or a 10k resistor to 5V, or it floats when no magnet is near.", pid)
+                say("warning", f"{sig} is open collector: use pinMode(pin, INPUT_PULLUP) or a 10k pull-up, or it floats when it is not pulling low.", pid)
+        if "speaker" in (lib[p["type"]].get("pins") or {}).values():
+            for pin in ("+", "-"):
+                ref = f"{pid}.{pin}"
+                if nets.wired(ref) and not any(nets.role(r) == "speaker_out" for r in nets.net(ref)):
+                    say("error", f"{ref} is not on an amplifier's SPK+/SPK-: a speaker needs an amplifier to drive it.", pid)
+        if p["type"] in ("audio_amp", "i2s_amp") and nets.wired(f"{pid}.SPK+"):
+            if not any(nets.role(r) == "speaker" for r in nets.net(f"{pid}.SPK+")):
+                say("warning", f"{pid}'s SPK+ has no speaker on it.", pid)
+            if any(nets.is_ground(r) for r in nets.net(f"{pid}.SPK-")):
+                say("error", f"{pid}.SPK- is grounded: the amplifier's outputs are bridged, so the speaker goes across SPK+ and SPK- only.", pid)
+        if p["type"] == "audio_amp" and nets.wired(f"{pid}.A+") and not nets.wired(f"{pid}.A-"):
+            say("warning", f"{pid}.A- is not wired: tie it to ground for a single-ended source, or the input hums.", pid)
+        if lib[p["type"]].get("i2c_addr") or "i2c" in (lib[p["type"]].get("pins") or {}).values():
+            for pin, role in lib[p["type"]]["pins"].items():
+                if role != "i2c" or not nets.wired(f"{pid}.{pin}"):
+                    continue
+                on_board = [r.split(".", 1)[1] for r in nets.mcu_pins(f"{pid}.{pin}")]
+                want = {"uno": {"SDA": "A4", "SCL": "A5"}, "esp32": {"SDA": "IO21", "SCL": "IO22"}, "feather_s3": {"SDA": "SDA", "SCL": "SCL"}}
+                expected = want.get(board["type"], {}).get(pin) if board else None
+                if expected and on_board and expected not in on_board:
+                    level = "error" if board["type"] == "uno" else "warning"
+                    say(level, f"{pid}.{pin} is on {', '.join(on_board)}; the board's I2C {pin} is {expected}" + (" (or pass the pins to Wire.begin)." if level == "warning" else "."), pid)
 
     # Power budget on the UNO's 5V pin (USB gives 500 mA in all).
     if uno:
@@ -688,6 +780,53 @@ def check(project: dict) -> list[dict]:
         if servos >= 2:
             say("note", f"{servos} servos on the UNO's 5V: each can pull ~650 mA stalled, enough to reset the board. A separate 5-6V supply for them is safer.", uno)
 
+    # A 5V boost's output: what its rail's parts draw against what it gives.
+    for p in project["parts"]:
+        spec = lib[p["type"]]
+        if not spec.get("out_ma"):
+            continue
+        rail = f"{p['id']}.5V"
+        draw = 0.0
+        for q in project["parts"]:
+            qspec = lib[q["type"]]
+            for pin, role in (qspec.get("pins") or {}).items():
+                ref = f"{q['id']}.{pin}"
+                if role in ("supply", "vin", "out5v") and q["id"] != p["id"] and nets.find(ref) == nets.find(rail):
+                    if role != "supply":
+                        draw += 50
+                        continue
+                    busy = qspec.get("busy_ma", qspec.get("draw_ma", 0))
+                    if "SPK+" in qspec["pins"]:
+                        # Into a speaker rated W, about W / 5V / 90% at full volume.
+                        watts = [lib[nets.type_of(r)].get("watts") for r in nets.net(f"{q['id']}.SPK+") if nets.role(r) == "speaker"]
+                        if watts and watts[0]:
+                            busy = min(busy, qspec.get("draw_ma", 0) + watts[0] * 1000 / 4.5)
+                    draw += busy
+                elif role == "load" and nets.find(ref) == nets.find(rail):
+                    draw += qspec.get("draw_ma", 0)
+        if draw > spec["out_ma"]:
+            say("warning", f"About {draw:.0f} mA on {p['id']}'s 5V at full load, over the {spec['out_ma']} mA it gives from a 3.7V cell; the rail will sag.", p["id"])
+        elif draw:
+            say("note", f"{p['id']}'s 5V rail: about {draw:.0f} mA at full load of the {spec['out_ma']} mA it gives.", p["id"])
+
+    # Big servos on a board's own 5V pin.
+    for p in project["parts"]:
+        if p["type"] != "servo_std":
+            continue
+        rail = nets.net(f"{p['id']}.V+")
+        if any(lib[nets.type_of(r)]["kind"] == "power" and r.endswith(".+") for r in rail):
+            continue  # its own supply feeds the rail (the board's 5V pin may share it)
+        for r in rail:
+            if lib[nets.type_of(r)]["kind"] == "mcu":
+                say("error", f"{p['id']} (MG996R) is powered from {r}: it stalls at about 2.5A, far past what a board's 5V pin gives. Give the servos their own 5-6V supply.", p["id"])
+
+    # NeoPixel data straight from a pin, with no series resistor.
+    for p in project["parts"]:
+        if not p["type"].startswith("neopixel") or not nets.wired(f"{p['id']}.DIN"):
+            continue
+        if nets.mcu_pins(f"{p['id']}.DIN"):
+            say("note", f"{p['id']}.DIN is wired straight to the board; a 200-470 ohm resistor in series protects the first pixel.", p["id"])
+
     return out
 
 
@@ -695,13 +834,15 @@ def _led_current(nets: Nets, anode: str, cathode: str, vf: float):
     """Roughly the LED's current in mA, 'no_resistor', or None (no path)."""
 
     def drive(ref: str, high: bool) -> float | None:
-        # What a net offers: a supply's voltage, ground, or an UNO pin
-        # (taken as 5V on the anode side, 0V on the cathode side).
+        # What a net offers: a supply's voltage, ground, or a controller pin
+        # (its logic high on the anode side - 5V on the UNO, 3.3V on an
+        # ESP32 - and 0V on the cathode side).
         v = nets.net_volts(ref)
         if v is not None:
             return v
-        if nets.mcu_pins(ref):
-            return 5.0 if high else 0.0
+        pins = nets.mcu_pins(ref)
+        if pins:
+            return float(nets.lib[nets.type_of(pins[0])].get("logic_v", 5.0)) if high else 0.0
         return None
 
     def resistors(ref: str) -> list[tuple[float, str]]:
@@ -744,8 +885,10 @@ def _find_item(name: str) -> dict | None:
     lowered = name.lower().strip()
     exact = [i for i in catalog() if i["item"].lower() == lowered]
     if exact:
-        # The store over the machines when both have it: it is the cheaper listing.
-        return sorted(exact, key=lambda i: (i["source"] != "store", i["price"]))[0]
+        # Campus first, and the store over the machines when both have it:
+        # it is the cheaper listing.
+        rank = {"store": 0, "vending": 1, "online": 2}
+        return sorted(exact, key=lambda i: (rank.get(i["source"], 3), i["price"]))[0]
     found = parts_catalog({"query": name}).get("items") or []
     return found[0] if found else None
 
@@ -789,12 +932,19 @@ def bom(project: dict) -> dict:
         if item:
             lines[item["item"] + "|store"] = {"item": item, "count": 1, "parts": ["(wiring)"]}
 
-    out, subtotal = [], 0.0
+    out, subtotal, online = [], 0.0, 0.0
     for line in lines.values():
         item = line["item"]
         packs = math.ceil(line["count"] / _pack_size(item))
         cost = round(packs * item["price"], 2)
         subtotal += cost
+        if item["source"] == "online":
+            online += cost
+            where = f"Online: {item['supplier']}"
+        elif item["source"] == "vending":
+            where = f"Vending: {item['location']}"
+        else:
+            where = "Engineering store"
         out.append({
             "item": item["item"],
             "for": line["parts"],
@@ -803,14 +953,22 @@ def bom(project: dict) -> dict:
             "unit": item.get("packaging") or (f"{item['quantity']} per slot" if item["source"] == "vending" else "each"),
             "price": item["price"],
             "cost": cost,
-            "where": item.get("location") and f"Vending: {item['location']}" or "Engineering store",
+            "where": where,
             "part_number": item.get("part_number") or "",
+            "source": item["source"],
+            "url": item.get("url") or "",
         })
-    out.sort(key=lambda l: -l["cost"])
+    # Campus lines first, then what is ordered online; the dearest first in each.
+    out.sort(key=lambda l: (l["source"] == "online", -l["cost"]))
+    campus = subtotal - online
     return {
         "lines": out,
         "subtotal": round(subtotal, 2),
-        "estimated_total": round(subtotal * TAX_FACTOR, 2),
+        # Campus at the store's own estimate (tax + card fees); online at
+        # its listed price - shipping and sales tax vary by order.
+        "estimated_total": round(campus * TAX_FACTOR + online, 2),
+        "campus_subtotal": round(campus, 2),
+        "online_subtotal": round(online, 2),
         "not_stocked": not_stocked,
     }
 
@@ -828,7 +986,20 @@ def save_project(raw: dict) -> dict:
     project. Returns {ok, project, report}."""
     project, problems = normalize(raw)
     compile_result = None
-    if project["code"].strip() and (project["code"] != project["compiled_code"] or not project["hex"]):
+    board = next((p["type"] for p in project["parts"] if library()[p["type"]]["kind"] == "mcu"), "uno")
+    if board != "uno":
+        # The compiler and the emulator are the UNO's (AVR); an ESP32
+        # sketch is checked against the wiring and built in the Arduino IDE.
+        project["hex"], project["compiled_code"] = None, None
+        if project["code"].strip():
+            compile_result = {
+                "ok": True,
+                "skipped": True,
+                "board": board,
+                "note": f"{library()[board]['label']} sketch: not compiled or simulated here. Build and upload it from the "
+                "Arduino IDE with the ESP32 core; its pins are checked against the wiring.",
+            }
+    elif project["code"].strip() and (project["code"] != project["compiled_code"] or not project["hex"]):
         compile_result = compile_sketch(project["code"])
         if compile_result.get("ok"):
             project["hex"] = compile_result["hex"]
@@ -914,6 +1085,7 @@ def gallery() -> list[dict]:
             "segments": project["segments"],
             "wires": len(project["wires"]),
             "compiled": bool(project["hex"]),
+            "board": next((p["type"] for p in project["parts"] if library()[p["type"]]["kind"] == "mcu"), None),
             "estimated_total": b["estimated_total"],
             "errors": sum(1 for c in checks if c["level"] == "error"),
             "groups": sorted({p.get("group") for p in project["parts"] + project["printed"] if p.get("group")}),
@@ -946,19 +1118,22 @@ PROJECT_SCHEMA = {
             "Andrew's workshop projects: real builds with electronics, simulated before he buys or "
             "solders anything. Each project is a folder in the workshop's project gallery, its "
             "finished product shown as a hologram; group a bigger build's parts and printed parts "
-            "into sub-assemblies (group), keep its status and notes current. A project holds parts (from the Louisiana Tech catalog), the wiring, "
-            "an Arduino UNO sketch, printed parts (OpenSCAD) and a 3D layout. It shows in the "
+            "into sub-assemblies (group), keep its status and notes current. Every build does a real job "
+            "(cooling, a gesture remote, a heart-rate monitor, a security alert...), not just lights. A project holds parts (Louisiana "
+            "Tech's catalog first; online products - with supplier, price and link - only where campus has nothing for the job), the wiring, "
+            "one controller's sketch (an Arduino UNO where the job is local; the campus WEMOS ESP32, or the ESP32-S3 Feather on worn "
+            "builds, where WiFi or Bluetooth is the point), printed parts (OpenSCAD) and a 3D layout. It shows in the "
             "workshop's project panel and 3D stage, opening the workshop if needed. "
             "open: load a saved project by name, or start a new one with that name (and goal). "
             "update: change the open project; each field you give REPLACES that whole section, so "
             "send the complete list (parts, wires, printed, layout, extras) and the complete sketch. "
             "The result has the checks (shorts, missing resistors, motors on bare pins, wrong "
-            "voltages, code using unwired pins...), the sketch's compile result and the priced bill "
+            "voltages, 5V on 3.3V pins, code using unwired pins...), the sketch's compile result (UNO only; an ESP32 sketch is checked, not compiled) and the priced bill "
             "of materials: fix every error and compile failure with another update before you "
             "reply, then tell him the warnings that matter and the total. "
             "simulate: run or stop the emulated UNO in his browser (run true/false) and set inputs "
             "(inputs: {part id: value} - button/switch/limit_switch/hall true|false, pot 0-1, "
-            "photoresistor light 0-1, thermistor temp C, ping distance cm, adxl335 [x,y,z] g). "
+            "photoresistor light 0-1, thermistor temp C, ping distance cm, adxl335 [x,y,z] g, fuel_gauge charge %). "
             "What it does comes back in CONSOLE_STATE on his next message (serial output, LED, "
             "servo and motor states, live warnings), not in this turn. "
             "try_on: show the open project on him, live in his camera, in its real materials, worn "
@@ -974,7 +1149,11 @@ PROJECT_SCHEMA = {
             "looms). Printed parts get the workshop scad DETAIL PASS: bosses, ribs, strap slots, "
             "wire channels along the real route, vents, snaps and labels, each for a reason. "
             "Only the UNO is emulated. Every servo Tech "
-            "stocks is continuous rotation. Resistors stocked: 100, 1k, 10k ohm only. "
+            "stocks is continuous rotation (positional ones: servo_micro MG90S, servo_std MG996R, online). Resistors stocked: 100, 1k, 10k ohm only. "
+            "UNO sketches compile with Servo, Stepper, LiquidCrystal, Wire and Adafruit_NeoPixel (the simulator runs I2C and "
+            "a MAX17048 fuel gauge, not NeoPixels or I2S). "
+            "An ESP32 build can report to him: POST {device, title, body, priority} to the backend's /devices/event with the "
+            "device token (it lands in his inbox and buzzes his phone). "
             "layout: {part id or printed part name: {pos: [x,y,z] mm, rot: [x,y,z] degrees}}, z up, "
             "the same frame as your OpenSCAD, so printed mounts and the parts they hold line up. "
             "The workshop draws these X, Y, Z axes on the stage. Anything worn gets segments "
@@ -1011,7 +1190,7 @@ PROJECT_SCHEMA = {
                         "required": ["a", "b"],
                     },
                 },
-                "code": {"type": "string", "description": "The complete Arduino sketch for the UNO."},
+                "code": {"type": "string", "description": "The complete Arduino sketch for the project's controller (UNO or ESP32)."},
                 "printed": {
                     "type": "array",
                     "items": {

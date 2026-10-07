@@ -270,7 +270,7 @@ export function ProjectGallery() {
             )}
             <div className="flex items-center justify-between">
               <span className="t-time">
-                {current.compiled ? "SKETCH COMPILED" : "NO COMPILED SKETCH"} · UPDATED {new Date(current.updated_at).toLocaleDateString()}
+                {current.board && current.board !== "uno" ? "ESP32 SKETCH" : current.compiled ? "SKETCH COMPILED" : "NO COMPILED SKETCH"} · UPDATED {new Date(current.updated_at).toLocaleDateString()}
               </span>
               <button type="button" className="btn flex items-center" style={{ gap: 6, padding: "5px 14px" }} disabled={busy} onClick={() => void openFolder(current.id)}>
                 {busy ? <Loader2Icon size={12} className="animate-spin" /> : <FolderOpenIcon size={12} />} OPEN FOLDER

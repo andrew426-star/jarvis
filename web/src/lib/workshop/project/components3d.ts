@@ -323,6 +323,12 @@ function limitSwitch(): THREE.Group {
 }
 
 /** A box with its vertical edges rounded, standing on z. */
+/** A rounded block whose outside is exactly x by y by z (roundedBlock's
+ *  bevel grows each side by r/2). */
+function snugBlock(x: number, y: number, z: number, r: number): THREE.BufferGeometry {
+  return roundedBlock(x - r, y - r, z - r, r)
+}
+
 function roundedBlock(x: number, y: number, z: number, r: number): THREE.BufferGeometry {
   const s = new THREE.Shape()
   s.moveTo(-x / 2 + r, -y / 2)
@@ -373,6 +379,126 @@ function enclosure(x: number, y: number, z: number): THREE.Group {
   return g
 }
 
+/** A hobby servo of any size: case, mounting tabs, output spline and horn
+ *  (named "horn" for the simulation), the output toward +x. */
+function servoOf(x: number, y: number, z: number, tab: number, color: THREE.Material, disc = false): THREE.Group {
+  const g = new THREE.Group()
+  g.add(box(x, y, z, color, [0, 0, z / 2]))
+  g.add(box(tab, y, 2.5, color, [0, 0, z * 0.73]))
+  const r = y * 0.47
+  g.add(cyl(r, 4, color, [x / 2 - r, 0, z + 2]))
+  const horn = new THREE.Group()
+  horn.name = "horn"
+  horn.position.set(x / 2 - r, 0, z + 4)
+  if (disc) {
+    // The round horn the MG996R ships with: a 25 mm disc and its hub.
+    horn.add(cyl(y * 0.3, 2, mat.white, [0, 0, 1]))
+    horn.add(cyl(y * 0.64, 1.6, mat.white, [0, 0, 1.6], 40))
+  } else {
+    horn.add(cyl(y * 0.28, 2, mat.white, [0, 0, 1]))
+    horn.add(box(y * 1.45, y * 0.4, 1.5, mat.white, [y * 0.48, 0, 1.6]))
+  }
+  g.add(horn)
+  return g
+}
+
+/** An ESP32 board: the board, the shielded WROOM can and its antenna end,
+ *  the headers and the USB port. */
+function esp32Board(x: number, y: number, feather = false): THREE.Group {
+  const g = new THREE.Group()
+  g.add(box(x, y, 1.6, real.pcb(0x141414), [0, 0, 0.8]))
+  const canY = feather ? 15.5 : 18
+  g.add(box(18, canY, 3.1, mat.silver, [x / 2 - 15, 0, 1.6 + 1.55]))
+  g.add(box(6, canY, 0.8, mat.black, [x / 2 - 3, 0, 1.6 + 0.4]))
+  g.add(box(9, 7.5, 3.2, mat.metal, [-x / 2 + 3.5, 0, 1.6 + 1.6]))
+  if (feather) {
+    for (const s of [-1, 1]) g.add(box(x - 8, 2.5, 2.5, mat.black, [0, s * (y / 2 - 1.27), 1.6 + 1.25]))
+    g.add(box(6, 4.5, 3, mat.white, [-x / 2 + 12, y / 2 - 6, 1.6 + 1.5]))
+  } else {
+    const at = (x0: number, x1: number, yy: number): [number, number, number] => [(x0 + x1) / 2 - 34.3, yy - 26.7, 1.6]
+    g.add(header(10, at(18.8, 41.66, 50.8)))
+    g.add(header(8, at(45.72, 63.5, 50.8)))
+    g.add(header(8, at(27.94, 45.72, 2.54)))
+    g.add(header(6, at(50.8, 63.5, 2.54)))
+    g.add(box(14, 9, 11, mat.black, [-34.3 + 5.5, -53.4 / 2 + 8, 1.6 + 5.5]))
+  }
+  return g
+}
+
+/** A LiPo pouch, its JST lead out of one end. */
+function lipo(x: number, y: number, z: number): THREE.Group {
+  const g = new THREE.Group()
+  const pouch = new THREE.Mesh(snugBlock(x, y, z, Math.min(z * 0.45, 2)), real.metal(0xb8bcc2, 0.45))
+  pouch.position.z = z / 2
+  pouch.castShadow = pouch.receiveShadow = true
+  g.add(pouch)
+  g.add(box(x * 0.6, y * 0.92, 0.2, real.plastic(0x2a6ad8, 0.5), [0, 0, z - 0.1]))
+  // The protection board's tape at one end, inside the cell's size.
+  g.add(box(4, y * 0.5, z * 0.8, real.plastic(0xd8c040, 0.5), [x / 2 - 2.5, 0, z / 2]))
+  return g
+}
+
+/** NeoPixels: a ring of 12 or a stick of 8 on black board; the pixels are
+ *  one glowing material (not simulated: they show lit). */
+function neopixels(part: Part): THREE.Group {
+  const g = new THREE.Group()
+  const board = real.pcb(0x101214)
+  const lit = real.epoxy(0xffffff)
+  if (part.type === "neopixel_ring12") {
+    const shape = new THREE.Shape()
+    shape.absarc(0, 0, 36.8 / 2, 0, Math.PI * 2, false)
+    const hole = new THREE.Path()
+    hole.absarc(0, 0, 23.3 / 2, 0, Math.PI * 2, true)
+    shape.holes.push(hole)
+    const ring = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: 1.6, bevelEnabled: false, curveSegments: 32 }), board)
+    ring.castShadow = ring.receiveShadow = true
+    g.add(ring)
+    for (let i = 0; i < 12; i += 1) {
+      const a = (i / 12) * Math.PI * 2
+      const px = box(5, 5, 1.6, lit, [Math.cos(a) * 15, Math.sin(a) * 15, 2.4])
+      px.rotation.z = a
+      g.add(px)
+    }
+  } else {
+    g.add(box(51.1, 10.22, 1.6, board, [0, 0, 0.8]))
+    for (let i = 0; i < 8; i += 1) g.add(box(5, 5, 1.6, lit, [(i - 3.5) * 6.1, 0, 2.4]))
+  }
+  return g
+}
+
+function speaker(): THREE.Group {
+  const g = new THREE.Group()
+  const body = new THREE.Mesh(snugBlock(70, 30, 17, 3), real.plastic(0x16181b, 0.55))
+  body.position.z = 8.5
+  body.castShadow = body.receiveShadow = true
+  g.add(body)
+  const grille = real.metal(0x2a2c30, 0.6)
+  for (let i = 0; i < 9; i += 1) g.add(box(1.2, 18, 0.6, grille, [-14 + i * 3.5, 0, 17.2]))
+  return g
+}
+
+function pir(): THREE.Group {
+  const g = new THREE.Group()
+  const lens = real.plastic(0xf2f0ea, 0.85)
+  g.add(box(35.4, 35.4, 1.6, mat.pcbGreen, [0, 0, 0.8]))
+  g.add(box(23, 23, 9, lens, [0, 0, 1.6 + 4.5]))
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(11.5, 28, 14, 0, Math.PI * 2, 0, Math.PI / 2), lens)
+  dome.rotation.x = Math.PI / 2
+  dome.position.z = 1.6 + 9
+  dome.castShadow = true
+  g.add(dome)
+  return g
+}
+
+function brick(x: number, y: number, z: number): THREE.Group {
+  const g = new THREE.Group()
+  const body = new THREE.Mesh(snugBlock(x, y, z, 4), real.plastic(0x141516, 0.5))
+  body.position.z = z / 2
+  body.castShadow = body.receiveShadow = true
+  g.add(body)
+  return g
+}
+
 function generic(part: Part): THREE.Group {
   const [x = 10, y = 10, z = 5] = (PARTS[part.type]?.size as number[] | undefined) ?? []
   const kind = PARTS[part.type]?.kind
@@ -405,6 +531,20 @@ export function componentModel(part: Part): THREE.Group {
     case "piezo": g = piezo(); break
     case "pot": g = pot(); break
     case "button": g = (() => { const b = new THREE.Group(); b.add(box(6, 6, 3.5, mat.black)); b.add(cyl(1.7, 1.5, mat.dark, [0, 0, 4.25])); return b })(); break
+    case "switch": g = (() => {
+      // A panel toggle: its body behind the panel, the threaded bushing
+      // through the hole, the lever thrown to one side.
+      const b = new THREE.Group()
+      b.add(box(12.5, 12.5, 12, real.plastic(0xb01818, 0.5)))
+      b.add(cyl(3, 6, mat.silver, [0, 0, 15]))
+      const lever = cyl(1.2, 10, mat.silver, [0, 0, 5])
+      const pivot = new THREE.Group()
+      pivot.position.set(0, 0, 18)
+      pivot.rotation.x = 0.35
+      pivot.add(lever)
+      b.add(pivot)
+      return b
+    })(); break
     case "adxl335": g = module(20, 20, 3, mat.pcbRed, (m) => m.add(box(4, 4, 1.5, mat.black, [0, 0, 2.35]))); break
     case "extrusion_2020": g = extrusion(Number(prop(part, "length", 500)), 20); break
     case "extrusion_2040": g = extrusion(Number(prop(part, "length", 500)), 40); break
@@ -416,6 +556,28 @@ export function componentModel(part: Part): THREE.Group {
     case "battery_6aa": g = battery6(); break
     case "limit_switch": g = limitSwitch(); break
     case "fan": g = fan(); break
+    case "fan_5v": g = fan(); g.scale.set(30 / 50, 30 / 50, 8 / 9.5); break
+    case "esp32": g = esp32Board(68.6, 53.4); break
+    case "feather_s3": g = esp32Board(52.3, 22.7, true); break
+    case "servo_micro": g = servoOf(22.8, 12.2, 22, 32.3, real.plastic(0x2a2c30, 0.5)); break
+    case "servo_std": g = servoOf(40.7, 19.7, 37, 54, real.plastic(0x1c1d20, 0.5), true); break
+    case "lipo_500": g = lipo(36, 29, 4.75); break
+    case "lipo_1200": g = lipo(62, 34, 5); break
+    case "lipo_2500": g = lipo(60, 50, 7.3); break
+    case "lipo_charger": g = module(24, 19, 7.2, real.pcb(0x101214), (m) => { m.add(box(9, 7.5, 3.2, mat.metal, [-8, 0, 3.2])); m.add(box(6, 8, 6, mat.white, [8, 0, 4.6])) }); break
+    case "boost_5v": g = module(17.8, 11.3, 5.6, real.pcb(0x101214), (m) => { m.add(box(4, 4, 2.5, mat.dark, [-3, 0, 2.85])); m.add(box(3, 3, 1, mat.black, [4, 0, 2.1])) }); break
+    case "fuel_gauge": g = module(25.7, 20.3, 7.2, real.pcb(0x101214), (m) => { for (const x of [-8, 8]) m.add(box(6, 8, 6, mat.white, [x, 4, 4.6])); m.add(box(3, 3, 1, mat.black, [0, -5, 2.1])) }); break
+    case "mic_amp": g = module(26, 14, 6, real.pcb(0x101214), (m) => { m.add(cyl(4.9, 4.4, mat.dark, [8, 0, 3.8])); m.add(box(3, 3, 1, mat.black, [-4, 0, 2.1])) }); break
+    case "audio_amp": g = module(24, 15, 8, real.pcb(0x101214), (m) => { m.add(box(10, 7.5, 6, real.plastic(0x2a8a3a, 0.5), [6, 0, 4.6])); m.add(cyl(2.5, 3, mat.blueCase, [-6, 3, 3.1])) }); break
+    case "i2s_amp": g = module(19.4, 17.8, 6, real.pcb(0x101214), (m) => { m.add(box(8, 7.5, 6, real.plastic(0x2a8a3a, 0.5), [0, 4, 4.6])); m.add(box(3, 3, 1, mat.black, [0, -4, 2.1])) }); break
+    case "speaker": g = speaker(); break
+    case "speaker_thin": g = (() => { const b = new THREE.Group(); b.add(cyl(20, 1, mat.dark, [0, 0, 4], 40)); b.add(cyl(14, 3.5, mat.silver, [0, 0, 1.75], 32)); b.add(cyl(18, 0.4, mat.black, [0, 0, 4.6], 40)); return b })(); break
+    case "pulse_sensor": g = (() => { const b = new THREE.Group(); b.add(cyl(8, 1.6, real.pcb(0x2a7a3a), [0, 0, 0.8], 32)); b.add(cyl(1.8, 1.2, real.epoxy(0x3aff6a), [0, 0, 2.2], 16)); return b })(); break
+    case "neopixel_ring12":
+    case "neopixel_stick8": g = neopixels(part); break
+    case "pir": g = pir(); break
+    case "vibe_motor": g = (() => { const b = new THREE.Group(); b.add(cyl(5, 3.4, mat.silver, [0, 0, 1.7], 28)); return b })(); break
+    case "supply_5v4a": g = brick(95, 45, 32); break
     case "enclosure_3x2": g = enclosure(76.2, 50.8, 27.9); break
     case "enclosure_5x2": g = enclosure(127, 63.5, 44.5); break
     default: g = generic(part)

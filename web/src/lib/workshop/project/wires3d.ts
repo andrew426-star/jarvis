@@ -89,6 +89,49 @@ export function pinAnchors(part: Part): Record<string, PinAnchor> {
     case "servo":
       // Its three-wire lead leaves the case's low end, away from the horn.
       return row(["SIG", "V+", "GND"], (i) => [-11.6, (1 - i) * 0.9, 4], [-1, 0, 0], "lead")
+    case "servo_micro":
+    case "servo_std": {
+      const [x = 22.8] = (spec?.size as number[] | undefined) ?? []
+      return row(["SIG", "V+", "GND"], (i) => [-x / 2, (1 - i) * 0.9, 4], [-1, 0, 0], "lead")
+    }
+    case "fan_5v":
+      return { "+": { pos: [15, 15, 4], dir: [1, 0, 0], end: "lead" }, "-": { pos: [15, 13.5, 4], dir: [1, 0, 0], end: "lead" } }
+    case "vibe_motor":
+      return { "+": { pos: [5, 1, 2], dir: [1, 0, 0], end: "lead" }, "-": { pos: [5, -1, 2], dir: [1, 0, 0], end: "lead" } }
+    case "lipo_500":
+    case "lipo_1200":
+    case "lipo_2500": {
+      const [x = 36, , z = 5] = (spec?.size as number[] | undefined) ?? []
+      return { "+": { pos: [x / 2 + 4, 1.5, z / 2], dir: [1, 0, 0], end: "lead" }, "-": { pos: [x / 2 + 4, -1.5, z / 2], dir: [1, 0, 0], end: "lead" } }
+    }
+    case "speaker_thin":
+      return { "+": { pos: [6, 1.2, 1], dir: [0, 0, -1], end: "lead" }, "-": { pos: [6, -1.2, 1], dir: [0, 0, -1], end: "lead" } }
+    case "speaker":
+      return { "+": { pos: [35, 1.2, 4], dir: [1, 0, 0], end: "lead" }, "-": { pos: [35, -1.2, 4], dir: [1, 0, 0], end: "lead" } }
+    case "supply_5v4a":
+      return { "+": { pos: [47.5, 1, 16], dir: [1, 0, 0], end: "lead" }, "-": { pos: [47.5, -1, 16], dir: [1, 0, 0], end: "lead" } }
+    case "pulse_sensor":
+      return row(["+", "-", "S"], (i) => [(i - 1) * 1.6, -8, 0.8], [0, -1, 0], "lead")
+    case "pir":
+      return row(["VCC", "GND", "AL"], (i) => [(i - 1) * 2, -17.7, 0.8], [0, -1, 0], "lead")
+    case "esp32": {
+      // The D1 R32 keeps the UNO's sockets: its GPIO sit where the UNO's D
+      // and A pins are; the few the footprint has no socket for go on a
+      // header row inside.
+      const out: Record<string, PinAnchor> = {}
+      const digital = ["IO3", "IO1", "IO26", "IO25", "IO17", "IO16", "IO27", "IO14", "IO12", "IO13", "IO5", "IO23", "IO19", "IO18"]
+      const analog = ["IO2", "IO4", "IO35", "IO34", "IO36", "IO39"]
+      for (const name of pins) {
+        const di = digital.indexOf(name)
+        const ai = analog.indexOf(name)
+        const socket = di >= 0 ? `D${di}` : ai >= 0 ? `A${ai}` : ["5V", "3V3", "VIN", "GND"].includes(name) ? name : null
+        if (socket && UNO_R3[socket]) out[name] = { pos: unoSocket(socket), dir: [0, 0, 1], end: "dupont" }
+      }
+      pins.filter((n) => !out[n]).forEach((name, i) => {
+        out[name] = { pos: [-10 + i * PITCH, 12, 10], dir: [0, 0, 1], end: "dupont" }
+      })
+      return out
+    }
     case "dc_motor":
       return { "+": { pos: [-12, 3, 9], dir: [-1, 0, 0], end: "lead" }, "-": { pos: [-12, -3, 3], dir: [-1, 0, 0], end: "lead" } }
     case "stepper":

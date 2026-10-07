@@ -48,12 +48,14 @@ export function Schematic({ project, sim }: { project: Project; sim: SimSnapshot
     const spots = new Map<string, PinSpot>()
     const blocks: { id: string; title: string; x: number; y: number; w: number; h: number; pins: string[]; side: "left" | "right"; type: string }[] = []
 
-    const uno = project.parts.find((p) => p.type === "uno")
+    // The controller on the left: the UNO, or an ESP32 board in its own pin order.
+    const uno = project.parts.find((p) => PARTS[p.type]?.kind === "mcu")
     let leftH = 0
     if (uno) {
-      const pins = UNO_ORDER.filter((p) => wired(`${uno.id}.${p}`))
+      const order = uno.type === "uno" ? UNO_ORDER : Object.keys(PARTS[uno.type]?.pins ?? {})
+      const pins = order.filter((p) => wired(`${uno.id}.${p}`))
       const h = HEAD + Math.max(1, pins.length) * ROW + 6
-      blocks.push({ id: uno.id, title: uno.id, x: 4, y: 4, w: UNO_W, h, pins, side: "right", type: "uno" })
+      blocks.push({ id: uno.id, title: uno.type === "uno" ? uno.id : `${uno.id} · ${uno.type === "esp32" ? "ESP32" : "ESP32-S3"}`, x: 4, y: 4, w: UNO_W, h, pins, side: "right", type: uno.type })
       pins.forEach((p, i) => spots.set(`${uno.id}.${p}`, { ref: `${uno.id}.${p}`, x: 4 + UNO_W, y: 4 + HEAD + i * ROW + ROW / 2, side: "right" }))
       leftH = h + 8
     }
@@ -61,7 +63,7 @@ export function Schematic({ project, sim }: { project: Project; sim: SimSnapshot
     let y = 4
     for (const part of project.parts) {
       const spec = PARTS[part.type]
-      if (!spec || part.type === "uno" || !spec.pins) continue
+      if (!spec || part.id === uno?.id || !spec.pins) continue
       const pins = Object.keys(spec.pins)
       const h = HEAD + pins.length * ROW + 6
       const x = width - PART_W - 4

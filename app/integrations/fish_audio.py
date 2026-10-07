@@ -33,7 +33,7 @@ def strip_markdown_for_speech(text: str) -> str:
     return text.strip()
 
 
-def text_to_speech(text: str, voice_id: str, api_key: str, model: str) -> bytes:
+def text_to_speech(text: str, voice_id: str, api_key: str, model: str, pcm_rate: int | None = None) -> bytes:
     """Fish Audio TTS.
 
     `reference_id` is Fish's name for the voice; the same field carries a
@@ -44,7 +44,12 @@ def text_to_speech(text: str, voice_id: str, api_key: str, model: str) -> bytes:
     JSON rather than the msgpack the API also accepts: msgpack buys a
     little bandwidth on a request whose body is a paragraph of text, and
     costs a dependency and a debugging surface.
+
+    pcm_rate: raw 16-bit mono PCM at that sample rate instead of MP3 - for
+    the workshop's ESP32 avatar, which plays it straight into an I2S
+    amplifier with no decoder (app/api/routes/devices.py).
     """
+    audio = {"format": "pcm", "sample_rate": pcm_rate} if pcm_rate else {"format": "mp3", "mp3_bitrate": 128}
     res = httpx.post(
         FISH_TTS_URL,
         headers={
@@ -56,8 +61,7 @@ def text_to_speech(text: str, voice_id: str, api_key: str, model: str) -> bytes:
         json={
             "text": strip_markdown_for_speech(text),
             "reference_id": voice_id,
-            "format": "mp3",
-            "mp3_bitrate": 128,
+            **audio,
             # "normal" over "low": low latency trades audio quality, and
             # narration here follows a completed answer rather than
             # streaming alongside one.

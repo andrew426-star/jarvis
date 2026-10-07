@@ -41,7 +41,7 @@ RUN apt-get update \
        | tar -xz -C /usr/local/bin arduino-cli \
     && arduino-cli core update-index \
     && arduino-cli core install arduino:avr@1.8.6 \
-    && arduino-cli lib install Servo@1.2.2 Stepper@1.1.3 LiquidCrystal@1.0.7 \
+    && arduino-cli lib install Servo@1.2.2 Stepper@1.1.3 LiquidCrystal@1.0.7 "Adafruit NeoPixel@1.15.5" \
     && rm -rf /tmp/arduino-downloads
 
 # ---- stage 3: runtime ----

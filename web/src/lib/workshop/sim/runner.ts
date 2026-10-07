@@ -1,6 +1,7 @@
 import {
   AVRADC,
   AVRIOPort,
+  AVRTWI,
   AVRTimer,
   AVRUSART,
   CPU,
@@ -13,12 +14,14 @@ import {
   timer0Config,
   timer1Config,
   timer2Config,
+  twiConfig,
   usart0Config,
 } from "avr8js"
 
-import { PARTS, prop, type Part, type Project } from "@/lib/workshop/project/types"
+import { PARTS, prop, simKind, type Part, type Project } from "@/lib/workshop/project/types"
 import { Circuit, type CircuitResult, type PinDrive } from "@/lib/workshop/sim/circuit"
 import { loadHex } from "@/lib/workshop/sim/hex"
+import { I2CBus, max17048, type I2CDevice } from "@/lib/workshop/sim/i2c"
 
 // The project running: an ATmega328P (the UNO's chip) emulated by avr8js,
 // executing the compiled sketch instruction by instruction at 16 MHz, with
@@ -133,6 +136,13 @@ export class Simulator {
     }
     this.adc = new AVRADC(this.cpu, adcConfig)
     this.usart = new AVRUSART(this.cpu, usart0Config, HZ)
+    // The I2C bus on A4/A5 and what answers on it.
+    const twi = new AVRTWI(this.cpu, twiConfig, HZ)
+    const devices: I2CDevice[] = []
+    for (const part of project.parts) {
+      if (part.type === "fuel_gauge") devices.push(max17048(() => Number(this.inputs[part.id]?.percent ?? prop(part, "percent", 76))))
+    }
+    twi.eventHandler = new I2CBus(twi, devices)
     this.usart.onByteTransmit = (byte) => {
       this.serialOut = (this.serialOut + String.fromCharCode(byte)).slice(-20_000)
     }
@@ -211,7 +221,7 @@ export class Simulator {
     for (const ref of this.attached.get(pin) ?? []) {
       const [id, p] = ref.split(".")
       const part = this.project.parts.find((x) => x.id === id)
-      if (part?.type === "servo" && p === "SIG" && widthUs > 400 && widthUs < 2600) this.servoPulse(part, widthUs)
+      if (part && simKind(part.type) === "servo" && p === "SIG" && widthUs > 400 && widthUs < 2600) this.servoPulse(part, widthUs)
       // A short trigger pulse into the PING))): it answers with an echo
       // 750 us later, as long as the round trip takes.
       if (part?.type === "ping" && p === "SIG" && widthUs >= 2 && widthUs < 50) this.echo(part, pin)
@@ -333,7 +343,7 @@ export class Simulator {
   private loads(): Map<string, number> {
     const map = new Map<string, number>()
     for (const part of this.project.parts) {
-      if (part.type !== "servo") continue
+      if (simKind(part.type) !== "servo") continue
       const width = this.servoAngle.get(part.id)
       const moving = width !== undefined && (prop(part, "continuous", true) ? Math.abs(width - 1500) > 30 : true)
       map.set(part.id, moving ? 33 : 500)
@@ -417,7 +427,7 @@ export class Simulator {
       const spec = PARTS[part.type]
       const id = part.id
       const gnd = (pin: string) => r.volts(`${id}.${pin}`)
-      switch (part.type) {
+      switch (simKind(part.type)) {
         case "led":
         case "rgb_led": {
           const channels = part.type === "rgb_led" ? ["R", "G", "B"] : ["A"]

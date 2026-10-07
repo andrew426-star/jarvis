@@ -193,6 +193,13 @@ class Settings(BaseSettings):
     # machine-generated (openssl rand -hex 32) and never typed by a human.
     jarvis_access_token: str | None = None
 
+    # The workshop's own devices (app/api/routes/devices.py): the token an
+    # ESP32 build sends to file an alert or fetch what to say. Scoped to
+    # those routes only - it opens nothing else. Machine-generated
+    # (openssl rand -hex 32) and flashed into the device's sketch; unset
+    # means the device routes refuse everything.
+    jarvis_device_token: str | None = None
+
     # Where the scheduled morning brief (POST /brief/run) is emailed.
     # Optional: unset means the connected Google account's own address,
     # i.e. the brief is sent from Andrew's Gmail to itself.

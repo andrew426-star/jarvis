@@ -164,6 +164,8 @@ export interface GalleryProject {
   segments?: Segment[]
   wires: number
   compiled: boolean
+  /** The controller's part type (uno, esp32, feather_s3), if any. */
+  board?: string | null
   estimated_total: number
   errors: number
   groups: string[]
@@ -186,17 +188,24 @@ export interface BomLine {
   cost: number
   where: string
   part_number: string
+  /** store / vending on campus, or online (with the product's link). */
+  source?: "store" | "vending" | "online"
+  url?: string
 }
 
 export interface Report {
   checks: Check[]
-  bom: { lines: BomLine[]; subtotal: number; estimated_total: number; not_stocked: string[] }
+  bom: { lines: BomLine[]; subtotal: number; estimated_total: number; campus_subtotal?: number; online_subtotal?: number; not_stocked: string[] }
   dropped: string[]
   compile: {
     ok: boolean
     error?: string
     unavailable?: boolean
     cached?: boolean
+    /** An ESP32 sketch: checked against the wiring, built in the Arduino IDE. */
+    skipped?: boolean
+    board?: string
+    note?: string
     flash_bytes?: number | null
     ram_bytes?: number | null
     warnings?: string[]
@@ -230,6 +239,12 @@ export function emptyProject(name = "Untitled project"): Project {
 
 export function specOf(part: Part): PartSpec | undefined {
   return PARTS[part.type]
+}
+
+/** What the simulator treats a part as: its type, or the type it behaves
+ *  like (parts.json sim_as - a positional MG90S is a servo, a 5V fan a fan). */
+export function simKind(type: string): string {
+  return (PARTS[type]?.sim_as as string | undefined) ?? type
 }
 
 export function prop<T>(part: Part, key: string, fallback: T): T {

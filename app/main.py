@@ -11,6 +11,7 @@ from app.api.routes.camera_link import relay_router as camera_relay_router
 from app.api.routes.camera_link import router as camera_link_router
 from app.api.routes.browser import router as browser_router
 from app.api.routes.checklists import router as checklists_router
+from app.api.routes.devices import router as devices_router
 from app.api.routes.files import router as files_router
 from app.api.routes.google_auth import router as google_auth_router
 from app.api.routes.google_login import router as google_login_router
@@ -57,6 +58,7 @@ app.include_router(browser_router)
 app.include_router(camera_link_router)
 app.include_router(camera_relay_router)
 app.include_router(checklists_router)
+app.include_router(devices_router)
 app.include_router(files_router)
 app.include_router(google_auth_router)
 app.include_router(google_login_router)

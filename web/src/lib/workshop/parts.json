@@ -1,5 +1,5 @@
 {
-  "_about": "The workshop's component library, shared by the browser (simulator, schematic, 3D) and the server (app/tools/workshop_project.py: checks, bill of materials). Each type: label, kind, the catalog item it is bought as (exact names from app/data/latech_*.psv), pins (name -> role), props with defaults, size in mm [x, y, z] (z up), and the electrical figures the checks use. need: pins that must be wired for the part to work. draw_ma: typical current from its supply pin. Sizes marked approx should be measured before a tight print.",
+  "_about": "The workshop's component library, shared by the browser (simulator, schematic, 3D) and the server (app/tools/workshop_project.py: checks, bill of materials). Each type: label, kind, the catalog item it is bought as (exact names from app/data/latech_*.psv, or online_parts.psv where campus has nothing for the job), pins (name -> role), props with defaults, size in mm [x, y, z] (z up), and the electrical figures the checks use. need: pins that must be wired for the part to work. draw_ma: typical current from its supply pin. Sizes marked approx should be measured before a tight print.",
   "types": {
     "uno": {
       "label": "Arduino UNO Rev3",
@@ -185,6 +185,138 @@
     "coupler_5x8": {"label": "Flexible coupler, 5 to 8 mm", "kind": "mech", "catalog": "Coupler: Flexible plum shaft aluminum (5x8mm)", "size": [19, 19, 25], "approx": true},
     "enclosure_3x2": {"label": "Plastic enclosure, 3 x 2 x 1.1 in.", "kind": "mech", "catalog": "Enclosure: 3\" x 2\" x 1.1\" black plastic", "size": [76.2, 50.8, 27.9]},
     "enclosure_5x2": {"label": "Plastic enclosure, 5 x 2.5 x 1.75 in.", "kind": "mech", "catalog": "Enclosure: 5\" x 2.5\" x 1.75\" black plastic", "size": [127, 63.5, 44.5]},
-    "aluminum_sheet": {"label": "Aluminum chassis sheet, 4 x 6 in.", "kind": "mech", "catalog": "Robot chassis: aluminum sheet, 4\" x 6\"", "size": [152.4, 101.6, 1.6], "approx": true}
+    "aluminum_sheet": {"label": "Aluminum chassis sheet, 4 x 6 in.", "kind": "mech", "catalog": "Robot chassis: aluminum sheet, 4\" x 6\"", "size": [152.4, 101.6, 1.6], "approx": true},
+    "esp32": {
+      "label": "WEMOS ESP32 board (D1 R32)", "kind": "mcu", "catalog": "WEMOS microcontroller with ESP32",
+      "pins": {"IO2": "io", "IO4": "io", "IO5": "io", "IO12": "io", "IO13": "io", "IO14": "io", "IO15": "io", "IO16": "io", "IO17": "io", "IO18": "io", "IO19": "io", "IO21": "io", "IO22": "io", "IO23": "io", "IO25": "io", "IO26": "io", "IO27": "io", "IO32": "io", "IO33": "io", "IO34": "io", "IO35": "io", "IO36": "io", "IO39": "io", "5V": "out5v", "3V3": "out3v3", "VIN": "vin", "GND": "gnd"},
+      "pin_prefix": "IO", "logic_v": 3.3, "input_only": ["IO34", "IO35", "IO36", "IO39"], "adc": ["IO32", "IO33", "IO34", "IO35", "IO36", "IO39"], "size": [68.6, 53.4, 15], "approx": true, "wireless": true, "pin_max_ma": 12, "pin_abs_ma": 40, "usb_ma": 500,
+      "note": "ESP32 with WiFi and Bluetooth, on the UNO-shaped WEMOS D1 R32 board (confirm the store's board; the GPIO numbers are the same on every WEMOS ESP32). 3.3V logic: never put 5V on a pin. Analog reads only on IO32-IO39 while WiFi is on; IO34-IO39 are inputs only. Program it in the Arduino IDE with the ESP32 core (board: ESP32 Dev Module). Not simulated live: its wiring and code are checked."
+    },
+    "feather_s3": {
+      "label": "Adafruit ESP32-S3 Feather", "kind": "mcu", "catalog": "Adafruit ESP32-S3 Feather (4MB flash, 2MB PSRAM, LiPo charger + MAX17048 fuel gauge, USB-C)",
+      "pins": {"A0": "io", "A1": "io", "A2": "io", "A3": "io", "A4": "io", "A5": "io", "D5": "io", "D6": "io", "D9": "io", "D10": "io", "D11": "io", "D12": "io", "D13": "io", "SDA": "io", "SCL": "io", "TX": "io", "RX": "io", "3V3": "out3v3", "USB": "vbus", "BAT": "bat", "GND": "gnd"},
+      "logic_v": 3.3, "adc": ["A0", "A1", "A2", "A3", "A4", "A5"], "size": [52.3, 22.7, 7.2], "wireless": true, "pin_max_ma": 12, "pin_abs_ma": 40,
+      "note": "Small ESP32-S3 board for worn builds: WiFi + Bluetooth LE, USB-C, a LiPo charger on board (plug the cell into its JST: wired here to BAT and GND) and a MAX17048 fuel gauge on its I2C. USB is live only while plugged in; BAT is the cell (3.0-4.2V). 3.3V logic. Program it in the Arduino IDE (board: Adafruit Feather ESP32-S3 2MB PSRAM). Not simulated live: its wiring and code are checked."
+    },
+    "servo_micro": {
+      "label": "MG90S positional micro servo (180 deg, metal gear)", "kind": "output", "catalog": "MG90S Micro Servo, Metal Gear (180 degree)", "sim_as": "servo",
+      "pins": {"SIG": "signal_in", "V+": "supply", "GND": "gnd"}, "need": ["SIG", "V+", "GND"],
+      "props": {"continuous": false}, "supply_v": [4.8, 6], "draw_ma": 150, "stall_ma": 700, "size": [22.8, 12.2, 22], "tab": 32.3, "torque_kgcm": 2.0,
+      "note": "Positional: write(angle) holds 0-180 degrees. 2.0 kg-cm at 4.8V. Every campus servo is continuous rotation, so this one is ordered online."
+    },
+    "servo_std": {
+      "label": "MG996R positional servo (180 deg, high torque)", "kind": "output", "catalog": "MG996R Servo, Metal Gear, High Torque (180 degree)", "sim_as": "servo",
+      "pins": {"SIG": "signal_in", "V+": "supply", "GND": "gnd"}, "need": ["SIG", "V+", "GND"],
+      "props": {"continuous": false}, "supply_v": [4.8, 6], "draw_ma": 500, "stall_ma": 2500, "size": [40.7, 19.7, 37], "tab": 54, "torque_kgcm": 9,
+      "note": "Positional, 9 kg-cm at 4.8V; stalls at about 2.5A, so it needs its own 5-6V supply - never a board's 5V pin."
+    },
+    "lipo_500": {
+      "label": "LiPo cell 3.7V 500mAh", "kind": "power", "catalog": "Lithium Ion Polymer Battery 3.7V 500mAh (JST-PH)",
+      "pins": {"+": "source", "-": "gnd"}, "need": ["+", "-"],
+      "volts": 3.7, "mah": 500, "size": [36, 29, 4.75],
+      "note": "Protected 1-cell LiPo, 3.7V nominal (4.2V full, cut-off 3.0V). Charge only on a LiPo charger at 500 mA or less."
+    },
+    "lipo_1200": {
+      "label": "LiPo cell 3.7V 1200mAh", "kind": "power", "catalog": "Lithium Ion Polymer Battery 3.7V 1200mAh (JST-PH)",
+      "pins": {"+": "source", "-": "gnd"}, "need": ["+", "-"],
+      "volts": 3.7, "mah": 1200, "size": [62, 34, 5],
+      "note": "Protected 1-cell LiPo, 3.7V nominal. Charge only on a LiPo charger at 500 mA or less."
+    },
+    "lipo_2500": {
+      "label": "LiPo cell 3.7V 2500mAh", "kind": "power", "catalog": "Lithium Ion Polymer Battery 3.7V 2500mAh (JST-PH)",
+      "pins": {"+": "source", "-": "gnd"}, "need": ["+", "-"],
+      "volts": 3.7, "mah": 2500, "size": [60, 50, 7.3],
+      "note": "Protected 1-cell LiPo, about 9 Wh. Charge only on a LiPo charger."
+    },
+    "lipo_charger": {
+      "label": "Micro-Lipo charger, USB-C", "kind": "driver", "catalog": "Adafruit Micro-Lipo Charger, USB Type C",
+      "pins": {"BAT": "charge", "GND": "gnd", "5V": "vbus"}, "need": ["BAT", "GND"],
+      "size": [24, 19, 7.2],
+      "note": "Charges a 1-cell LiPo from any USB-C cable: 100 mA as shipped, 500 mA with its jumper closed. Red LED charging, green full. 5V is live only while plugged in."
+    },
+    "boost_5v": {
+      "label": "MiniBoost 5V 1A (TPS61023)", "kind": "driver", "catalog": "Adafruit MiniBoost 5V @ 1A - TPS61023",
+      "pins": {"VIN": "supply", "GND": "gnd", "5V": "out5v"}, "need": ["VIN", "GND", "5V"],
+      "supply_v": [1.8, 5.5], "draw_ma": 5, "size": [17.8, 11.3, 5.6], "out_ma": 1100,
+      "note": "Lifts a LiPo's 3.0-4.2V to a steady 5V: about 1.1A from a 3.7V cell (less as it runs down)."
+    },
+    "fuel_gauge": {
+      "label": "MAX17048 LiPo fuel gauge", "kind": "sensor", "catalog": "Adafruit MAX17048 LiPoly / LiIon Fuel Gauge and Battery Monitor",
+      "pins": {"VIN": "supply", "GND": "gnd", "SDA": "i2c", "SCL": "i2c", "BAT": "charge"}, "need": ["VIN", "GND", "SDA", "SCL", "BAT"],
+      "supply_v": [3, 5.5], "draw_ma": 1, "size": [25.7, 20.3, 7.2], "i2c_addr": "0x36",
+      "note": "Reads the cell's voltage and charge in percent over I2C (address 0x36). BAT goes to the cell's +; on an UNO, SDA is A4 and SCL A5."
+    },
+    "mic_amp": {
+      "label": "MAX9814 electret mic amplifier (auto gain)", "kind": "sensor", "catalog": "Electret Microphone Amplifier - MAX9814 with Auto Gain Control",
+      "pins": {"VDD": "supply", "GND": "gnd", "OUT": "audio_out"}, "need": ["VDD", "GND", "OUT"],
+      "supply_v": [2.7, 5.5], "draw_ma": 3, "size": [26, 14, 6],
+      "note": "Microphone with automatic gain control: its OUT is an audio signal (1.25V bias, up to 2Vpp) for an amplifier's input or an analog pin."
+    },
+    "audio_amp": {
+      "label": "PAM8302 2.5W mono amplifier", "kind": "driver", "catalog": "Adafruit Mono 2.5W Class D Audio Amplifier - PAM8302",
+      "pins": {"VIN": "supply", "GND": "gnd", "A+": "audio_in", "A-": "audio_in", "SD": "signal_in", "SPK+": "speaker_out", "SPK-": "speaker_out"}, "need": ["VIN", "GND", "A+", "SPK+", "SPK-"],
+      "supply_v": [2, 5.5], "draw_ma": 10, "busy_ma": 500, "size": [24, 15, 8],
+      "note": "Analog audio in (A+, with A- to ground for a single-ended source), 2.5W into a 4-8 ohm speaker. SD low mutes it (pulled high on the board). Volume on its trim pot."
+    },
+    "i2s_amp": {
+      "label": "MAX98357A I2S 3W amplifier", "kind": "driver", "catalog": "Adafruit I2S 3W Class D Amplifier Breakout - MAX98357A",
+      "pins": {"VIN": "supply", "GND": "gnd", "BCLK": "signal_in", "LRC": "signal_in", "DIN": "signal_in", "SD": "signal_in", "SPK+": "speaker_out", "SPK-": "speaker_out"}, "need": ["VIN", "GND", "BCLK", "LRC", "DIN", "SPK+", "SPK-"],
+      "supply_v": [2.7, 5.5], "draw_ma": 10, "busy_ma": 650, "size": [19.4, 17.8, 6],
+      "note": "Digital (I2S) audio straight from an ESP32 into a speaker: 3.2W into 4 ohm at 5V. Not for the UNO: I2S needs the ESP32."
+    },
+    "speaker": {
+      "label": "Enclosed speaker 3W 4 ohm", "kind": "output", "catalog": "Mono Enclosed Speaker - 3W 4 Ohm",
+      "pins": {"+": "speaker", "-": "speaker"}, "need": ["+", "-"],
+      "size": [70, 30, 17], "ohms": 4, "watts": 3,
+      "note": "4 ohm, 3W, in its own box (JST-PH lead). Drive it from an amplifier's SPK+/SPK-, never a board pin."
+    },
+    "fan_5v": {
+      "label": "30mm 5V fan", "kind": "output", "catalog": "Miniature 5V Cooling Fan for Raspberry Pi (30x30x8mm, 0.2A)", "sim_as": "fan",
+      "pins": {"+": "load", "-": "load"}, "need": ["+", "-"],
+      "draw_ma": 200, "ohms": 25, "rated_v": 5, "rpm": 8000, "size": [30, 30, 8],
+      "note": "Brushless 5V fan, 0.2A. Switch it with a logic-level MOSFET on its - lead (PWM for speed) and a flyback diode across it."
+    },
+    "pulse_sensor": {
+      "label": "Pulse Sensor Amped (heart rate)", "kind": "sensor", "catalog": "Pulse Sensor Amped",
+      "pins": {"+": "supply", "-": "gnd", "S": "signal_out"}, "need": ["+", "-", "S"],
+      "supply_v": [3, 5.5], "draw_ma": 4, "size": [16, 16, 3.5],
+      "note": "Optical heart-rate sensor for a fingertip or ear lobe: S is an analog waveform (half the supply at rest) with a peak each beat. Run it from 3.3V on an ESP32."
+    },
+    "neopixel_ring12": {
+      "label": "NeoPixel ring, 12 RGB", "kind": "output", "catalog": "NeoPixel Ring - 12 x 5050 RGB LED with Integrated Drivers",
+      "pins": {"DIN": "signal_in", "5V": "supply", "GND": "gnd", "DOUT": "signal_out"}, "need": ["DIN", "5V", "GND"],
+      "supply_v": [3.5, 5.5], "draw_ma": 120, "max_ma": 720, "size": [36.8, 36.8, 3.2],
+      "note": "12 addressable RGB LEDs on one data pin (Adafruit_NeoPixel). About 60 mA each at full white; 120 mA at a typical brightness. Put about 200 ohm in series with DIN."
+    },
+    "neopixel_stick8": {
+      "label": "NeoPixel stick, 8 RGB", "kind": "output", "catalog": "NeoPixel Stick - 8 x 5050 RGB LED with Integrated Drivers",
+      "pins": {"DIN": "signal_in", "5V": "supply", "GND": "gnd", "DOUT": "signal_out"}, "need": ["DIN", "5V", "GND"],
+      "supply_v": [3.5, 7], "draw_ma": 80, "max_ma": 480, "size": [51.1, 10.22, 3.19],
+      "note": "8 addressable RGB LEDs in a row; chain sticks DOUT to DIN. Bright enough to read in daylight. Put about 200 ohm in series with DIN."
+    },
+    "pir": {
+      "label": "PIR motion sensor (SparkFun, JST)", "kind": "sensor", "catalog": "PIR Motion Sensor (JST)",
+      "pins": {"VCC": "supply", "GND": "gnd", "AL": "signal_out"}, "need": ["VCC", "GND", "AL"],
+      "supply_v": [5, 12], "draw_ma": 2, "size": [35.4, 35.4, 24], "open_collector": ["AL"], "approx": true,
+      "note": "Sees a person moving up to about 7 m away; AL is open collector and goes LOW on motion, so use INPUT_PULLUP or a 10k pull-up. Give it 1-2 s to settle at power-on."
+    },
+    "vibe_motor": {
+      "label": "Vibration motor 1.5-4.5V", "kind": "output", "catalog": "Motor: vibrating motor, 1.5-4.5VDC", "sim_as": "fan",
+      "pins": {"+": "load", "-": "load"}, "need": ["+", "-"],
+      "draw_ma": 80, "ohms": 40, "rated_v": 3.3, "rpm": 11000, "size": [10, 10, 3.4], "approx": true,
+      "note": "Buzzes for haptic feedback. 80 mA: switch it with a MOSFET (or NPN), with a flyback diode across it."
+    },
+    "supply_5v4a": {
+      "label": "5V 4A power supply", "kind": "power", "catalog": "5V 4A (4000mA) switching power supply - UL Listed",
+      "pins": {"+": "source", "-": "gnd"}, "need": ["+", "-"],
+      "volts": 5, "amps": 4, "size": [95, 45, 32], "approx": true,
+      "note": "Wall brick with a 2.1 mm barrel plug: wire it through the screw-terminal jack adapter. 5V only - it cannot feed an UNO's barrel jack (that needs 7V+), so it goes to 5V pins and servo rails."
+    },
+    "speaker_thin": {
+      "label": "Thin speaker 0.5W 8 ohm (40 mm)", "kind": "output", "catalog": "Thin Speaker - 0.5W (40 mm, 8 ohm)",
+      "pins": {"+": "speaker", "-": "speaker"}, "need": ["+", "-"],
+      "size": [40, 40, 4.5], "ohms": 8, "watts": 0.5,
+      "note": "Flat 40 mm speaker, 4.5 mm deep: fits behind a grille in a thin wall. 0.5W - keep a PAM8302 at 5V turned well down (its trim pot), it can give 1.5W into 8 ohm."
+    }
   }
 }

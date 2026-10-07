@@ -9,6 +9,7 @@ from app.core.auth import require_access_token, require_browser_or_full
 from app.core.config import get_settings
 from app.memory.session_buffer import count_turns
 from app.schemas.invoke import InvokeRequest, InvokeResponse, SessionContext
+from app.services.devices import note_reply
 from app.services.orchestrator import run_invoke, stream_invoke
 
 router = APIRouter()
@@ -30,6 +31,8 @@ def invoke(request: InvokeRequest) -> InvokeResponse:
         console_state=request.console_state,
         attachments=[a.model_dump() for a in request.attachments],
     )
+    # The desk avatar (Ultron Sentry) says it too.
+    note_reply(result.get("spoken"))
     return InvokeResponse(**result)
 
 
@@ -64,6 +67,8 @@ def invoke_stream(request: InvokeRequest) -> StreamingResponse:
                 console_state=request.console_state,
                 attachments=[a.model_dump() for a in request.attachments],
             ):
+                if event.get("type") == "done":
+                    note_reply(event.get("spoken"))
                 yield json.dumps(event, default=str) + "\n"
         except Exception as exc:  # noqa: BLE001 — headers are sent; report in-band instead
             logger.exception("invoke stream failed")

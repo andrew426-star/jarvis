@@ -1,4 +1,4 @@
-import { PARTS, prop, type Part, type Project } from "@/lib/workshop/project/types"
+import { PARTS, prop, simKind, type Part, type Project } from "@/lib/workshop/project/types"
 
 // The DC side of the simulation: every wire joins pins into nets, every
 // part becomes resistors and sources between them, and nodal analysis
@@ -141,7 +141,7 @@ export class Circuit {
         const id = part.id
         const spec = PARTS[part.type]
         if (!spec) continue
-        switch (part.type) {
+        switch (simKind(part.type)) {
           case "uno": {
             src(`${id}.5V`, `${id}.GND`, 5, 0.05, `${id}.5V`)
             src(`${id}.3V3`, `${id}.GND`, 3.3, 0.5, `${id}.3V3`)
@@ -266,6 +266,13 @@ export class Circuit {
             // The carrier pulls SLP up to VDD; RST floats (hence the RST-SLP jumper).
             g(`${id}.SLP`, `${id}.VDD`, 10_000)
             break
+          case "boost_5v": {
+            // A LiPo's 3-4.2V in, a steady 5V out from about 1.8V up.
+            const vin = V(`${id}.VIN`) - V(`${id}.GND`)
+            g(`${id}.VIN`, `${id}.GND`, 1000)
+            if (vin > 1.8) src(`${id}.5V`, `${id}.GND`, 5, 0.1, `${id}.5V`)
+            break
+          }
           case "ping":
             g(`${id}.5V`, `${id}.GND`, 5 / 0.03)
             break
@@ -305,7 +312,7 @@ export class Circuit {
       }
     }
     for (const part of this.project.parts) {
-      if (part.type === "dc_motor" || part.type === "fan") {
+      if (simKind(part.type) === "dc_motor" || simKind(part.type) === "fan") {
         const v = nodeV(this.nets.node(`${part.id}.+`)) - nodeV(this.nets.node(`${part.id}.-`))
         current.set(part.id, (v / Number(PARTS[part.type].ohms ?? 30)) * 1000)
       }

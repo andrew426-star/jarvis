@@ -3,6 +3,7 @@
 import { sfx } from "@/lib/sfx"
 import { animate } from "@/lib/workshop/project/assembly"
 import { useProject } from "@/lib/workshop/project/store"
+import { PARTS } from "@/lib/workshop/project/types"
 import { Simulator, type SimSnapshot } from "@/lib/workshop/sim/runner"
 
 // Runs the open project's simulation on animation frames: steps the
@@ -51,7 +52,12 @@ function sound(hz: number) {
 function ensure(): string | null {
   const { project, version } = useProject.getState()
   if (!project) return "No project is open."
-  if (!project.parts.some((p) => p.type === "uno")) return "The project has no UNO to run."
+  if (!project.parts.some((p) => p.type === "uno")) {
+    const board = project.parts.find((p) => PARTS[p.type]?.kind === "mcu")
+    return board
+      ? `${PARTS[board.type]?.label ?? board.type} build: its wiring and sketch are checked, but only the UNO runs live here. Build it in the Arduino IDE.`
+      : "The project has no UNO to run."
+  }
   if (!project.hex) return "The sketch has not compiled yet."
   if (!sim || simVersion !== version) {
     try {
@@ -176,6 +182,9 @@ export function applyInputs(inputs: Record<string, unknown>) {
         break
       case "ping":
         setSimInput(part.id, "distance_cm", Number(value))
+        break
+      case "fuel_gauge":
+        setSimInput(part.id, "percent", Number(value))
         break
       case "adxl335": {
         const [x = 0, y = 0, z = 1] = Array.isArray(value) ? value.map(Number) : []

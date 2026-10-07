@@ -9,8 +9,17 @@ def test_every_row_of_both_lists_loads():
 
 def test_search_spans_the_store_and_the_vending_machines():
     found = parts_catalog({"query": "servos"})["items"]
-    assert {i["source"] for i in found} == {"store", "vending"}
+    assert {i["source"] for i in found} == {"store", "vending", "online"}
     assert any(i.get("location") == "Anne Droid, C8" for i in found)
+    # Campus first: every online product comes after every campus item.
+    sources = [i["source"] for i in found]
+    assert sources.index("online") > max(k for k, s in enumerate(sources) if s != "online")
+
+
+def test_online_products_carry_supplier_price_and_link():
+    online = [i for i in catalog() if i["source"] == "online"]
+    assert online and all(i["url"].startswith("https://") and i["supplier"] and i["price"] > 0 for i in online)
+    assert parts_catalog({"query": "servo", "source": "online"})["count"] >= 2
 
 
 def test_course_and_price_filters():

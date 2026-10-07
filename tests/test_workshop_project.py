@@ -256,3 +256,60 @@ def test_segments_are_kept_bounded_and_loop_free():
     assert p["wear"]["actions"][0]["segment"] == "Hand"
     assert wp.normalize({})[0]["segments"] == []
     assert "segments" in wp.SECTIONS
+
+
+ESP = {"id": "U1", "type": "esp32"}
+
+
+def test_bom_prices_campus_with_tax_and_online_at_list():
+    p = project(
+        [UNO, {"id": "FAN", "type": "fan_5v"}],
+        [{"a": "FAN.+", "b": "U1.5V"}, {"a": "FAN.-", "b": "U1.GND"}],
+    )
+    b = wp.bom(p)
+    fan = next(l for l in b["lines"] if l["source"] == "online")
+    assert fan["url"].startswith("https://www.adafruit.com/") and fan["where"] == "Online: Adafruit"
+    # Campus lines first in the list; online at its listed price, campus x1.13.
+    assert b["lines"][-1]["source"] == "online"
+    assert b["estimated_total"] == round(b["campus_subtotal"] * 1.13 + b["online_subtotal"], 2)
+
+
+def test_esp32_pins_are_3v3_and_its_sketch_pins_are_gpio_numbers():
+    code = "const int LED = 25;" + chr(10) + "void setup() { pinMode(LED, OUTPUT); pinMode(34, OUTPUT); }" + chr(10) + "void loop() { analogRead(25); }"
+    p = project(
+        [ESP, {"id": "US1", "type": "ping"}],
+        [{"a": "US1.SIG", "b": "U1.IO18"}, {"a": "US1.5V", "b": "U1.5V"}, {"a": "US1.GND", "b": "U1.GND"},
+         {"a": "U1.IO18", "b": "U1.5V"}],
+        code,
+    )
+    errors = texts(wp.check(p), "error")
+    assert any("U1.IO18 is on a 5V net" in t for t in errors)
+    assert any("analogRead on IO25" in t for t in errors)
+    assert any("IO34 is input-only" in t for t in errors)
+    assert any("nothing is wired to U1.IO25" in t for t in texts(wp.check(p), "warning"))
+
+
+def test_a_rail_behind_a_power_toggle_counts_as_powered():
+    p = project(
+        [UNO, {"id": "BAT", "type": "lipo_2500"}, {"id": "SW", "type": "switch"}, {"id": "BST", "type": "boost_5v"}],
+        [{"a": "BAT.+", "b": "SW.1"}, {"a": "SW.2", "b": "BST.VIN"}, {"a": "BAT.-", "b": "U1.GND"},
+         {"a": "BST.GND", "b": "U1.GND"}, {"a": "BST.5V", "b": "U1.5V"}],
+    )
+    assert not any("no power source" in t for t in texts(wp.check(p)))
+
+
+def test_speakers_need_an_amplifier_and_big_servos_their_own_supply():
+    p = project(
+        [ESP, {"id": "SPK", "type": "speaker"}, {"id": "S1", "type": "servo_std"}],
+        [{"a": "SPK.+", "b": "U1.IO25"}, {"a": "SPK.-", "b": "U1.GND"},
+         {"a": "S1.V+", "b": "U1.5V"}, {"a": "S1.GND", "b": "U1.GND"}, {"a": "S1.SIG", "b": "U1.IO13"}],
+    )
+    errors = texts(wp.check(p), "error")
+    assert any("drive it from an amplifier" in t for t in errors)
+    assert any("S1 (MG996R) is powered from U1.5V" in t for t in errors)
+
+
+def test_esp32_projects_are_checked_not_compiled(db, monkeypatch):
+    monkeypatch.setattr(wp, "compile_sketch", lambda code: pytest.fail("ESP32 sketches must not go to the AVR compiler"))
+    result = wp.save_project({"name": "Sentry", "parts": [ESP], "wires": [], "code": "void setup() {}" + chr(10) + "void loop() {}"})
+    assert result["report"]["compile"]["skipped"] and result["project"]["hex"] is None

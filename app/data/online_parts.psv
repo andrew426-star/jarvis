@@ -1,0 +1,25 @@
+# Products bought online, for what the Louisiana Tech store and vending machines do not stock.
+# Used only where campus has nothing that does the job (app/tools/parts_catalog.py: campus first).
+# Prices and links checked on the supplier's own page, 2026-10-07; they change, so re-check before ordering.
+# supplier|item|part number|packaging|price (USD)|url
+Adafruit|Adafruit ESP32-S3 Feather (4MB flash, 2MB PSRAM, LiPo charger + MAX17048 fuel gauge, USB-C)|5477|each|17.50|https://www.adafruit.com/product/5477
+Adafruit|Lithium Ion Polymer Battery 3.7V 500mAh (JST-PH)|1578|each|7.95|https://www.adafruit.com/product/1578
+Adafruit|Lithium Ion Polymer Battery 3.7V 1200mAh (JST-PH)|258|each|9.95|https://www.adafruit.com/product/258
+Adafruit|Lithium Ion Polymer Battery 3.7V 2500mAh (JST-PH)|328|each|14.95|https://www.adafruit.com/product/328
+Adafruit|Adafruit Micro-Lipo Charger, USB Type C|4410|each|5.95|https://www.adafruit.com/product/4410
+Adafruit|Adafruit MiniBoost 5V @ 1A - TPS61023|4654|each|3.95|https://www.adafruit.com/product/4654
+Adafruit|Adafruit MAX17048 LiPoly / LiIon Fuel Gauge and Battery Monitor|5580|each|5.95|https://www.adafruit.com/product/5580
+Adafruit|Electret Microphone Amplifier - MAX9814 with Auto Gain Control|1713|each|7.95|https://www.adafruit.com/product/1713
+Adafruit|Adafruit Mono 2.5W Class D Audio Amplifier - PAM8302|2130|each|3.95|https://www.adafruit.com/product/2130
+Adafruit|Adafruit I2S 3W Class D Amplifier Breakout - MAX98357A|3006|each|5.95|https://www.adafruit.com/product/3006
+Adafruit|Mono Enclosed Speaker - 3W 4 Ohm|3351|each|3.95|https://www.adafruit.com/product/3351
+Adafruit|Miniature 5V Cooling Fan for Raspberry Pi (30x30x8mm, 0.2A)|3368|each|3.50|https://www.adafruit.com/product/3368
+Adafruit|Pulse Sensor Amped|1093|each|30.00|https://www.adafruit.com/product/1093
+Adafruit|NeoPixel Ring - 12 x 5050 RGB LED with Integrated Drivers|1643|each|8.95|https://www.adafruit.com/product/1643
+Adafruit|NeoPixel Stick - 8 x 5050 RGB LED with Integrated Drivers|1426|each|5.95|https://www.adafruit.com/product/1426
+Adafruit|5V 4A (4000mA) switching power supply - UL Listed|1466|each|14.95|https://www.adafruit.com/product/1466
+Adafruit|Female DC Power adapter - 2.1mm jack to screw terminal block|368|each|2.00|https://www.adafruit.com/product/368
+SparkFun|PIR Motion Sensor (JST)|SEN-13285|each|11.50|https://www.sparkfun.com/pir-motion-sensor-jst.html
+SparkFun|Thin Speaker - 0.5W (40 mm, 8 ohm)|COM-15350|each|1.50|https://www.sparkfun.com/thin-speaker-0-5w.html
+Waveshare|MG90S Micro Servo, Metal Gear (180 degree)|MG90S|each|2.59|https://www.waveshare.com/MG90S-Servo.htm
+Waveshare|MG996R Servo, Metal Gear, High Torque (180 degree)|MG996R|each|4.99|https://www.waveshare.com/mg996r-servo.htm
