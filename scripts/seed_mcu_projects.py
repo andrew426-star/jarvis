@@ -1,4 +1,4 @@
-"""Five MCU builds for the workshop: Ultron, the arc reactor, War Machine's
+"""Four MCU builds for the workshop: the arc reactor, War Machine's
 shoulder gun, a web shooter and an Iron Man faceplate. Each is a real
 project - Louisiana Tech parts, wiring, an UNO sketch, printed parts and
 where everything sits - worn in the camera try-on with its actions.
@@ -41,232 +41,7 @@ def res(rid: str, ohms: int, group: str) -> dict:
     return {"id": rid, "type": "resistor", "props": {"ohms": ohms}, "group": group}
 
 
-# --- 1. Ultron -------------------------------------------------------------------
-
-ULTRON_HEAD = r"""// Ultron's head: a tall, narrow skull with a long chin, its eye slots and
-// mouth slit cut clean through for the red LEDs behind them. Hollow and
-// open underneath for the neck shaft. Modelled as it sits on the
-// turntable (front is -y); print it upright, tree supports in the slots.
-$fn = 64;
-module skull(k = 0) {
-  hull() {
-    translate([0, 4, 92]) scale([1, 1.12, 0.78]) sphere(r = 38 - k);
-    translate([0, -6, 58]) sphere(r = 35 - k);
-    translate([0, -20, 12]) scale([0.5, 0.65, 0.5]) sphere(r = 22 - k);
-    translate([0, 14, 18]) cylinder(r = 20 - k, h = 12);
-  }
-}
-difference() {
-  skull();
-  skull(2.4);
-  // Eye slots, raked down toward the nose.
-  for (s = [-1, 1]) translate([s * 15, -40, 72]) rotate([0, s * 14, 0]) cube([20, 24, 5.5], center = true);
-  // The mouth.
-  translate([0, -36, 36]) cube([20, 24, 2.4], center = true);
-  // Neck opening.
-  translate([0, 0, -1]) cylinder(d = 26, h = 40);
-}
-// Cheek plates: the angular ridges either side of the mouth.
-for (s = [-1, 1]) intersection() {
-  skull();
-  translate([s * 22, -30, 46]) rotate([0, 0, s * 30]) cube([4, 30, 34], center = true);
-}
-"""
-
-ULTRON_BASE = r"""// Turntable base: a drum holding the UNO on its floor, the servo standing
-// above it on two beams with its horn at the centre, and the 608 bearing
-// in a seat on top for the head's neck. A window in front for the
-// PING))), a cable slot at the back.
-$fn = 96;
-H = 58; R = 55; T = 2.4;
-difference() {
-  cylinder(r = R, h = H);
-  translate([0, 0, T]) cylinder(r = R - T, h = H);
-  for (x = [-12.5, 12.5]) translate([x, -R + 3, 15]) rotate([90, 0, 0]) cylinder(d = 17, h = 10, center = true);
-  translate([-8, R - 5, -1]) cube([16, 10, 12]);
-}
-// Servo beams, under its mounting tabs.
-for (x = [-20.1, 8.9]) translate([x - 2, -48, 32]) cube([4, 96, 2.5]);
-// Bearing seat on a three-armed spider.
-translate([0, 0, H - 7]) difference() {
-  union() {
-    cylinder(d = 30, h = 7);
-    for (a = [90, 210, 330]) rotate(a) translate([0, -4, 3]) cube([R - 1, 8, 4]);
-  }
-  translate([0, 0, -1]) cylinder(d = 22.2, h = 9);
-}
-"""
-
-ULTRON_CODE = r"""// ULTRON SENTRY
-// A head on a turntable that keeps watch over the desk. It sweeps slowly
-// round on a continuous servo, noting home each turn as the neck's magnet
-// passes the hall sensor; the PING))) in its base looks for someone. When
-// it finds you it stops dead, its eyes flare and it speaks (piezo and
-// serial). Lose it for two seconds and it goes back to searching.
-#include <Servo.h>
-
-const int HOME = 2;       // hall sensor, open collector: LOW at the magnet
-const int EYE_L = 5;      // PWM pins clear of timer 1 (Servo) and timer 2 (tone)
-const int EYE_R = 6;
-const int PING_PIN = 7;
-const int PIEZO = 8;
-const int NECK = 9;
-
-const int STOP = 90;      // a continuous servo holds still at 90
-const int SWEEP = 97;     // a slow turn
-const long NEAR_CM = 80;
-
-Servo neck;
-bool watching = false;
-unsigned long lastSeen = 0;
-
-long distanceCm() {
-  pinMode(PING_PIN, OUTPUT);
-  digitalWrite(PING_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(PING_PIN, HIGH);
-  delayMicroseconds(5);
-  digitalWrite(PING_PIN, LOW);
-  pinMode(PING_PIN, INPUT);
-  long us = pulseIn(PING_PIN, HIGH, 25000);
-  return us ? us / 29 / 2 : 999;
-}
-
-void eyes(int level) {
-  analogWrite(EYE_L, level);
-  analogWrite(EYE_R, level);
-}
-
-void speak() {
-  // Three falling notes, low.
-  const int notes[] = {220, 196, 147};
-  for (int i = 0; i < 3; i++) {
-    tone(PIEZO, notes[i], 180);
-    delay(220);
-  }
-}
-
-void setup() {
-  pinMode(HOME, INPUT_PULLUP);
-  pinMode(EYE_L, OUTPUT);
-  pinMode(EYE_R, OUTPUT);
-  neck.attach(NECK);
-  neck.write(STOP);
-  Serial.begin(115200);
-  Serial.println("ULTRON ONLINE");
-  for (int i = 0; i <= 255; i += 5) {
-    eyes(i);
-    delay(10);
-  }
-}
-
-void loop() {
-  long cm = distanceCm();
-  if (cm < NEAR_CM) {
-    neck.write(STOP);
-    if (!watching) {
-      watching = true;
-      eyes(255);
-      Serial.print("I SEE YOU. ");
-      Serial.print(cm);
-      Serial.println(" CM");
-      speak();
-    }
-    lastSeen = millis();
-    eyes(200 + random(56));  // a flicker while it stares
-  } else {
-    if (watching && millis() - lastSeen > 2000) {
-      watching = false;
-      Serial.println("SEARCHING");
-    }
-    if (!watching) {
-      neck.write(SWEEP);
-      eyes(60 + (int)(50 * sin(millis() / 400.0)));  // breathing while it searches
-      if (digitalRead(HOME) == LOW) Serial.println("HOME");
-    }
-  }
-  delay(40);
-}
-"""
-
-ultron = {
-    "name": "Ultron Sentry",
-    "goal": "Ultron's head on a turntable that watches the desk: it sweeps round on a continuous servo, finds you with a PING))) sensor, stops, flares its red eyes and speaks.",
-    "status": "design",
-    "notes": (
-        "Desk piece: runs off the 9V wall supply into VIN.\n"
-        "Every servo Tech stocks is continuous rotation, so the head sweeps at a set speed and the hall sensor marks home once a turn (glue a magnet in the neck shaft).\n"
-        "Eyes: two red LEDs, each through two 100 ohm resistors in series (about 15 mA).\n"
-        "Eye PWM on D5/D6: Servo takes timer 1 (D9/D10) and tone() timer 2 (D3/D11).\n"
-        "Print the head in silver silk PLA, the base in matte black.\n"
-        "Simulator: set PING distance under 80 cm and he stops and stares; over 80 and he searches.\n"
-        "Try-on: DESK. Point at him and he fires his eye beam."
-    ),
-    "parts": [
-        {"id": "U1", "type": "uno", "group": "Base"},
-        {"id": "PWR", "type": "supply_9v", "group": "Base"},
-        {"id": "SRV", "type": "servo", "group": "Base", "label": "Neck"},
-        {"id": "BRG", "type": "bearing_608", "group": "Base"},
-        {"id": "PING", "type": "ping", "group": "Base", "label": "Presence sensor"},
-        {"id": "HAL", "type": "hall", "group": "Base", "label": "Home sensor"},
-        {"id": "PZ", "type": "piezo", "group": "Base"},
-        {"id": "L1", "type": "led", "props": {"color": "red"}, "group": "Head", "label": "Left eye"},
-        {"id": "L2", "type": "led", "props": {"color": "red"}, "group": "Head", "label": "Right eye"},
-        res("R1", 100, "Head"), res("R2", 100, "Head"), res("R3", 100, "Head"), res("R4", 100, "Head"),
-    ],
-    "wires": power("PWR")
-    + [
-        {"a": "SRV.SIG", "b": "U1.D9", "color": "orange"},
-        {"a": "SRV.V+", "b": "U1.5V", "color": "red"},
-        gnd("SRV.GND"),
-        {"a": "PING.SIG", "b": "U1.D7", "color": "white"},
-        {"a": "PING.5V", "b": "U1.5V", "color": "red"},
-        gnd("PING.GND"),
-        {"a": "HAL.VCC", "b": "U1.5V", "color": "red"},
-        gnd("HAL.GND"),
-        {"a": "HAL.OUT", "b": "U1.D2", "color": "yellow"},
-        {"a": "PZ.+", "b": "U1.D8", "color": "orange"},
-        gnd("PZ.-"),
-    ]
-    + chain("U1.D5", ["R1", "R2"], "L1.A", "red")
-    + [gnd("L1.K")]
-    + chain("U1.D6", ["R3", "R4"], "L2.A", "red")
-    + [gnd("L2.K")],
-    "code": ULTRON_CODE,
-    "printed": [
-        {"name": "Ultron head", "code": ULTRON_HEAD, "group": "Head", "material": "silk", "color": "#b4bac2", "notes": ["Hollow, 2.4 mm wall", "Eye slots for 5 mm LEDs", "Print upright, tree supports"]},
-        {"name": "Turntable base", "code": ULTRON_BASE, "group": "Base", "material": "matte", "color": "#1d1f23", "notes": ["110 mm drum, UNO on the floor", "Servo beams + 608 seat", "PING))) window in front"]},
-    ],
-    "layout": {
-        "Turntable base": {"pos": [0, 0, 0], "rot": [0, 0, 0]},
-        "U1": {"pos": [0, 0, 2.4], "rot": [0, 0, 0]},
-        "SRV": {"pos": [-5.6, 0, 20], "rot": [0, 0, 0]},
-        "BRG": {"pos": [0, 0, 51], "rot": [0, 0, 0]},
-        "Ultron head": {"pos": [0, 0, 60], "rot": [0, 0, 0]},
-        "L1": {"pos": [-15, -27, 132], "rot": [90, 0, 0]},
-        "L2": {"pos": [15, -27, 132], "rot": [90, 0, 0]},
-        "PING": {"pos": [0, -38, 15], "rot": [90, 0, 0]},
-        "HAL": {"pos": [24, 30, 36], "rot": [0, 0, 0]},
-        "PZ": {"pos": [30, 22, 20], "rot": [0, 0, 0]},
-        "R1": {"pos": [-32, -22, 22], "rot": [0, 0, 0]},
-        "R2": {"pos": [-32, -17, 22], "rot": [0, 0, 0]},
-        "R3": {"pos": [-32, -12, 22], "rot": [0, 0, 0]},
-        "R4": {"pos": [-32, -7, 22], "rot": [0, 0, 0]},
-        "PWR": {"pos": [100, 40, 0], "rot": [0, 0, 0]},
-    },
-    "wear": {
-        "anchor": "desk",
-        "offset": [0, 0, 0],
-        "rot": [0, 0, 0],
-        "scale": 1,
-        "actions": [
-            {"name": "Eyes", "kind": "glow", "cue": "button", "at": [0, -40, 132], "dir": [0, -1, 0], "color": "#ff2a14"},
-            {"name": "Eye beam", "kind": "beam", "cue": "point", "at": [0, -42, 132], "dir": [0, -1, 0.04], "color": "#ff4a2a", "charge": 0.4},
-        ],
-    },
-}
-
-# --- 2. Arc reactor ----------------------------------------------------------------
+# --- 1. Arc reactor ----------------------------------------------------------------
 
 REACTOR_HOUSING = r"""// Reactor housing: the casing round the light, printed face up. Six LED
 // holes on a 56 mm circle and the core's hole in the back plate, ten
@@ -482,7 +257,7 @@ reactor = {
     },
 }
 
-# --- 3. War Machine ------------------------------------------------------------------
+# --- 2. War Machine ------------------------------------------------------------------
 
 WM_SADDLE = r"""// Shoulder saddle: a curved plate that sits over the top of the shoulder
 // (a 60 mm radius, front to back), straps through four slots, and a
@@ -691,7 +466,7 @@ war_machine = {
     },
 }
 
-# --- 4. Web shooter --------------------------------------------------------------------
+# --- 3. Web shooter --------------------------------------------------------------------
 
 WS_BAND = r"""// Wrist band: an oval ring round the wrist (64 x 44 inside, 3 mm wall,
 // 30 wide), the shooter riding on its underside. Modelled as worn: the
@@ -921,7 +696,7 @@ web_shooter = {
     },
 }
 
-# --- 5. Iron Man faceplate ----------------------------------------------------------------
+# --- 4. Iron Man faceplate ----------------------------------------------------------------
 
 FACEPLATE = r"""// Faceplate: the mask, modelled as worn - origin between the pupils, z
 // up, front -y. An ellipsoid shell 2.4 mm thick that clears the nose,
@@ -1128,7 +903,7 @@ faceplate = {
     },
 }
 
-PROJECTS = [ultron, reactor, war_machine, web_shooter, faceplate]
+PROJECTS = [reactor, war_machine, web_shooter, faceplate]
 
 
 def checked(raw: dict) -> tuple[dict, dict]:

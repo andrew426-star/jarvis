@@ -26,6 +26,7 @@ import { RigTab } from "@/components/workshop/rig-tab"
 import { Schematic } from "@/components/workshop/schematic"
 import { useJarvis } from "@/lib/store"
 import { compileScadCached } from "@/lib/workshop/openscad"
+import { partThumb, printedThumb } from "@/lib/workshop/project/part-thumbs"
 import { useProject, type ProjectTab } from "@/lib/workshop/project/store"
 import { PARTS, STATUSES, prop, type BomLine, type Part, type PrintedPart } from "@/lib/workshop/project/types"
 import { isRunning, resetSim, sendSerial, setSimInput, setSimSpeed, startSim, stopSim } from "@/lib/workshop/sim/controller"
@@ -337,6 +338,45 @@ function describe(part: Part): string {
   return bits.join(" · ")
 }
 
+/** A part's picture, drawn in 3D at a three-quarter view (part-thumbs.ts).
+ *  Drawn once per mount: give it a key that changes with what it shows. */
+function PartThumb({ load, alt, size = 52 }: { load: () => Promise<string | null>; alt: string; size?: number }) {
+  const [src, setSrc] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  const loadRef = useRef(load)
+  useEffect(() => {
+    let live = true
+    void loadRef.current().then((url) => {
+      if (!live) return
+      setSrc(url)
+      setFailed(!url)
+    })
+    return () => {
+      live = false
+    }
+  }, [])
+  return (
+    <span
+      className="flex shrink-0 items-center justify-center"
+      style={{
+        width: size,
+        height: size * 0.75,
+        background: "radial-gradient(ellipse at 50% 60%, rgba(var(--accent-rgb), 0.14), rgba(0,0,0,0.35) 70%)",
+        border: "1px solid rgba(var(--accent-rgb), 0.18)",
+      }}
+    >
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element -- a data URL drawn in the browser
+        <img src={src} alt={alt} title={alt} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+      ) : failed ? (
+        <PackageIcon size={14} style={{ color: "var(--text-secondary)" }} />
+      ) : (
+        <Loader2Icon size={12} className="animate-spin" style={{ color: "var(--text-secondary)" }} />
+      )}
+    </span>
+  )
+}
+
 function PartsTab() {
   const project = useProject((s) => s.project)!
   const report = useProject((s) => s.report)
@@ -377,8 +417,9 @@ function PartsTab() {
                   {list.map((p) => {
                     const l = lineFor(p.id)
                     return (
-                      <div key={p.id} className="flex" style={{ gap: 8, fontSize: 12, padding: "2px 0", borderBottom: "1px solid rgba(var(--accent-rgb), 0.08)" }}>
-                        <span className="t-label shrink-0" style={{ width: 52, color: "var(--accent)" }}>{p.id}</span>
+                      <div key={p.id} className="flex items-center" style={{ gap: 8, fontSize: 12, padding: "3px 0", borderBottom: "1px solid rgba(var(--accent-rgb), 0.08)" }}>
+                        <PartThumb key={`${p.type}${JSON.stringify(p.props ?? {})}`} load={() => partThumb(p)} alt={describe(p)} />
+                        <span className="t-label shrink-0" style={{ width: 44, color: "var(--accent)" }}>{p.id}</span>
                         <span className="min-w-0 flex-1">
                           <span className="wrap-words" style={{ color: "var(--text-primary)" }}>{describe(p)}</span>
                           <span className="t-time" style={{ display: "block" }}>{l ? `${l.where} · $${l.price.toFixed(2)} / ${l.unit}` : "Not stocked at Tech or online"}</span>
@@ -393,7 +434,8 @@ function PartsTab() {
               <div>
                 <div className="t-time" style={{ margin: "2px 0" }}>PRINTED</div>
                 {printed.map((p: PrintedPart) => (
-                  <div key={p.name} className="flex items-center" style={{ gap: 8, fontSize: 12, padding: "2px 0", borderBottom: "1px solid rgba(var(--accent-rgb), 0.08)" }}>
+                  <div key={p.name} className="flex items-center" style={{ gap: 8, fontSize: 12, padding: "3px 0", borderBottom: "1px solid rgba(var(--accent-rgb), 0.08)" }}>
+                    <PartThumb key={`${p.material}${p.color}${p.color2}${p.texture}${p.code}`} load={() => printedThumb(p, compileScadCached)} alt={p.name} />
                     <span className="min-w-0 flex-1">
                       <span style={{ color: "var(--text-primary)" }}>{p.name}</span>
                       {p.notes.length > 0 && <span className="t-time" style={{ display: "block" }}>{p.notes.join(" · ")}</span>}
@@ -437,8 +479,13 @@ function PartsTab() {
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <tbody>
-            {b.lines.map((l) => (
+            {b.lines.map((l) => {
+              const first = project.parts.find((p) => l.for.includes(p.id))
+              return (
               <tr key={l.item + l.where} style={{ borderBottom: "1px solid rgba(var(--accent-rgb), 0.12)" }}>
+                <td style={{ padding: "4px 6px 4px 0", verticalAlign: "top", width: 44 }}>
+                  {first ? <PartThumb key={`${first.type}${JSON.stringify(first.props ?? {})}`} size={40} load={() => partThumb(first)} alt={l.item} /> : null}
+                </td>
                 <td style={{ padding: "4px 0", verticalAlign: "top" }}>
                   <div className="wrap-words" style={{ color: "var(--text-primary)" }}>{l.buy} × {l.item}</div>
                   <div className="t-time">
@@ -456,18 +503,22 @@ function PartsTab() {
                 </td>
                 <td className="t-label" style={{ padding: "4px 0 4px 8px", textAlign: "right", verticalAlign: "top", whiteSpace: "nowrap" }}>${l.cost.toFixed(2)}</td>
               </tr>
-            ))}
+              )
+            })}
             <tr>
+              <td />
               <td className="t-label" style={{ paddingTop: 6 }}>SUBTOTAL</td>
               <td className="t-label" style={{ paddingTop: 6, textAlign: "right" }}>${b.subtotal.toFixed(2)}</td>
             </tr>
             {b.online_subtotal ? (
               <tr>
+                <td />
                 <td className="t-time">CAMPUS ${(b.campus_subtotal ?? 0).toFixed(2)} · ONLINE ${b.online_subtotal.toFixed(2)} (+ SHIPPING)</td>
                 <td />
               </tr>
             ) : null}
             <tr>
+              <td />
               <td className="t-label" style={{ color: "var(--accent)" }}>{b.online_subtotal ? "ESTIMATED (CAMPUS ≈1.13× TAX + FEES)" : "WITH TAX + CARD FEES (≈1.13×)"}</td>
               <td className="t-label" style={{ textAlign: "right", color: "var(--accent)" }}>${b.estimated_total.toFixed(2)}</td>
             </tr>

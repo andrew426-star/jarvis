@@ -177,6 +177,7 @@ export async function buildAssembly(
   g.add(turned)
   g.scale.setScalar(MM * fit)
   g.position.y = 0.02
+  g.userData.mm = true
   if (bind) current = bindings
 
   const errors = failures.length ? [`${failures.length} PRINTED PART(S) FAILED`] : []

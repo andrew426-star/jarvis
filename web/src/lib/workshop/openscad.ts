@@ -83,6 +83,8 @@ export function scadItem(name: string, code: string, stl: Uint8Array, notes: str
   g.add(mesh)
   g.scale.setScalar(MM)
   g.position.y = 0.02
+  // Its geometry is in millimetres (the modeler captures it at true size).
+  g.userData.mm = true
   return {
     object: g,
     spec: {

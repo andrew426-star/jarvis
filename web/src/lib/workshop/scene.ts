@@ -617,15 +617,15 @@ export class WorkshopScene {
       mode: "wire",
       solidity: 0,
       bounds: new THREE.Box3(),
-      // A project's assembly holds still where it lands (it is worked on,
-      // not shown off); anything else arrives turning.
-      spin: spec.key === "project" ? 0 : BASE_SPIN * 4,
+      // A project's assembly or the modeler's design holds still where it
+      // lands (it is worked on, not shown off); anything else arrives turning.
+      spin: spec.key === "project" || spec.key === "design" ? 0 : BASE_SPIN * 4,
       scale: 1,
       born: this.clock.elapsedTime,
       armed: false,
       dying: null,
       parts,
-      posed: spec.key === "project",
+      posed: spec.key === "project" || spec.key === "design",
     }
     // Bloom on its edges and on the LEDs that light (their epoxy).
     const lit = new Set<THREE.Material>()
@@ -893,6 +893,44 @@ export class WorkshopScene {
       }
     }
     return files
+  }
+
+  /** An item's surface as triangles in millimetres, z up (the design
+   *  frame), unturned, for the modeler to build from: printed parts and
+   *  projects at their true size (their geometry is in mm), anything else
+   *  at the stage's 100 mm to a unit. The selected item by default. */
+  captureMesh(id?: string): { name: string; positions: Float32Array } | null {
+    const item = id ? this.live().find((i) => i.id === id) : this.focused ?? this.live().slice(-1)[0]
+    if (!item) return null
+    const model = item.model
+    model.updateMatrixWorld(true)
+    const factor = model.userData.mm ? 1 : 100 * model.scale.x
+    // Into the model's own frame (the stage spot and his turn left out),
+    // to mm, then y up to z up: (x, y, z) -> (x, -z, y).
+    const toFrame = new THREE.Matrix4()
+      .makeRotationX(Math.PI / 2)
+      .multiply(new THREE.Matrix4().makeScale(factor, factor, factor))
+      .multiply(new THREE.Matrix4().copy(model.matrixWorld).invert())
+    const under = (node: THREE.Object3D, flag: string) => {
+      for (let up: THREE.Object3D | null = node; up && up !== model; up = up.parent) if (up.userData[flag]) return true
+      return false
+    }
+    const out: number[] = []
+    const point = new THREE.Vector3()
+    for (const mesh of item.solids) {
+      if ((mesh as THREE.InstancedMesh).isInstancedMesh || under(mesh, "helper") || under(mesh, "cables")) continue
+      const geometry = mesh.geometry
+      const position = geometry.getAttribute("position")
+      if (!position) continue
+      const matrix = new THREE.Matrix4().multiplyMatrices(toFrame, mesh.matrixWorld)
+      const index = geometry.getIndex()
+      const count = index ? index.count : position.count
+      for (let i = 0; i < count; i += 1) {
+        point.fromBufferAttribute(position, index ? index.getX(i) : i).applyMatrix4(matrix)
+        out.push(point.x, point.y, point.z)
+      }
+    }
+    return out.length ? { name: item.spec.name, positions: new Float32Array(out) } : null
   }
 
   /** The current view as a PNG data URL, re-rendered at 2x without the

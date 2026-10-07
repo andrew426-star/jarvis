@@ -34,6 +34,7 @@ import {
   Trash2Icon,
   XIcon,
   PaintbrushIcon,
+  ShapesIcon,
 } from "lucide-react"
 
 import { cameraSource, startCamera, stopCamera, subscribeCamera } from "@/lib/camera"
@@ -56,6 +57,9 @@ import { useVisuals } from "@/lib/workshop/visuals"
 import { LibraryDock, type StageItem } from "@/components/workshop/library-dock"
 import { PANEL_WIDTH, ProjectPanel } from "@/components/workshop/project-panel"
 import { MaterialLab } from "@/components/workshop/material-lab"
+import { MODELER_WIDTH, ModelerPanel } from "@/components/workshop/modeler-panel"
+import { buildDesignItem } from "@/lib/workshop/modeler/preview"
+import { useModeler } from "@/lib/workshop/modeler/store"
 import { ProjectGallery } from "@/components/workshop/project-gallery"
 import { buildAssembly, releaseAssembly } from "@/lib/workshop/project/assembly"
 import { rigOf, type Rig } from "@/lib/workshop/project/rig"
@@ -65,7 +69,7 @@ import { useLab } from "@/lib/workshop/lab/store"
 import { useProject } from "@/lib/workshop/project/store"
 import { useTryOn } from "@/lib/ar/store"
 import { stopSim } from "@/lib/workshop/sim/controller"
-import { ScadError, compileScad, scadItem } from "@/lib/workshop/openscad"
+import { ScadError, compileScad, compileScadCached, scadItem } from "@/lib/workshop/openscad"
 import { useJarvis } from "@/lib/store"
 
 type Focus = (ItemSpec & { id: string; mode: ItemMode }) | null
@@ -114,6 +118,7 @@ const SHORTCUTS: [string, string][] = [
   [KEYS.explode, "Exploded view"],
   [KEYS.snap, "Snapping on / off"],
   ["DEL", "Discard the selected item"],
+  ["CTRL Z · CTRL ⇧ Z", "Modeler: undo, redo"],
   ["ESC", "Close a panel, then deselect, then leave"],
   ["?", "This list"],
 ]
@@ -317,6 +322,11 @@ function WorkshopStage({
   const [rigBuilt, setRigBuilt] = useState(0)
   const axesOn = useProject((state) => state.axes)
   const rigEdit = useProject((state) => state.rigEdit)
+  // The modeler's design on the stage, by the name it was given there.
+  const modelerOpen = useModeler((state) => state.open)
+  const design = useModeler((state) => state.design)
+  const designPiece = useModeler((state) => (state.open ? state.selected : null))
+  const designRef = useRef<string | null>(null)
 
   useEffect(() => {
     useProject.getState().setToken(token)
@@ -394,6 +404,36 @@ function WorkshopStage({
       cancelled = true
     }
   }, [ready, projectVersion, realParts, looms])
+
+  // The modeler's design, rebuilt on the stage a moment after each edit
+  // (parts compile once per source, so a selection change is cheap). It
+  // stays when the modeler closes, for renders and the paint studio.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!ready || !scene) return
+    if (!modelerOpen && !designRef.current) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      useModeler.getState().setStatus({ compiling: true, errors: useModeler.getState().status.errors })
+      void buildDesignItem(design, designPiece, compileScadCached).then(({ item, failures }) => {
+        const live = sceneRef.current
+        if (cancelled || !live) return
+        useModeler.getState().setStatus({ compiling: false, errors: failures })
+        if (!item) {
+          if (designRef.current) live.removeWhere(designRef.current)
+          designRef.current = null
+          return
+        }
+        live.replaceBuilt(designRef.current, item)
+        live.setModeWhere(item.spec.name, "solid")
+        designRef.current = item.spec.name
+      })
+    }, 280)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [ready, modelerOpen, design, designPiece])
 
   // The rig as it is being edited, shown live: the segment where the
   // panel or the gizmo has it and the wires re-routed to it.
@@ -689,6 +729,8 @@ function WorkshopStage({
   function escape() {
     if (paintBase) setPaintBase(null)
     else if (shortcutsOpen) setShortcutsOpen(false)
+    else if (useModeler.getState().selected && useModeler.getState().open) useModeler.getState().select(null)
+    else if (useModeler.getState().open) useModeler.getState().setOpen(false)
     else if (panel) {
       if (panel === "fit") {
         sceneRef.current?.clearFit()
@@ -703,6 +745,17 @@ function WorkshopStage({
 
   function onKey(event: KeyboardEvent) {
     const target = event.target as HTMLElement | null
+    // The modeler's undo and redo, when no field has the keyboard.
+    const modeler = useModeler.getState()
+    if (modeler.open && (event.ctrlKey || event.metaKey) && !target?.closest("input, textarea, select, [contenteditable='true']")) {
+      const key = event.key.toLowerCase()
+      if (key === "z" || key === "y") {
+        if (key === "y" || event.shiftKey) modeler.redo()
+        else modeler.undo()
+        event.preventDefault()
+        return
+      }
+    }
     if (event.ctrlKey || event.metaKey || event.altKey || target?.closest("input, textarea, select, [contenteditable='true']")) return
     // The gallery has the keyboard while it is up.
     if (useProject.getState().galleryOpen) return
@@ -807,6 +860,7 @@ function WorkshopStage({
         <div className="ws-tools relative flex min-w-0 items-center">
           <div className="ws-group">
             <Tool icon={<LayersIcon size={13} />} label="GALLERY" active={galleryOpen} onClick={() => useProject.getState().setGalleryOpen(!galleryOpen)} title="Every project, its finished product as a hologram" />
+            <Tool icon={<ShapesIcon size={13} />} label="MODEL" active={modelerOpen} onClick={() => useModeler.getState().setOpen(!modelerOpen)} title="Modeler: design parts from objects, build panels, stretch designs and piece parts of different materials together" />
             <Tool icon={<FlaskConicalIcon size={13} />} label="LAB" active={labOpen} onClick={() => useLab.getState().setOpen(!labOpen)} title="Material lab: tensile, drop, bend and heat tests on rubber, glass, metals and filaments, side by side" />
           </div>
           <div className="ws-group">
@@ -925,6 +979,13 @@ function WorkshopStage({
       {phoneOpen && <PhoneCameraDialog token={token} onClose={closePhone} />}
 
       <div className="relative min-h-0 flex-1">
+        {modelerOpen ? (
+          <ModelerPanel
+            items={stage}
+            focusedId={focus?.id ?? null}
+            capture={(id) => sceneRef.current?.captureMesh(id) ?? null}
+          />
+        ) : (
         <LibraryDock
           ready={ready}
           compiling={!!compiling}
@@ -934,6 +995,7 @@ function WorkshopStage({
           onFocus={(id) => sceneRef.current?.focusId(id)}
           onDiscard={(id) => sceneRef.current?.discardId(id)}
         />
+        )}
         <div
           ref={hostRef}
           className="absolute inset-0"
@@ -1064,7 +1126,7 @@ function WorkshopStage({
         <p
           className="t-time truncate-1 pointer-events-none absolute bottom-3 px-4 text-center"
           // Between the library dock and the project panel, never under them.
-          style={{ color: "var(--text-secondary)", left: 268, right: projectShown ? PANEL_WIDTH + 24 : 0 }}
+          style={{ color: "var(--text-secondary)", left: modelerOpen ? MODELER_WIDTH + 24 : 268, right: projectShown ? PANEL_WIDTH + 24 : 0 }}
         >
           {rendering
             ? "RENDERING WITH GEMINI..."
