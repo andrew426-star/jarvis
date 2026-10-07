@@ -508,13 +508,145 @@ body {
   flex: none;
 }
 
-@media (max-width: 1839px) {
+/* Labels only where the whole labelled bar fits (about 2250 px of tools). */
+@media (max-width: 2559px) {
   .ws-label { display: none; }
   .ws-tool { padding: 0; width: 32px; }
 }
 
 @media (max-width: 860px) {
   .ws-tools { overflow-x: auto; }
+}
+
+/* Paint studio (components/workshop/paint-studio.tsx): tools on the left,
+   the frame in the middle at its true aspect, paint and finish on the
+   right; on a narrow screen the tools run in a row above the frame. */
+.paint-studio {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background: rgba(3, 7, 11, 0.94);
+  backdrop-filter: blur(6px);
+}
+.paint-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.2);
+}
+.paint-hint { flex: 1; min-width: 0; color: var(--text-secondary); }
+.paint-icon { width: 28px; height: 28px; padding: 0; display: grid; place-items: center; }
+.paint-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 248px;
+}
+.paint-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 8px;
+  border-right: 1px solid rgba(var(--accent-rgb), 0.18);
+  overflow-y: auto;
+}
+.paint-tool {
+  height: 32px;
+  padding: 0 10px;
+  gap: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  white-space: nowrap;
+  flex: none;
+}
+.paint-label { font-size: 10px; letter-spacing: 0.12em; }
+.paint-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow: hidden;
+}
+.paint-canvases {
+  position: relative;
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.35), 0 12px 40px rgba(0, 0, 0, 0.6);
+  background: #000;
+}
+.paint-layer { position: absolute; inset: 0; width: 100%; height: 100%; }
+.paint-input { touch-action: none; }
+.paint-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  opacity: 0;
+}
+.paint-busy {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+}
+.paint-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-left: 1px solid rgba(var(--accent-rgb), 0.18);
+  overflow-y: auto;
+}
+.paint-swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.paint-swatch {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+  padding: 0;
+}
+.paint-swatch[data-active="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
+.paint-custom { overflow: hidden; background-image: conic-gradient(from 0deg, #f33, #fd3, #3f6, #3cf, #63f, #f3c, #f33) !important; }
+.paint-custom input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.paint-range { display: grid; grid-template-columns: 72px 1fr 44px; align-items: center; gap: 8px; }
+.paint-range input { width: 100%; accent-color: var(--accent); }
+.paint-value { text-align: right; }
+.paint-select,
+.paint-direction {
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+.paint-direction { resize: none; }
+.paint-render { height: 36px; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 4px; }
+
+@media (max-width: 1100px) {
+  .paint-label { display: none; }
+  .paint-tool { padding: 0; width: 34px; justify-content: center; }
+}
+@media (max-width: 860px) {
+  .paint-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .paint-tools { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid rgba(var(--accent-rgb), 0.18); padding: 8px 16px; }
+  .paint-stage { padding: 8px 16px; }
+  .paint-side { border-left: 0; border-top: 1px solid rgba(var(--accent-rgb), 0.18); max-height: 40vh; padding: 10px 16px; }
+  .paint-hint { display: none; }
 }
 
 /* Workshop callouts (lib/workshop/callouts.ts): a label at the end of a

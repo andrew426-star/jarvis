@@ -33,6 +33,7 @@ import {
   SparklesIcon,
   Trash2Icon,
   XIcon,
+  PaintbrushIcon,
 } from "lucide-react"
 
 import { cameraSource, startCamera, stopCamera, subscribeCamera } from "@/lib/camera"
@@ -50,6 +51,7 @@ import { getGestures, KEYS, useGestures, type TapAction } from "@/lib/workshop/g
 import { GestureSettings } from "@/components/workshop/gesture-settings"
 import { FxSettings } from "@/components/workshop/fx-settings"
 import { FitPanel, SectionPanel, type FitResult } from "@/components/workshop/section-fit"
+import { PaintStudio } from "@/components/workshop/paint-studio"
 import { useVisuals } from "@/lib/workshop/visuals"
 import { LibraryDock, type StageItem } from "@/components/workshop/library-dock"
 import { PANEL_WIDTH, ProjectPanel } from "@/components/workshop/project-panel"
@@ -238,6 +240,8 @@ function WorkshopStage({
   const [stage, setStage] = useState<StageItem[]>([])
   const [rendering, setRendering] = useState(false)
   const [render, setRender] = useState<{ url: string; prompt: string; model: string } | null>(null)
+  // The paint studio's frame (a snapshot of the view, or a render), while open.
+  const [paintBase, setPaintBase] = useState<string | null>(null)
   const [exploded, setExploded] = useState(false)
   const [snapOn, setSnapOn] = useState(false)
   const [arrowsOn, setArrowsOn] = useState(true)
@@ -585,16 +589,17 @@ function WorkshopStage({
   // A photoreal render of the view, by Gemini's image models: a clean
   // snapshot goes up, the render comes back into the panel and is pinned
   // as a hologram too.
-  async function renderNow(prompt?: string) {
+  async function renderNow(prompt?: string, image?: string) {
     const scene = sceneRef.current
     if (!scene || rendering) return
     const { pushLog, notify } = useJarvis.getState()
     setRendering(true)
     try {
-      const shot = scene.snapshot(true)
+      // The view as it is, or the paint studio's painted frame.
+      const shot = image ?? scene.snapshot(true)
       const result = await renderView(shot.slice(shot.indexOf(",") + 1), prompt, token)
       const url = `data:${result.mime};base64,${result.image}`
-      setRender({ url, prompt: prompt ?? "Default product render", model: result.model })
+      setRender({ url, prompt: image ? "Paint job" : prompt ?? "Default product render", model: result.model })
       pushLog("OK", `Render by ${result.model.replace("gemini-", "")}`)
       useSpatial.getState().addHologram({
         kind: "vision",
@@ -682,7 +687,8 @@ function WorkshopStage({
   // the selection, and only then the workshop itself (docked only - a
   // window of its own is closed like any other window).
   function escape() {
-    if (shortcutsOpen) setShortcutsOpen(false)
+    if (paintBase) setPaintBase(null)
+    else if (shortcutsOpen) setShortcutsOpen(false)
     else if (panel) {
       if (panel === "fit") {
         sceneRef.current?.clearFit()
@@ -896,6 +902,14 @@ function WorkshopStage({
               onClick={() => void renderNow()}
               title="Photoreal render of this view (Gemini image model)"
             />
+            <Tool
+              icon={<PaintbrushIcon size={13} />}
+              label="PAINT"
+              active={!!paintBase}
+              disabled={!ready}
+              onClick={() => setPaintBase(paintBase ? null : sceneRef.current?.snapshot(true) ?? null)}
+              title="Paint studio: airbrush, spray, tape and more over this view, then render the paint job"
+            />
           </div>
           <div className="ws-group">
             <Tool
@@ -978,7 +992,7 @@ function WorkshopStage({
 
         {/* The latest render, top right, until dismissed. */}
         {render && (
-          <div data-keepout className="holo-card" style={{ position: "absolute", top: 12, right: projectShown ? PANEL_WIDTH + 24 : 12, width: 360, zIndex: 2 }}>
+          <div data-keepout className="holo-card" style={{ position: "absolute", top: 12, right: projectShown ? PANEL_WIDTH + 24 : 12, width: 360, zIndex: 6 }}>
             <header className="holo-card-header">
               <span className="t-label truncate-1 flex items-center" style={{ gap: 6 }}>
                 <ImageIcon size={12} /> RENDER · {render.model.replace("gemini-", "").toUpperCase()}
@@ -999,6 +1013,19 @@ function WorkshopStage({
                   type="button"
                   className="btn"
                   style={{ width: 20, height: 20, padding: 0 }}
+                  onClick={() => {
+                    setPaintBase(render.url)
+                    setRender(null)
+                  }}
+                  title="Paint over this render"
+                  aria-label="Paint over this render"
+                >
+                  <PaintbrushIcon size={11} className="mx-auto" />
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ width: 20, height: 20, padding: 0 }}
                   onClick={() => setRender(null)}
                   aria-label="Close render"
                 >
@@ -1010,6 +1037,16 @@ function WorkshopStage({
             <img src={render.url} alt={render.prompt} style={{ display: "block", width: "100%" }} />
             <p className="holo-card-body" style={{ maxHeight: 60 }}>{render.prompt}</p>
           </div>
+        )}
+
+        {/* The paint studio, over the stage while it is open. */}
+        {paintBase && (
+          <PaintStudio
+            base={paintBase}
+            rendering={rendering}
+            onRender={(png, direction) => void renderNow(direction, png)}
+            onClose={() => setPaintBase(null)}
+          />
         )}
 
         {/* Discard bin. Drop an item on it, by hand or mouse. */}
