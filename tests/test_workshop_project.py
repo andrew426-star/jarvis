@@ -313,3 +313,14 @@ def test_esp32_projects_are_checked_not_compiled(db, monkeypatch):
     monkeypatch.setattr(wp, "compile_sketch", lambda code: pytest.fail("ESP32 sketches must not go to the AVR compiler"))
     result = wp.save_project({"name": "Sentry", "parts": [ESP], "wires": [], "code": "void setup() {}" + chr(10) + "void loop() {}"})
     assert result["report"]["compile"]["skipped"] and result["project"]["hex"] is None
+
+
+def test_a_pair_of_boards_each_with_its_own_ground():
+    feather = lambda side: [{"id": f"U_{side}", "type": "feather_s3"}, {"id": f"B_{side}", "type": "lipo_1200"}]
+    wires = lambda side: [{"a": f"B_{side}.+", "b": f"U_{side}.BAT"}, {"a": f"B_{side}.-", "b": f"U_{side}.GND"}]
+    pair = project(feather("R") + feather("L"), wires("R") + wires("L"))
+    checks = wp.check(pair)
+    assert not texts(checks, "error")
+    assert any("2 boards run the same sketch" in t for t in texts(checks, "note"))
+    mixed = project([UNO, {"id": "U2", "type": "esp32"}], [])
+    assert any("One UNO per project" in t for t in texts(wp.check(mixed), "error"))

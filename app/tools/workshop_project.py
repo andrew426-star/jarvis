@@ -524,8 +524,13 @@ def check(project: dict) -> list[dict]:
 
     unos = [p for p in project["parts"] if p["type"] == "uno"]
     boards = [p for p in project["parts"] if lib[p["type"]]["kind"] == "mcu"]
-    if len(boards) > 1:
-        say("error", "One controller per project: the checks and the simulator follow one board.")
+    if len(unos) > 1 or (unos and len(boards) > 1):
+        say("error", "One UNO per project, on its own: the simulator runs a single board.")
+    elif len({b["type"] for b in boards}) > 1:
+        say("error", "The project has one sketch, so its boards must be the same kind.")
+    elif len(boards) > 1:
+        # A pair (left and right gauntlets): each board runs the same sketch.
+        say("note", f"{len(boards)} boards run the same sketch; set each one's options at the top of it before uploading.")
     uno = unos[0]["id"] if unos else None
     board = boards[0] if boards else None
 
@@ -549,7 +554,10 @@ def check(project: dict) -> list[dict]:
 
     # Common ground: every ground source on one net.
     ground_nets = {nets.find(r) for r in nets.parent if nets.is_ground(r) and nets.wired(r)}
-    if len(ground_nets) > 1:
+    # Every ground must reach a controller's GND (with two boards - a pair of
+    # separate devices - each has its own); with none, they must all be one.
+    board_grounds = {nets.find(f"{b['id']}.{pin}") for b in boards for pin, role in lib[b["type"]]["pins"].items() if role == "gnd"}
+    if (boards and ground_nets - board_grounds) or (not boards and len(ground_nets) > 1):
         say("error", "Grounds are not common: wire every supply's - (and every driver's GND) to the controller's GND, or signals have no reference.")
     for p in project["parts"]:
         for pin, role in (lib[p["type"]].get("pins") or {}).items():
@@ -578,8 +586,7 @@ def check(project: dict) -> list[dict]:
                 say("error" if v < lo * 0.8 else "warning", f"{ref} gets {v:g}V; {spec['label']} needs {lo:g}-{hi:g}V.", p["id"])
 
     # The board's own power.
-    if board and "VIN" in lib[board["type"]]["pins"]:
-        bid = board["id"]
+    for bid in [b["id"] for b in boards if "VIN" in lib[b["type"]]["pins"]]:
         vin = nets.net_volts(f"{bid}.VIN")
         if vin is not None and vin > 0:
             if vin > 12:
@@ -591,8 +598,8 @@ def check(project: dict) -> list[dict]:
     outputs = {pin for pin, hows in used.items() if "pinMode:OUTPUT" in hows or "digitalWrite" in hows and "pinMode:INPUT" not in hows}
 
     # An ESP32 board's pins: 3.3V logic, input-only and ADC pins.
-    if board and board["type"] != "uno":
-        bid, spec = board["id"], lib[board["type"]]
+    for b in [b for b in boards if b["type"] != "uno"]:
+        bid, spec = b["id"], lib[b["type"]]
         logic = spec.get("logic_v", 3.3)
         for pin, role in spec["pins"].items():
             if role != "io":
