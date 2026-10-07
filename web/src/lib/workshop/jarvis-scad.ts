@@ -189,9 +189,14 @@ module l_bracket(width = 30, leg_a = 40, leg_b = 40, t = 4, hole_d = 3.4, holes 
 // A box with every edge filleted to radius r.
 module rounded_box(size = [40, 30, 20], r = 2, center = false) {
   rr = max(0.01, min(r, min(size) / 2 - 0.01));
+  // Minkowski of a box and a sphere: a hull of eight corner spheres is
+  // the same shape, but CGAL's hull fails on some sizes (an assertion),
+  // which made shell_box() come out solid.
   translate(center ? -size / 2 : [0, 0, 0])
-    hull() for (x = [rr, size.x - rr], y = [rr, size.y - rr], z = [rr, size.z - rr])
-      translate([x, y, z]) sphere(r = rr, $fn = 20);
+    minkowski() {
+      translate([rr, rr, rr]) cube([size.x - 2 * rr, size.y - 2 * rr, size.z - 2 * rr]);
+      sphere(r = rr, $fn = 16);
+    }
 }
 
 // A box with every edge chamfered by c at 45 degrees.

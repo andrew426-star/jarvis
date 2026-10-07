@@ -178,8 +178,15 @@ function nema17(): THREE.Group {
   const spin = new THREE.Group()
   spin.name = "spin"
   spin.position.set(0, 0, 42)
-  spin.add(cyl(2.5, 24, mat.metal, [0, 0, 12], 16))
-  spin.add(box(4, 1, 15, mat.metal, [0, 2.2, 16]))
+  // The 5 mm shaft with its D flat 2 mm from the centre, as the real one
+  // is - the flat is what a printed hub's grub screw bears on.
+  const d = new THREE.Shape()
+  const a0 = Math.acos(2 / 2.5)
+  d.absarc(0, 0, 2.5, a0, Math.PI * 2 - a0, false)
+  d.lineTo(2, 2.5 * Math.sin(a0))
+  const shaft = new THREE.Mesh(new THREE.ExtrudeGeometry(d, { depth: 24, bevelEnabled: false, curveSegments: 16 }), mat.metal)
+  shaft.castShadow = shaft.receiveShadow = true
+  spin.add(shaft)
   g.add(spin)
   for (const [x, y] of [[-15.5, -15.5], [15.5, -15.5], [15.5, 15.5], [-15.5, 15.5]]) g.add(cyl(1.6, 0.5, mat.metal, [x, y, 40.2], 12))
   return g

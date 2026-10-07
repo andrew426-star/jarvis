@@ -612,13 +612,15 @@ export class WorkshopScene {
       mode: "wire",
       solidity: 0,
       bounds: new THREE.Box3(),
-      spin: BASE_SPIN * 4,
+      // A project's assembly holds still where it lands (it is worked on,
+      // not shown off); anything else arrives turning.
+      spin: spec.key === "project" ? 0 : BASE_SPIN * 4,
       scale: 1,
       born: this.clock.elapsedTime,
       armed: false,
       dying: null,
       parts,
-      posed: false,
+      posed: spec.key === "project",
     }
     // Bloom on its edges and on the LEDs that light (their epoxy).
     const lit = new Set<THREE.Material>()
