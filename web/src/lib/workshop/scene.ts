@@ -345,6 +345,11 @@ export class WorkshopScene {
   private azimuth = VIEW.azimuth
   private elevation = VIEW.elevation
   private radius = VIEW.radius
+  /** What the camera looks at: the stage's middle, or a framed item. */
+  private readonly lookAt = TARGET.clone()
+  /** A view change being eased to (reset, frame, front/side/top); dropped
+   *  the moment he orbits or zooms himself. */
+  private glide: { azimuth: number; elevation: number; radius: number; target: THREE.Vector3 } | null = null
   private exploded = false
   private explodeT = 0
   private snap = false
@@ -1089,6 +1094,7 @@ export class WorkshopScene {
       grip.speedY = grip.speedY * 0.5 + ((y - grip.lastY) / span) * 0.5
       grip.lastT = now
     } else {
+      this.glide = null
       this.azimuth -= (x - grip.lastX) * 0.006
       this.elevation = THREE.MathUtils.clamp(this.elevation + (y - grip.lastY) * 0.004, 0.02, 1.25)
     }
@@ -1167,9 +1173,44 @@ export class WorkshopScene {
   }
 
   resetView() {
-    this.azimuth = VIEW.azimuth
-    this.elevation = VIEW.elevation
-    this.radius = VIEW.radius
+    this.glideTo({ ...VIEW, target: TARGET })
+  }
+
+  /** Look straight at the stage from the front, the side or above,
+   *  keeping the distance and what is being looked at. */
+  setView(view: "front" | "side" | "top") {
+    const [azimuth, elevation] = view === "front" ? [0, 0.02] : view === "side" ? [Math.PI / 2, 0.02] : [this.azimuth, 1.25]
+    this.glideTo({ azimuth, elevation, radius: this.radius, target: this.lookAt })
+  }
+
+  /** Centre the view on the selected item (or the newest) and fill the
+   *  frame with it. False if the stage is empty. */
+  frameFocused(): boolean {
+    const item = this.focused ?? this.live().slice(-1)[0]
+    if (!item) return false
+    const sphere = item.bounds.getBoundingSphere(new THREE.Sphere())
+    const fit = sphere.radius / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2)) * 1.15
+    this.glideTo({
+      azimuth: this.azimuth,
+      elevation: this.elevation,
+      radius: THREE.MathUtils.clamp(fit, 3.5, 18),
+      target: sphere.center,
+    })
+    return true
+  }
+
+  /** Drop the selection. False if nothing was selected. */
+  deselect(): boolean {
+    if (!this.focused) return false
+    this.focus(null)
+    return true
+  }
+
+  private glideTo(view: { azimuth: number; elevation: number; radius: number; target: THREE.Vector3 }) {
+    // The short way round, not back through every turn he orbited.
+    const turn = Math.PI * 2
+    const azimuth = this.azimuth + ((((view.azimuth - this.azimuth) % turn) + turn * 1.5) % turn) - Math.PI
+    this.glide = { ...view, azimuth, target: view.target.clone() }
   }
 
   hover(x: number | null, y: number | null) {
@@ -1311,6 +1352,11 @@ export class WorkshopScene {
     const parts: THREE.Object3D[] = []
     ;(frame as THREE.Object3D).traverse((node) => node.userData.callout && parts.push(node))
     this.clashes = await findInterference(parts, frame)
+    // Development only: where each clash is, for checking layouts.
+    if (process.env.NODE_ENV !== "production") {
+      const id = (n: THREE.Object3D) => (n.userData.callout?.id as string) ?? n.name
+      ;(this.rafView as Window & { __workshopClashes?: object }).__workshopClashes = this.clashes.map((c) => ({ a: id(c.a), b: id(c.b), depth: +c.depth.toFixed(1), at: c.at.toArray().map((v) => +v.toFixed(1)) }))
+    }
     for (const clash of this.clashes) {
       const marker = new THREE.Mesh(
         new THREE.SphereGeometry(Math.max(1.5, Math.min(6, clash.depth)), 16, 12),
@@ -1543,6 +1589,10 @@ export class WorkshopScene {
   }
 
   zoom(factor: number) {
+    if (this.glide) {
+      this.glide.radius = THREE.MathUtils.clamp(this.glide.radius * factor, 3.5, 18)
+      return
+    }
     this.radius = THREE.MathUtils.clamp(this.radius * factor, 3.5, 18)
   }
 
@@ -1737,7 +1787,10 @@ export class WorkshopScene {
     if (!other) return
     const ratio = Math.hypot(x - other.lastX, y - other.lastY) / pair.start
     if (pair.item) pair.item.scale = THREE.MathUtils.clamp(pair.startValue * ratio, 0.35, 3)
-    else this.radius = THREE.MathUtils.clamp(pair.startValue / ratio, 3.5, 18)
+    else {
+      this.glide = null
+      this.radius = THREE.MathUtils.clamp(pair.startValue / ratio, 3.5, 18)
+    }
   }
 
   private focus(item: Item | null) {
@@ -1930,14 +1983,33 @@ export class WorkshopScene {
       }
     }
 
-    // Camera orbit.
+    // Camera orbit, easing toward a requested view if there is one.
+    if (this.glide) {
+      const glide = this.glide
+      const k = 1 - Math.exp(-dt * 7)
+      this.azimuth += (glide.azimuth - this.azimuth) * k
+      this.elevation += (glide.elevation - this.elevation) * k
+      this.radius += (glide.radius - this.radius) * k
+      this.lookAt.lerp(glide.target, k)
+      if (
+        Math.abs(glide.azimuth - this.azimuth) + Math.abs(glide.elevation - this.elevation) < 0.001 &&
+        Math.abs(glide.radius - this.radius) < 0.005 &&
+        this.lookAt.distanceTo(glide.target) < 0.002
+      ) {
+        this.azimuth = glide.azimuth
+        this.elevation = glide.elevation
+        this.radius = glide.radius
+        this.lookAt.copy(glide.target)
+        this.glide = null
+      }
+    }
     const horizontal = Math.cos(this.elevation) * this.radius
     this.camera.position.set(
-      TARGET.x + Math.sin(this.azimuth) * horizontal,
-      TARGET.y + Math.sin(this.elevation) * this.radius,
-      TARGET.z + Math.cos(this.azimuth) * horizontal
+      this.lookAt.x + Math.sin(this.azimuth) * horizontal,
+      this.lookAt.y + Math.sin(this.elevation) * this.radius,
+      this.lookAt.z + Math.cos(this.azimuth) * horizontal
     )
-    this.camera.lookAt(TARGET)
+    this.camera.lookAt(this.lookAt)
 
     // Label above the focused item.
     if (this.focused) {
@@ -2004,7 +2076,7 @@ export class WorkshopScene {
         if (this.hoverPart.userData.callout.printed) dimension = this.hoverPart
       }
     }
-    const around = (this.focused ?? this.hovered)?.bounds.getCenter(new THREE.Vector3()) ?? TARGET
+    const around = (this.focused ?? this.hovered)?.bounds.getCenter(new THREE.Vector3()) ?? this.lookAt
     // The panels over the stage (marked data-keepout) are taken space,
     // looked up four times a second rather than every frame (layout).
     if (tagged.length && t - this.keepOutAt > 0.25) {

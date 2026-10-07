@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react"
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react"
 import { createPortal } from "react-dom"
 import { AnimatePresence, motion } from "framer-motion"
 import {
@@ -17,8 +17,10 @@ import {
   Move3dIcon,
   BoxesIcon,
   DownloadIcon,
+  FocusIcon,
   FlaskConicalIcon,
   HandIcon,
+  KeyboardIcon,
   ImageIcon,
   LayersIcon,
   Loader2Icon,
@@ -102,6 +104,18 @@ function download(files: { name: string; blob: Blob }[]) {
 const TAP_MS = 300
 const TAP_PX = 6
 
+const SHORTCUTS: [string, string][] = [
+  ["F", "Frame the selected item"],
+  ["1 · 2 · 3", "Front, side and top views"],
+  [KEYS.reset_view, "Reset the view"],
+  ["H", "Hologram / solid (selected)"],
+  [KEYS.explode, "Exploded view"],
+  [KEYS.snap, "Snapping on / off"],
+  ["DEL", "Discard the selected item"],
+  ["ESC", "Close a panel, then deselect, then leave"],
+  ["?", "This list"],
+]
+
 const HINT: Record<string, string> = {
   toggle_mode: "HOLO/SOLID",
   explode: "EXPLODE",
@@ -161,15 +175,6 @@ export function Workshop({ token }: { token: string }) {
       setHostEpoch((n) => n + 1)
     }
   }, [open, popOut.root, stageHost])
-
-  useEffect(() => {
-    if (!open || popped) return
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !useProject.getState().galleryOpen) setOpen(false)
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [open, popped, setOpen])
 
   return (
     <>
@@ -241,6 +246,15 @@ function WorkshopStage({
   const gesturesOpen = panel === "gestures"
   const fxOpen = panel === "fx"
   const togglePanel = (which: NonNullable<typeof panel>) => setPanel((open) => (open === which ? null : which))
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  // CLEAR takes a second click within a few seconds: one stray click
+  // should not wipe the stage.
+  const [clearArmed, setClearArmed] = useState(false)
+  useEffect(() => {
+    if (!clearArmed) return
+    const timer = window.setTimeout(() => setClearArmed(false), 3000)
+    return () => window.clearTimeout(timer)
+  }, [clearArmed])
   const [section, setSection] = useState<SectionState>({ on: false, axis: 2, offset: 0.5, flip: false })
   const [fit, setFit] = useState<FitResult>({ running: false, checked: false, clashes: [] })
   // The console's mute, here too: a popped-out workshop has no top bar.
@@ -664,16 +678,51 @@ function WorkshopStage({
     }
   }
 
-  // E, G and R for the same actions, unless he is typing somewhere.
+  // Escape backs out one step at a time: an open panel, then the lab, then
+  // the selection, and only then the workshop itself (docked only - a
+  // window of its own is closed like any other window).
+  function escape() {
+    if (shortcutsOpen) setShortcutsOpen(false)
+    else if (panel) {
+      if (panel === "fit") {
+        sceneRef.current?.clearFit()
+        setFit({ running: false, checked: false, clashes: [] })
+      }
+      setPanel(null)
+    } else if (useLab.getState().open) useLab.getState().setOpen(false)
+    else if (render) setRender(null)
+    else if (sceneRef.current?.deselect()) return
+    else if (!popped) onClose()
+  }
+
+  function onKey(event: KeyboardEvent) {
+    const target = event.target as HTMLElement | null
+    if (event.ctrlKey || event.metaKey || event.altKey || target?.closest("input, textarea, select, [contenteditable='true']")) return
+    // The gallery has the keyboard while it is up.
+    if (useProject.getState().galleryOpen) return
+    const scene = sceneRef.current
+    const key = event.key.toUpperCase()
+    if (event.key === "Escape") escape()
+    else if (event.key === "?") setShortcutsOpen((open) => !open)
+    else if (key === KEYS.explode) runAction("explode")
+    else if (key === KEYS.snap) runAction("snap")
+    else if (key === KEYS.reset_view) runAction("reset_view")
+    else if (key === "F") scene?.frameFocused()
+    else if (key === "H") runAction("toggle_mode")
+    else if (key === "1") scene?.setView("front")
+    else if (key === "2") scene?.setView("side")
+    else if (key === "3") scene?.setView("top")
+    else if ((event.key === "Delete" || event.key === "Backspace") && focus) scene?.discardId(focus.id)
+    else return
+    event.preventDefault()
+  }
+
+  const keyHandler = useRef(onKey)
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null
-      if (event.ctrlKey || event.metaKey || event.altKey || target?.closest("input, textarea, select, [contenteditable='true']")) return
-      const key = event.key.toUpperCase()
-      if (key === KEYS.explode) latest.current?.runAction("explode")
-      else if (key === KEYS.snap) latest.current?.runAction("snap")
-      else if (key === KEYS.reset_view) latest.current?.runAction("reset_view")
-    }
+    keyHandler.current = onKey
+  })
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => keyHandler.current(event)
     const target = keyWindow ?? window
     target.addEventListener("keydown", onKey)
     return () => target.removeEventListener("keydown", onKey)
@@ -790,7 +839,19 @@ function WorkshopStage({
             <Tool icon={<Axis3dIcon size={13} />} label="AXES" active={axesOn} disabled={!ready} onClick={() => useProject.getState().setAxes(!axesOn)} title="The project's X, Y and Z axes: the layout's frame, in mm (z up)" />
             <Tool icon={<Grid3x3Icon size={13} />} label="HOLO" onClick={() => sceneRef.current?.setAllModes("wire")} title="Show everything as a hologram" />
             <Tool icon={<BoxIcon size={13} />} label="SOLID" onClick={() => sceneRef.current?.setAllModes("solid")} title="Show everything in its real materials" />
-            <Tool icon={<RotateCcwIcon size={13} />} label="CLEAR" onClick={() => sceneRef.current?.clear()} title="Clear everything off the stage" />
+            <Tool
+              icon={<RotateCcwIcon size={13} />}
+              label={clearArmed ? "SURE?" : "CLEAR"}
+              active={clearArmed}
+              disabled={!stage.length}
+              onClick={() => {
+                if (!clearArmed) return setClearArmed(true)
+                setClearArmed(false)
+                sceneRef.current?.clear()
+              }}
+              title={clearArmed ? "Click again to clear the stage" : "Clear everything off the stage (asks to confirm)"}
+            />
+            <Tool icon={<FocusIcon size={13} />} label="FRAME" disabled={!stage.length} onClick={() => sceneRef.current?.frameFocused()} title="Fill the view with the selected item (F)" />
           </div>
           <div className="ws-group">
             <Tool
@@ -989,8 +1050,33 @@ function WorkshopStage({
                   ]
                     .filter(Boolean)
                     .join(" · ")
-                : "DRAG: MOVE · FLICK AT BIN: DISCARD · RIGHT/SHIFT-DRAG: TURN PART · CLICK: HOLO/SOLID · WHEEL: ZOOM · E EXPLODE · G SNAP · R RESET VIEW"}
+                : "DRAG: MOVE · RIGHT/SHIFT-DRAG: TURN · CLICK: HOLO/SOLID · WHEEL: ZOOM · F FRAME · DEL DISCARD · ? ALL KEYS"}
         </p>
+
+        {shortcutsOpen && (
+          <div
+            data-keepout
+            className="holo-card absolute"
+            style={{ left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: 340, zIndex: 3 }}
+          >
+            <header className="holo-card-header">
+              <span className="t-label flex items-center" style={{ gap: 6 }}>
+                <KeyboardIcon size={12} /> KEYS
+              </span>
+              <button type="button" className="btn" style={{ width: 20, height: 20, padding: 0 }} onClick={() => setShortcutsOpen(false)} aria-label="Close keys">
+                <XIcon size={11} className="mx-auto" />
+              </button>
+            </header>
+            <div className="holo-card-body" style={{ fontFamily: "var(--font-jetbrains), monospace", fontSize: 11, display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 14px" }}>
+              {SHORTCUTS.map(([keys, what]) => (
+                <Fragment key={keys}>
+                  <span style={{ color: "var(--accent)" }}>{keys}</span>
+                  <span>{what}</span>
+                </Fragment>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </>
   )

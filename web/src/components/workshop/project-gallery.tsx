@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { AnimatePresence, animate, motion } from "framer-motion"
 import { ChevronLeftIcon, ChevronRightIcon, FolderOpenIcon, LayersIcon, Loader2Icon, PlusIcon, XIcon } from "lucide-react"
 
 import { getGallery, openProject, saveProject } from "@/lib/jarvis-client"
@@ -36,6 +37,10 @@ export function ProjectGallery() {
   const [naming, setNaming] = useState(false)
   const [name, setName] = useState("")
   const press = useRef<{ x: number; y: number } | null>(null)
+  const [hovered, setHovered] = useState(-1)
+  const [grabbing, setGrabbing] = useState(false)
+  // Which way the ring last turned (1 on, -1 back), for the card's slide.
+  const [direction, setDirection] = useState(0)
 
   useEffect(() => {
     if (!token) return
@@ -52,7 +57,15 @@ export function ProjectGallery() {
     const openId = useProject.getState().project?.id
     import("@/lib/workshop/project/gallery-scene").then(({ GalleryScene }) => {
       if (disposed) return
-      const scene = new GalleryScene(host, (i) => setSelected(i))
+      let last = -1
+      const scene = new GalleryScene(host, (i) => {
+        // The short way round, as the ring itself turns.
+        const n = projects.length
+        const step = last < 0 ? 0 : (((i - last) % n) + n) % n
+        setDirection(step === 0 ? 0 : step <= n / 2 ? 1 : -1)
+        last = i
+        setSelected(i)
+      })
       scene.setProjects(projects, Math.max(0, projects.findIndex((p) => p.id === openId)))
       sceneRef.current = scene
     })
@@ -123,16 +136,29 @@ export function ProjectGallery() {
       <div
         ref={hostRef}
         className="absolute inset-0"
-        style={{ touchAction: "none", cursor: "grab" }}
+        style={{ touchAction: "none", cursor: grabbing ? "grabbing" : hovered < 0 ? "grab" : "pointer" }}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId)
           press.current = { x: e.clientX, y: e.clientY }
-          sceneRef.current?.dragStart(e.clientX)
+          sceneRef.current?.dragStart(e.clientX, e.clientY)
+          setGrabbing(true)
+          setHovered(-1)
         }}
-        onPointerMove={(e) => press.current && sceneRef.current?.dragMove(e.clientX)}
+        onPointerMove={(e) => {
+          const scene = sceneRef.current
+          if (press.current) scene?.dragMove(e.clientX)
+          // The cursor says what a press would do: grab the ring, or pick.
+          const over = scene?.hover(e.clientX, e.clientY) ?? -1
+          if (over !== hovered) setHovered(over)
+        }}
+        onPointerLeave={() => {
+          sceneRef.current?.hover(null, null)
+          setHovered(-1)
+        }}
         onPointerUp={(e) => {
           const start = press.current
           press.current = null
+          setGrabbing(false)
           const moved = sceneRef.current?.dragEnd()
           if (moved || !start || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 6) return
           // A click: on the front project opens it, on another brings it round.
@@ -141,7 +167,7 @@ export function ProjectGallery() {
           if (hit === selected && projects?.[hit]) void openFolder(projects[hit].id)
           else sceneRef.current?.select(hit)
         }}
-        onWheel={(e) => (e.deltaY > 0 || e.deltaX > 0 ? sceneRef.current?.next() : sceneRef.current?.previous())}
+        onWheel={(e) => sceneRef.current?.wheel(Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY)}
       />
 
       <header className="relative flex items-center justify-between" style={{ padding: "12px 16px", pointerEvents: "none" }}>
@@ -205,10 +231,24 @@ export function ProjectGallery() {
         </>
       )}
 
+      {/* The card for the one at the front: the old one slides out the way
+          the ring turned and the new one in after it. */}
+      <div className="pointer-events-none absolute" style={{ left: "50%", bottom: 20, transform: "translateX(-50%)", width: "min(560px, calc(100% - 32px))" }}>
+      <AnimatePresence mode="popLayout" initial={false} custom={direction}>
       {current && (
-        <section
-          className="holo-card absolute"
-          style={{ left: "50%", bottom: 20, transform: "translateX(-50%)", width: "min(560px, calc(100% - 32px))" }}
+        <motion.section
+          key={current.id}
+          custom={direction}
+          variants={{
+            enter: (dir: number) => ({ opacity: 0, x: dir * 60, filter: "blur(4px)" }),
+            show: { opacity: 1, x: 0, filter: "blur(0px)" },
+            leave: (dir: number) => ({ opacity: 0, x: dir * -60, filter: "blur(4px)" }),
+          }}
+          initial="enter"
+          animate="show"
+          exit="leave"
+          transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+          className="holo-card pointer-events-auto"
           aria-live="polite"
         >
           <header className="holo-card-header">
@@ -220,9 +260,9 @@ export function ProjectGallery() {
           <div className="holo-card-body" style={{ padding: "8px 10px" }}>
             {current.goal && <p className="clamp-2" style={{ fontSize: 13, margin: "0 0 8px", color: "var(--text-primary)" }}>{current.goal}</p>}
             <div className="grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 8 }}>
-              <Stat label="PARTS" value={String(current.parts.length)} />
-              <Stat label="PRINTED" value={String(current.printed.length)} />
-              <Stat label="EST. COST" value={`$${current.estimated_total.toFixed(2)}`} />
+              <Stat label="PARTS" count={current.parts.length} />
+              <Stat label="PRINTED" count={current.printed.length} />
+              <Stat label="EST. COST" count={current.estimated_total} format={(n) => `$${n.toFixed(2)}`} />
               <Stat label="CHECKS" value={current.errors ? `${current.errors} ERR` : "CLEAR"} warn={current.errors > 0} />
             </div>
             {current.groups.length > 0 && (
@@ -237,17 +277,45 @@ export function ProjectGallery() {
               </button>
             </div>
           </div>
-        </section>
+        </motion.section>
       )}
+      </AnimatePresence>
+      </div>
     </div>
   )
 }
 
-function Stat({ label, value, warn = false }: { label: string; value: string; warn?: boolean }) {
+function Stat({
+  label,
+  value,
+  count,
+  format = (n) => String(Math.round(n)),
+  warn = false,
+}: {
+  label: string
+  value?: string
+  /** A number, counted up to as the card comes in. */
+  count?: number
+  format?: (n: number) => string
+  warn?: boolean
+}) {
+  const counted = useCountUp(count ?? 0)
   return (
     <div>
       <div className="t-time">{label}</div>
-      <div className="t-value" style={{ color: warn ? "var(--warning)" : "var(--text-primary)" }}>{value}</div>
+      <div className="t-value" style={{ color: warn ? "var(--warning)" : "var(--text-primary)", fontVariantNumeric: "tabular-nums" }}>
+        {count === undefined ? value : format(counted)}
+      </div>
     </div>
   )
+}
+
+/** A number eased up from nothing over half a second. */
+function useCountUp(target: number) {
+  const [value, setValue] = useState(0)
+  useEffect(() => {
+    const controls = animate(0, target, { duration: 0.6, ease: [0.16, 1, 0.3, 1], onUpdate: setValue })
+    return () => controls.stop()
+  }, [target])
+  return value
 }

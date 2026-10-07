@@ -20,6 +20,11 @@ import { emptyProject, type GalleryProject } from "@/lib/workshop/project/types"
 // through it, in the projector's beam with dust hanging in it, inside two
 // counter-turning instrument rings, while the camera drifts a little as a
 // person looking at it would. Bloom on the light only (post.ts).
+//
+// Everything answers the pointer: the ring carries on from a flick and
+// settles, the camera leans toward the pointer, a pedestal under it rises
+// to meet it, and the front design can be grabbed and spun - left alone,
+// it slowly opens out into its parts and closes again.
 
 const SLOT_SPACING = 2.6
 const HOLO_SIZE = 1.5
@@ -42,6 +47,15 @@ interface Slot {
   scan: THREE.LineLoop
   /** Clock time it was last projected in (selected), or -1. */
   revealAt: number
+  /** Its parts, for the breathing explode: each one's place and the way
+   *  out from the middle; and the cables, hidden while it is apart. */
+  parts: { node: THREE.Object3D; base: THREE.Vector3; out: THREE.Vector3 }[]
+  cables: THREE.Object3D[]
+  /** How far apart it is now (0-1), and how far it rises to the pointer. */
+  apart: number
+  lift: number
+  /** Spin from a grab, radians a second, decaying back to the idle turn. */
+  spin: number
 }
 
 const REVEAL_SECONDS = 1.1
@@ -65,7 +79,15 @@ export class GalleryScene {
   /** Ring angle now and where it is heading, radians. */
   private turn = 0
   private target = 0
-  private dragging: { x: number; start: number } | null = null
+  /** A drag turning the ring, or spinning the front design. */
+  private dragging: { x: number; start: number; lastX: number; lastT: number; velocity: number; spin: boolean } | null = null
+  private hovered = -1
+  /** The pointer over the view, -1..1, and the camera's eased lean toward it. */
+  private readonly pointer = new THREE.Vector2()
+  private readonly lean = new THREE.Vector2()
+  /** When the front design was last handled: it breathes only left alone. */
+  private touchedAt = 0
+  private wheelAt = 0
   private raf = 0
   private disposed = false
   private readonly color = accentHex()
@@ -147,7 +169,10 @@ export class GalleryScene {
       root.add(disc, pedestal, beam, holo, loading, hud, scan)
       this.ring.add(root)
       for (const glowing of [pedestal, loading, scan, ...hud.children]) this.post.glow(glowing)
-      const slot: Slot = { project, root, holo, pedestal, beam, materials: { ring: ringMat, beam: beamMat }, loading, angle, hud, hudMaterial, clip, scan, revealAt: -1 }
+      const slot: Slot = {
+        project, root, holo, pedestal, beam, materials: { ring: ringMat, beam: beamMat }, loading, angle, hud, hudMaterial, clip, scan,
+        revealAt: -1, parts: [], cables: [], apart: 0, lift: 0, spin: 0,
+      }
       this.slots.push(slot)
       void this.loadHologram(slot)
     })
@@ -171,6 +196,7 @@ export class GalleryScene {
       slot.materials.fill = fill
       slot.materials.line = line
       slot.holo.add(fitTo(item.object, HOLO_SIZE))
+      this.findParts(slot, item.object)
       // Its edges glow; the fill does not (it would wash the form out).
       item.object.traverse((node) => (node as THREE.LineSegments).isLineSegments && this.post.glow(node))
       // The one at the front, arriving: projected in.
@@ -181,6 +207,38 @@ export class GalleryScene {
     if (slot.loading) {
       slot.root.remove(slot.loading)
       slot.loading = null
+    }
+  }
+
+  /** The design's parts, found as the stage finds them for its explode:
+   *  down through single wrappers to the first level with several. */
+  private findParts(slot: Slot, object: THREE.Object3D) {
+    const isPart = (node: THREE.Object3D) =>
+      !(node as THREE.Light).isLight &&
+      !node.userData.cables &&
+      !node.userData.helper &&
+      !(node as THREE.LineSegments).isLineSegments &&
+      ((node as THREE.Mesh).isMesh || (node as THREE.Group).isGroup)
+    object.traverse((node) => node.userData.cables && slot.cables.push(node))
+    let level = object
+    for (let depth = 0; depth < 4; depth += 1) {
+      const children = level.children.filter(isPart)
+      if (children.length !== 1) break
+      level = children[0]
+    }
+    const children = level.children.filter(isPart)
+    if (children.length < 2) return
+    object.updateMatrixWorld(true)
+    const whole = new THREE.Box3().setFromObject(level)
+    const middle = level.worldToLocal(whole.getCenter(new THREE.Vector3()))
+    // A seventh of the design's size, in the level's own units.
+    const reach = (whole.getSize(new THREE.Vector3()).length() * 0.14) / (level.getWorldScale(new THREE.Vector3()).x || 1)
+    for (const node of children) {
+      const out = level.worldToLocal(new THREE.Box3().setFromObject(node).getCenter(new THREE.Vector3())).sub(middle)
+      // Outward and a little up, so a flat layout still opens.
+      out.y = Math.max(out.y, 0) + out.length() * 0.35
+      if (out.lengthSq() < 1e-10) out.set(0, 1, 0)
+      slot.parts.push({ node, base: node.position.clone(), out: out.normalize().multiplyScalar(reach) })
     }
   }
 
@@ -202,6 +260,7 @@ export class GalleryScene {
     if (!n) return
     const was = this.selected
     this.selected = ((index % n) + n) % n
+    this.touchedAt = this.clock.elapsedTime
     // A new one at the front is projected in afresh.
     if (instant || was !== this.selected) {
       this.slots[this.selected].revealAt = this.clock.elapsedTime
@@ -239,28 +298,78 @@ export class GalleryScene {
     return this.slots.findIndex((s) => s.root === node)
   }
 
-  dragStart(x: number) {
-    this.dragging = { x, start: this.target }
+  /** A press: on the front design it grabs that, to spin; anywhere else
+   *  it takes hold of the ring. */
+  dragStart(x: number, y: number) {
+    const spin = this.pick(x, y) === this.selected && (this.slots[this.selected]?.holo.children.length ?? 0) > 0
+    this.dragging = { x, start: this.target, lastX: x, lastT: performance.now(), velocity: 0, spin }
+    this.touchedAt = this.clock.elapsedTime
   }
 
   dragMove(x: number) {
-    if (!this.dragging) return
+    const drag = this.dragging
+    if (!drag) return
     const width = this.container.clientWidth || 1
-    this.target = this.dragging.start + ((x - this.dragging.x) / width) * Math.PI * 1.2
+    const now = performance.now()
+    const dx = ((x - drag.lastX) / width) * Math.PI * 1.2
+    drag.velocity = drag.velocity * 0.6 + (dx / Math.max(0.001, (now - drag.lastT) / 1000)) * 0.4
+    drag.lastX = x
+    drag.lastT = now
+    this.touchedAt = this.clock.elapsedTime
+    if (drag.spin) {
+      const slot = this.slots[this.selected]
+      slot.holo.rotation.y += dx * 2.2
+      slot.spin = 0
+      return
+    }
+    this.target = drag.start + ((x - drag.x) / width) * Math.PI * 1.2
     this.turn = this.target
   }
 
-  /** Let go: settle on the slot nearest the front. Returns whether it moved. */
+  /** Let go: a spun design keeps turning and slows; the ring carries on
+   *  as far as the flick sends it and settles on the slot nearest the
+   *  front. Returns whether it moved (a press that did not is a click). */
   dragEnd(): boolean {
-    if (!this.dragging) return false
-    const moved = Math.abs(this.target - this.dragging.start) > 0.02
+    const drag = this.dragging
+    if (!drag) return false
     this.dragging = null
+    // Held still before letting go: no flick.
+    const velocity = performance.now() - drag.lastT > 90 ? 0 : drag.velocity
+    if (drag.spin) {
+      const moved = Math.abs(drag.lastX - drag.x) > 6
+      if (moved) this.slots[this.selected].spin = THREE.MathUtils.clamp(velocity * 2.2, -12, 12)
+      return moved
+    }
+    const moved = Math.abs(this.target - drag.start) > 0.02
     const n = this.slots.length
     if (!n || !moved) return moved
     const step = (Math.PI * 2) / n
-    const index = Math.round(-this.target / step)
-    this.select(index)
+    this.select(Math.round(-(this.target + velocity * 0.22) / step))
     return true
+  }
+
+  /** The wheel, one project a notch: a trackpad sends a stream of small
+   *  deltas, which would otherwise race round the whole ring. */
+  wheel(delta: number) {
+    const now = performance.now()
+    if (Math.abs(delta) < 4 || now - this.wheelAt < 180) return
+    this.wheelAt = now
+    if (delta > 0) this.next()
+    else this.previous()
+  }
+
+  /** The pointer over the view (null when it leaves): the camera leans to
+   *  it and the pedestal under it rises. Returns the slot under it, or -1. */
+  hover(x: number | null, y: number | null): number {
+    if (x === null || y === null) {
+      this.pointer.set(0, 0)
+      this.hovered = -1
+      return -1
+    }
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    this.pointer.set(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1)
+    this.hovered = this.dragging ? -1 : this.pick(x, y)
+    return this.hovered
   }
 
   /** Two instrument rings for a pedestal: a segmented outer arc and a
@@ -319,9 +428,15 @@ export class GalleryScene {
     this.ring.rotation.y = this.turn
     // The camera stands back from the front slot, a little above it,
     // drifting slightly as someone looking at it would.
+    // And leaning toward the pointer, as if stepping to look round it.
+    this.lean.lerp(this.pointer, Math.min(1, dt * 2.5))
     const distance = this.radius + 4.2
-    this.camera.position.set(Math.sin(t * 0.21) * 0.35, 1.7 + Math.sin(t * 0.33) * 0.08, distance)
-    this.camera.lookAt(0, 0.85, this.radius - 0.5)
+    this.camera.position.set(
+      Math.sin(t * 0.21) * 0.35 + this.lean.x * 0.9,
+      1.7 + Math.sin(t * 0.33) * 0.08 + this.lean.y * 0.45,
+      distance
+    )
+    this.camera.lookAt(this.lean.x * 0.25, 0.85 + this.lean.y * 0.1, this.radius - 0.5)
     // The projector stands over whichever pedestal is at the front.
     this.atmosphere.group.position.set(0, 0, this.radius)
     if (visuals().atmosphere) this.atmosphere.update(t, this.color)
@@ -330,15 +445,29 @@ export class GalleryScene {
 
     this.slots.forEach((slot, i) => {
       const front = i === this.selected
-      const focus = front ? 1 : 0.35
-      slot.holo.rotation.y += dt * (front ? 0.5 : 0.2)
-      slot.holo.position.y = 0.25 + Math.sin(t * 1.4 + i) * 0.04
-      const scale = slot.root.scale.x + ((front ? 1 : 0.78) - slot.root.scale.x) * Math.min(1, dt * 6)
+      const hovered = i === this.hovered && !front
+      const focus = front ? 1 : hovered ? 0.7 : 0.35
+      // A grab's spin, easing back to the idle turn.
+      slot.spin *= Math.exp(-dt * 1.6)
+      if (!(front && this.dragging?.spin)) slot.holo.rotation.y += dt * ((front ? 0.5 : 0.2) + slot.spin)
+      slot.lift += ((hovered ? 1 : 0) - slot.lift) * Math.min(1, dt * 8)
+      slot.holo.position.y = 0.25 + Math.sin(t * 1.4 + i) * 0.04 + slot.lift * 0.18
+      const scale = slot.root.scale.x + ((front ? 1 : hovered ? 0.86 : 0.78) - slot.root.scale.x) * Math.min(1, dt * 6)
       slot.root.scale.setScalar(scale)
       const flicker = 0.95 + Math.sin(t * 23 + i * 3) * 0.025 + Math.sin(t * 7.3) * 0.025
       if (slot.materials.line) slot.materials.line.opacity = 0.5 * focus * flicker
       if (slot.materials.fill) setHoloOpacity(slot.materials.fill, 0.5 * focus)
-      slot.materials.ring.opacity = (front ? 0.5 : 0.18) * flicker
+      slot.materials.ring.opacity = (front ? 0.5 : 0.18 + slot.lift * 0.25) * flicker
+
+      // Breathing: the front design, left alone, opens out into its parts
+      // and closes again; handled or turned away, it closes.
+      if (slot.parts.length) {
+        const idle = t - this.touchedAt
+        const want = front && idle > 2.5 && !this.dragging ? (1 - Math.cos((idle - 2.5) * 0.9)) / 2 : 0
+        slot.apart += (want - slot.apart) * Math.min(1, dt * 3)
+        for (const part of slot.parts) part.node.position.copy(part.base).addScaledVector(part.out, easeOut(slot.apart))
+        for (const cable of slot.cables) cable.visible = slot.apart < 0.03
+      }
       slot.materials.beam.opacity = front ? 0.03 : 0.012
       if (slot.loading) slot.loading.rotation.z -= dt * 4
 
