@@ -341,6 +341,8 @@ export interface ObserveResult {
   confidence: number
   /** Jarvis's running notes on the session, sent back with the next look. */
   notes: string
+  /** Which model looked; a lite one reads a webcam board poorly. */
+  model?: string
 }
 
 /** Watch mode's look at the whiteboard (lib/watch.ts). */
@@ -355,6 +357,8 @@ export async function observeBoard(
     still_seconds: number
     /** What is open in the showcase window, e.g. the questions being answered. */
     on_screen: string
+    /** Serious mode is Ultron. */
+    persona: "jarvis" | "ultron"
   }
 ): Promise<ObserveResult> {
   const res = await jarvisFetch("/watch/observe", token, {

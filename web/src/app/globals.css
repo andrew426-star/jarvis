@@ -72,8 +72,9 @@
    off amber so it no longer matches --warning, and warning/error shift
    too so neither is lost against a red-orange accent. */
 :root.serious {
-  --accent: #ff3d00;
-  --accent-rgb: 255, 61, 0;
+  /* Serious mode is Ultron (lib/persona.ts): his red, not Jarvis's blue. */
+  --accent: #ff1430;
+  --accent-rgb: 255, 20, 48;
 
   --bg-base: #070202;
   --bg-grad-a: #1c0604;
@@ -81,7 +82,8 @@
   --text-primary: #ffece4;
   --text-secondary: #a07f74;
   --warning: #ffd400;
-  --error: #ff0a54;
+  /* Magenta, so an error still stands out against a red accent. */
+  --error: #ff4fd8;
 
   --radius: 0px;
 }
@@ -1085,4 +1087,191 @@ button {
 .showcase-math {
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+/* Ultron's name (components/hud/brand-name.tsx). Two copies of the word,
+   one per side of the colour split, sit on top of it and tear sideways
+   for a few frames of every cycle; the rest of the time they are hidden,
+   so it reads as a signal that mostly holds. */
+.brand-ultron {
+  position: relative;
+  display: inline-block;
+  letter-spacing: 0.35em;
+  text-shadow: 0 0 10px rgba(var(--accent-rgb), 0.7);
+}
+
+.brand-ultron::before,
+.brand-ultron::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.brand-ultron::before {
+  color: #ff0040;
+  animation: ultron-tear-a 4.7s steps(1, end) infinite;
+}
+
+.brand-ultron::after {
+  color: #e8f6ff;
+  mix-blend-mode: screen;
+  animation: ultron-tear-b 6.1s steps(1, end) infinite;
+}
+
+@keyframes ultron-tear-a {
+  0%, 88%, 100% { opacity: 0; transform: none; clip-path: none; }
+  89% { opacity: 0.9; transform: translate(-3px, 0); clip-path: inset(0 0 55% 0); }
+  91% { opacity: 0.9; transform: translate(4px, 1px); clip-path: inset(40% 0 10% 0); }
+  93% { opacity: 0.7; transform: translate(-1px, 0); clip-path: inset(70% 0 0 0); }
+  95% { opacity: 0; }
+}
+
+@keyframes ultron-tear-b {
+  0%, 92%, 100% { opacity: 0; transform: none; clip-path: none; }
+  93% { opacity: 0.6; transform: translate(3px, -1px); clip-path: inset(20% 0 50% 0); }
+  95% { opacity: 0.5; transform: translate(-4px, 0); clip-path: inset(60% 0 5% 0); }
+  97% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-ultron::before,
+  .brand-ultron::after {
+    animation: none;
+  }
+}
+
+/* Jarvis to Ultron (takeover() in lib/mode-fx.ts). The console shakes
+   while it breaks up; then an override screen cuts in over everything,
+   his name corrupts into ULTRON, and the screen is torn away. */
+:root.takeover-shake .hud-grid {
+  animation: takeover-shake 90ms steps(1, end) infinite;
+}
+
+@keyframes takeover-shake {
+  0%  { translate: 0 0; }
+  25% { translate: -6px 3px; }
+  50% { translate: 5px -4px; }
+  75% { translate: -3px -2px; }
+}
+
+.ultron-takeover {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 20, 48, 0.07) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at center, #1a0205 0%, #000 70%);
+  pointer-events: none;
+  animation: takeover-in 160ms steps(2, end) both;
+}
+
+/* A white, then red, flash as it cuts in. */
+@keyframes takeover-in {
+  0%   { filter: brightness(6) saturate(0); }
+  50%  { filter: brightness(3) hue-rotate(-20deg); }
+  100% { filter: none; }
+}
+
+.ultron-takeover.is-leaving {
+  animation: takeover-out 420ms steps(6, end) both;
+}
+
+@keyframes takeover-out {
+  0%   { opacity: 1; clip-path: inset(0 0 0 0); transform: none; }
+  30%  { opacity: 1; clip-path: inset(0 0 40% 0); transform: translateX(-14px); }
+  55%  { opacity: 0.8; clip-path: inset(30% 0 10% 0); transform: translateX(18px); }
+  80%  { opacity: 0.4; clip-path: inset(60% 0 0 0); transform: translateX(-8px); }
+  100% { opacity: 0; clip-path: inset(100% 0 0 0); transform: none; }
+}
+
+.ultron-takeover-name {
+  position: relative;
+  max-width: calc(100vw - 32px);
+  font-family: var(--font-orbitron), sans-serif;
+  font-size: clamp(36px, 9vw, 96px);
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-align: center;
+  color: #00d4ff;
+  text-shadow: 0 0 24px rgba(0, 212, 255, 0.7);
+}
+
+.ultron-takeover-name.is-ultron {
+  letter-spacing: 0.4em;
+  color: #ff1430;
+  text-shadow: 0 0 30px rgba(255, 20, 48, 0.9), 0 0 80px rgba(255, 20, 48, 0.5);
+  animation: ultron-land 360ms steps(4, end) both;
+}
+
+.ultron-takeover-name.is-ultron::before,
+.ultron-takeover-name.is-ultron::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ultron-takeover-name.is-ultron::before {
+  color: #ff0040;
+  animation: ultron-split-a 1.1s steps(1, end) infinite;
+}
+
+.ultron-takeover-name.is-ultron::after {
+  color: #e8f6ff;
+  mix-blend-mode: screen;
+  animation: ultron-split-b 0.9s steps(1, end) infinite;
+}
+
+@keyframes ultron-land {
+  0%   { transform: scale(1.35); filter: brightness(3) blur(2px); }
+  25%  { transform: scale(0.94) translateX(-8px); filter: brightness(1.6); }
+  50%  { transform: scale(1.04) translateX(6px); filter: none; }
+  100% { transform: none; filter: none; }
+}
+
+@keyframes ultron-split-a {
+  0%, 100% { opacity: 0; transform: none; clip-path: none; }
+  10% { opacity: 0.9; transform: translate(-6px, 0); clip-path: inset(0 0 60% 0); }
+  20% { opacity: 0; }
+  55% { opacity: 0.8; transform: translate(8px, 2px); clip-path: inset(45% 0 15% 0); }
+  65% { opacity: 0; }
+}
+
+@keyframes ultron-split-b {
+  0%, 100% { opacity: 0; transform: none; clip-path: none; }
+  30% { opacity: 0.6; transform: translate(6px, -1px); clip-path: inset(25% 0 45% 0); }
+  40% { opacity: 0; }
+  80% { opacity: 0.5; transform: translate(-7px, 0); clip-path: inset(65% 0 0 0); }
+  90% { opacity: 0; }
+}
+
+.ultron-takeover-lines {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-height: 72px;
+  padding: 0 16px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  letter-spacing: 0.3em;
+  text-align: center;
+  color: rgba(255, 120, 130, 0.9);
+}
+
+.ultron-takeover-lines > div {
+  animation: takeover-line 180ms steps(3, end) both;
+}
+
+@keyframes takeover-line {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: none; }
 }

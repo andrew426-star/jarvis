@@ -727,13 +727,21 @@ function applyAmbience(mode: Ambience) {
 function playModeShift(mode: Ambience) {
   if (muted) return
   if (mode === "serious") {
-    stutter(10, 0.05)
+    // On the takeover's beats (lib/mode-fx.ts): three waves of breakup,
+    // the cut to the override screen, ULTRON landing, the screen torn off.
+    stutter(6, 0.04)
+    setTimeout(() => stutter(9, 0.05), 240)
+    setTimeout(() => stutter(14, 0.06), 480)
     setTimeout(() => {
       sweep(420, 34, 0.95, 0.07, "sawtooth", [1600, 160])
       impact()
       cant(12, 0.03, 0.022)
-    }, 290)
-    setTimeout(() => toll(110, 0.05), 950)
+    }, 800)
+    setTimeout(() => {
+      impact()
+      toll(110, 0.06)
+    }, 1300)
+    setTimeout(() => stutter(10, 0.05), 2150)
   } else {
     stutter(5, 0.035)
     setTimeout(() => {

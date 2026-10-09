@@ -30,6 +30,7 @@ import type { MicButtonHandle } from "@/components/mic-button"
 import { NewsPanel } from "@/components/panels/news-panel"
 import { NotesPanel } from "@/components/panels/notes-panel"
 import { InboxPanel } from "@/components/inbox/inbox-panel"
+import { BrandName } from "@/components/hud/brand-name"
 import {
   JarvisApiError,
   JarvisAuthError,
@@ -56,6 +57,7 @@ import {
 } from "@/lib/console-commands"
 import { emitCore } from "@/lib/core-events"
 import { startHands, stopHands } from "@/lib/hand-tracking"
+import { startAmbientGlitch } from "@/lib/mode-fx"
 import { stopNarration } from "@/lib/narration"
 import { sfx, unlockAudio } from "@/lib/sfx"
 import { onScreenText, useShowcase, type ShowcaseItem } from "@/lib/showcase-store"
@@ -206,6 +208,9 @@ function Shell({
   useEffect(() => {
     sfx.setAmbience(mode)
   }, [mode])
+
+  // Serious mode is Ultron, and his console glitches now and then on its own.
+  useEffect(() => (mode === "serious" ? startAmbientGlitch() : undefined), [mode])
 
   useEffect(() => {
     setAgentStatus(agentStatus)
@@ -495,7 +500,7 @@ function Shell({
           useSpatial.getState().setWatchLooking(looking)
           if (!looking && result && !result.spoke) {
             const seen = result.notes.replace(/\s+/g, " ").trim()
-            pushLog("NONE", `Watch: looked, nothing to say${seen ? ` · ${seen.slice(0, 90)}` : ""}`)
+            pushLog("NONE", `Watch: looked${result.model ? ` (${result.model})` : ""}, nothing to say${seen ? ` · ${seen.slice(0, 90)}` : ""}`)
           }
         },
       },
@@ -891,7 +896,7 @@ function Shell({
           aria-label="Wake J.A.R.V.I.S."
         >
           <span className="t-header" style={{ color: "var(--accent)", fontSize: 18, letterSpacing: "0.3em" }}>
-            J.A.R.V.I.S.
+            <BrandName />
           </span>
           <span className="t-time">STANDING BY · CLICK TO RESUME</span>
         </button>

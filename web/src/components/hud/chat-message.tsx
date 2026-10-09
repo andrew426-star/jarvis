@@ -8,6 +8,7 @@ import { ToolBadge } from "@/components/tool-badge"
 import { startAudioAnalysis, stopAudioAnalysis } from "@/lib/audio-amplitude"
 import { JarvisAuthError, speak, type Checklist, type InboxItem } from "@/lib/jarvis-client"
 import { clearNarration, registerNarration, stopNarration } from "@/lib/narration"
+import { currentVoiceId } from "@/lib/persona"
 import { useSpatial } from "@/lib/spatial-store"
 import { useTypewriter } from "@/lib/use-typewriter"
 
@@ -94,7 +95,7 @@ export function ChatMessage({
 
     setAudioState("loading")
     try {
-      const blob = await speak(message.spoken ?? message.content, token)
+      const blob = await speak(message.spoken ?? message.content, token, currentVoiceId())
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
       audioRef.current = audio

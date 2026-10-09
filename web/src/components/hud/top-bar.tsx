@@ -9,6 +9,7 @@ import { useSpatial } from "@/lib/spatial-store"
 import { useClock } from "@/lib/use-clock"
 import { useJarvis, type TabKey } from "@/lib/store"
 import { centralDate, centralTime, centralZoneLabel } from "@/lib/time"
+import { BrandName } from "@/components/hud/brand-name"
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "markets", label: "Markets" },
@@ -84,7 +85,7 @@ export function TopBar() {
             color: "var(--accent)",
           }}
         >
-          J.A.R.V.I.S.
+          <BrandName />
         </span>
         <span
           className="anim-dot size-2 shrink-0 rounded-full"

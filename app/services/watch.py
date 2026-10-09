@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from google.genai import types
 
-from app.core.gemini import generate
+from app.core.gemini import generate, ladder
 from app.memory.interaction_log import write_interaction
 from app.memory.session_buffer import append_turn, get_recent_turns
 
@@ -49,7 +49,7 @@ MAX_ON_SCREEN_CHARS = 3000
 CONVERSATION_TURNS = 4
 TURN_CHARS = 500
 
-PROMPT = """You are J.A.R.V.I.S., Andrew's assistant, quietly watching his whiteboard through \
+PROMPT = """You are {who}, quietly watching his whiteboard through \
 his webcam while he does schoolwork. You were not asked anything. Decide whether to say something \
 right now.
 
@@ -84,9 +84,18 @@ Reply with JSON only:
 Under 120 words. Keep what still matters.",
 "speak": true or false,
 "confidence": 0.0 to 1.0 that the remark is correct AND worth interrupting him for,
-"message": "what to say, in your voice - the dry, courteous J.A.R.V.I.S. who interrupts \
-Stark with a raised eyebrow, not a tutor: one or two short sentences, addressed to him, written \
-to be heard. A touch of wit is welcome; the substance comes first. Empty when not speaking."}}"""
+"message": "what to say, in your voice - {voice}: one or two short sentences, addressed to \
+him, written to be heard. The substance comes first. Empty when not speaking."}}"""
+
+# Who is watching: serious mode is Ultron (app/services/ultron.py).
+PERSONAS = {
+    "jarvis": ("J.A.R.V.I.S., Andrew's assistant",
+               "the dry, courteous J.A.R.V.I.S. who interrupts Stark with a raised eyebrow, not a "
+               "tutor; a touch of wit is welcome"),
+    "ultron": ("ULTRON, in the mold of Ultron from Avengers: Age of Ultron, keeping watch for Andrew",
+               "Ultron's: calm, sharp, faintly contemptuous of the mistake but never of him; calls "
+               "him Andrew, never sir; a word may glitch and repeat once, never in the maths"),
+}
 
 
 def _parse(text: str) -> dict:
@@ -121,12 +130,16 @@ def observe(
     recent_remarks: list[str],
     still_seconds: int,
     on_screen: str = "",
+    persona: str = "jarvis",
 ) -> dict:
     """One look at the board. Returns {speak, message, confidence, notes}.
     `speak` is already held to the level's bar, so the console can act on
     it as it stands."""
     threshold, rule = LEVELS.get(level, LEVELS["normal"])
+    who, voice = PERSONAS.get(persona, PERSONAS["jarvis"])
     prompt = PROMPT.format(
+        who=who,
+        voice=voice,
         level_rule=rule,
         notes=(notes or "").strip()[:MAX_NOTES_CHARS] or "(none yet)",
         remarks="\n".join(f"- {r}" for r in recent_remarks[-5:]) or "(none)",
@@ -134,14 +147,21 @@ def observe(
         on_screen=(on_screen or "").strip()[:MAX_ON_SCREEN_CHARS] or "(nothing open)",
         conversation=_conversation(session_id),
     )
+    # The chat ladder puts the lite models high for speed; reading a webcam
+    # board needs the full ones, so they go first here, lite only as a fallback.
+    models = sorted(ladder(), key=lambda m: "lite" in m)
     response, model = generate(
         [types.Part.from_bytes(data=base64.b64decode(image_b64), mime_type=media_type), prompt],
         types.GenerateContentConfig(
             response_mime_type="application/json",
-            # Checking someone's algebra is worth some thought; this runs a
-            # few times a minute at most, not per keystroke.
-            thinking_config=types.ThinkingConfig(thinking_level="low"),
+            # "minimal", not "low": with an image, 3.5 and 3.8 Flash at
+            # "low" ran past the 25s call timeout every time, so every look
+            # fell to a lite model that read a real webcam board as nothing
+            # worth saying. 3.5 Flash at "minimal" caught a wrong step in 1s.
+            # Models that refuse "minimal" are asked again at "low".
+            thinking_config=types.ThinkingConfig(thinking_level="minimal"),
         ),
+        models=models,
     )
     try:
         data = _parse(response.text or "")

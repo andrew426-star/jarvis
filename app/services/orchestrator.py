@@ -22,7 +22,9 @@ from app.memory.semantic_recall import get_relevant_context, record_interaction
 from app.memory.session_buffer import append_turn, count_turns, get_recent_turns
 from app.services.browser_link import context_line as browser_context_line
 from app.services.situation import situation_note
+from app.services.ultron import ULTRON_PERSONA, is_ultron
 from app.tools.camera import CAMERA_LOOK_SCHEMA, CAMERA_ON_NOTE, CHECK_WORK, CHECK_WORK_LOOK, make_camera_look
+from app.tools.engineering import ENGINEERING_SCHEMA, make_engineering
 from app.tools.console_control import (
     CONSOLE_CONTROL_NOTE,
     CONSOLE_SCHEMA,
@@ -69,6 +71,7 @@ _TOOL_STATUS = {
     "kivaro_pipeline": "Checking the lead engine",
     "parts_catalog": "Checking the parts list",
     "project": "Working on the project",
+    "engineering": "Running the numbers",
     "history": "Checking the log",
 }
 
@@ -298,6 +301,7 @@ def _declaration(schema: dict) -> types.FunctionDeclaration:
 # the prompt's "plan multi-step requests first" sent it there.
 _DECLARATIONS = [_declaration(schema) for schema in TOOL_SCHEMAS if schema["function"]["name"] != "think"]
 _CAMERA_DECLARATION = _declaration(CAMERA_LOOK_SCHEMA)
+_ENGINEERING_DECLARATION = _declaration(ENGINEERING_SCHEMA)
 _CONSOLE_DECLARATIONS = [
     _declaration(CONSOLE_SCHEMA),
     _declaration(WORKSHOP_SCHEMA),
@@ -587,6 +591,9 @@ def stream_invoke(
         # Jarvis has no clock of his own; without this, "today" is a guess.
         now_for_prompt(),
     ]
+    # Serious mode is Ultron (app/services/ultron.py).
+    if is_ultron(console_state):
+        system.insert(1, ULTRON_PERSONA)
     if channel == "terminal":
         system.append(TERMINAL_MODE)
     elif channel == "mobile":
@@ -624,6 +631,10 @@ def stream_invoke(
         building = project_state_line(console_state)
         if building:
             system.append(building)
+    # Ultron's own bench (app/tools/engineering.py): serious mode only.
+    if is_ultron(console_state):
+        declarations = [*declarations, _ENGINEERING_DECLARATION]
+        handlers = {**handlers, "engineering": make_engineering(console_state)}
     if tool_override is not None:
         declarations = [_declaration(schema) for schema in tool_override[0]]
         handlers = tool_override[1]

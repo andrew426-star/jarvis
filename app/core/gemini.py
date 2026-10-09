@@ -155,7 +155,7 @@ def generate(
             if _cooling.get(model, 0) > time.time():
                 continue
         try:
-            return client.models.generate_content(model=model, contents=contents, config=_for_model(model, config)), model
+            return _generate_one(client, model, contents, _for_model(model, config)), model
         except errors.APIError as exc:
             rest = _cooldown_for(exc)
             if rest is None:
@@ -174,6 +174,20 @@ def generate(
         retry_at = min((_cooling.get(m, 0) for m in candidates), default=time.time() + MINUTE_COOLDOWN)
         reasons = {m: _why.get(m, "resting") for m in candidates}
     raise AllModelsExhausted(retry_at, reasons)
+
+
+def _generate_one(client: genai.Client, model: str, contents, config: types.GenerateContentConfig):
+    """generate_content, asked again at "low" when the model does not take
+    the configured thinking level (3.7/3.8 Flash refuse "minimal"), as
+    _open_stream does for streams."""
+    try:
+        return client.models.generate_content(model=model, contents=contents, config=config)
+    except errors.APIError as exc:
+        level = config.thinking_config.thinking_level if config.thinking_config else None
+        if exc.code != 400 or "thinking" not in str(exc).lower() or level in (None, "low", types.ThinkingLevel.LOW):
+            raise
+        logger.warning("Gemini %s rejected thinking level %s; retrying at low", model, level)
+        return client.models.generate_content(model=model, contents=contents, config=_with_thinking(config, "low"))
 
 
 def _reason(exc: errors.APIError) -> str:

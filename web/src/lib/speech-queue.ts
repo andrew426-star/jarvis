@@ -3,6 +3,7 @@
 import { startAudioAnalysis, stopAudioAnalysis } from "@/lib/audio-amplitude"
 import { JarvisAuthError, speak } from "@/lib/jarvis-client"
 import { clearNarration, registerNarration } from "@/lib/narration"
+import { currentVoiceId } from "@/lib/persona"
 
 // Speaking a reply while it is still being written. The voice line streams
 // in first (see stream_invoke on the server); each finished sentence is
@@ -89,7 +90,7 @@ export class SpeechQueue {
     if (!sentence) return
     this.clips.push({
       text: sentence,
-      blob: speak(sentence, this.token).catch((err) => {
+      blob: speak(sentence, this.token, currentVoiceId()).catch((err) => {
         if (err instanceof JarvisAuthError) this.handlers.onAuthError()
         // A sentence that fails to synthesise is skipped, not fatal.
         return null

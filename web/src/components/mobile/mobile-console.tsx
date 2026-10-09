@@ -27,6 +27,7 @@ import { MicButton, type MicButtonHandle } from "@/components/mic-button"
 import { ReplyCards } from "@/components/reply-cards"
 import { ThinkingIndicator } from "@/components/thinking-indicator"
 import { ToolBadge } from "@/components/tool-badge"
+import { BrandName } from "@/components/hud/brand-name"
 import { BAND_COUNT, audioAmplitude, audioBands } from "@/lib/audio-amplitude"
 import { resolveAuth, subscribeAuth } from "@/lib/auth-state"
 import { emitCore } from "@/lib/core-events"
@@ -249,7 +250,7 @@ function StatusStrip({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boole
       style={{ height: 48, borderBottom: "1px solid rgba(var(--accent-rgb), 0.15)", background: "rgba(5, 5, 8, 0.6)" }}
     >
       <span className="t-header text-glow" style={{ color: "var(--accent)" }}>
-        J.A.R.V.I.S.
+        <BrandName />
       </span>
       {mode === "serious" && <ShieldAlertIcon size={13} style={{ color: "var(--accent)" }} aria-label="Serious mode" />}
       <div className="t-label ml-auto flex items-center gap-2.5" style={{ color: "var(--text-secondary)" }}>
@@ -436,7 +437,8 @@ function MobileChat({
         text: message,
         sessionId,
         token,
-        options: { channel: "mobile" },
+        // The mode rides along so serious mode answers as Ultron.
+        options: { channel: "mobile", consoleState: { mode: useJarvis.getState().mode } },
         setMessages,
         speak: speech === "always" || (speech === "voice" && viaVoice),
         audio: audioRef.current ?? undefined,

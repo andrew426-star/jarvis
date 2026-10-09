@@ -2,6 +2,7 @@
 
 import { captureFrame, getVideo } from "@/lib/camera"
 import { JarvisApiError, observeBoard, type WatchLevel } from "@/lib/jarvis-client"
+import { isUltron } from "@/lib/persona"
 
 // Watch mode: Jarvis following the whiteboard and speaking up on his own.
 //
@@ -54,7 +55,7 @@ export interface WatchHost {
   onRemark: (message: string) => void
   onError: (message: string) => void
   /** A look is out (true) or back (false, with what he made of it). */
-  onLook?: (looking: boolean, result?: { spoke: boolean; notes: string }) => void
+  onLook?: (looking: boolean, result?: { spoke: boolean; notes: string; model?: string }) => void
   /** What is on screen for him (the showcase window), sent with each look. */
   onScreen?: () => string
 }
@@ -137,7 +138,7 @@ async function look(current: Watch, sample: Float32Array, now: number) {
   current.lastLookAt = now
   current.looks.push(now)
   current.host.onLook?.(true)
-  let outcome: { spoke: boolean; notes: string } | undefined
+  let outcome: { spoke: boolean; notes: string; model?: string } | undefined
   try {
     const result = await observeBoard(current.host.token, {
       session_id: current.host.sessionId,
@@ -147,11 +148,12 @@ async function look(current: Watch, sample: Float32Array, now: number) {
       recent_remarks: current.remarks,
       still_seconds: Math.round((now - current.lastChangeAt) / 1000),
       on_screen: current.host.onScreen?.() ?? "",
+      persona: isUltron() ? "ultron" : "jarvis",
     })
     if (watch !== current) return
     current.baseline = sample
     current.notes = result.notes
-    outcome = { spoke: false, notes: result.notes }
+    outcome = { spoke: false, notes: result.notes, model: result.model }
     if (!result.speak || !result.message) return
     const at = Date.now()
     // Checked again on the way out: he may have started talking, or

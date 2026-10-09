@@ -21,6 +21,8 @@ class ObserveRequest(BaseModel):
     # What he has open in the showcase window, often the questions he is
     # answering on the board.
     on_screen: str = Field(default="", max_length=6000)
+    # Serious mode is Ultron.
+    persona: Literal["jarvis", "ultron"] = "jarvis"
 
 
 # Watch mode's look at the whiteboard (app/services/watch.py). Sync for
@@ -37,6 +39,7 @@ def watch_observe(request: ObserveRequest) -> dict:
             request.recent_remarks,
             request.still_seconds,
             request.on_screen,
+            request.persona,
         )
     except GeminiNotConfigured as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

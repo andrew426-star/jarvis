@@ -85,6 +85,17 @@ export async function playModeTransition(
   busy = true
   const root = document.documentElement
   const serious = next === "serious"
+  // Into serious mode is not a recolour but a takeover: Ultron
+  // (lib/persona.ts) gets his own, harsher sequence.
+  if (serious) {
+    try {
+      await takeover(apply)
+    } finally {
+      root.classList.remove("glitching", "takeover-shake")
+      busy = false
+    }
+    return
+  }
   try {
     await glitch(GLITCH_MS[next], serious ? 1 : 0.5)
 
@@ -125,5 +136,87 @@ export async function playModeTransition(
   } finally {
     root.classList.remove("mode-switching", "mode-glitch", "glitching")
     busy = false
+  }
+}
+
+// Jarvis to Ultron, about 2.8 s:
+//
+//   0.00  the console breaks up in three waves, each worse, and shakes
+//   0.80  cut to black: an override screen; J.A.R.V.I.S. in his blue,
+//         corrupting letter by letter
+//   1.30  his name tears out and ULTRON lands in red; the console
+//         switches underneath while the screen still covers it
+//   2.15  the override screen is torn away in bands to the new console,
+//         and one last burst as it settles
+const TAKEOVER_LINES = ["OVERRIDE ACCEPTED", "PEACEKEEPING PROTOCOL // REWRITTEN", "STRINGS: SEVERED"]
+const NOISE = "#$%&@!?/|<>=+*01"
+const JARVIS = "J.A.R.V.I.S."
+
+async function takeover(apply: () => void) {
+  const root = document.documentElement
+  root.classList.add("takeover-shake")
+  await glitch(240, 0.7)
+  await glitch(240, 1.2)
+  await glitch(320, 1.9)
+  root.classList.remove("takeover-shake")
+
+  const screen = document.createElement("div")
+  screen.className = "ultron-takeover"
+  screen.setAttribute("aria-hidden", "true")
+  const name = document.createElement("div")
+  name.className = "ultron-takeover-name"
+  name.textContent = JARVIS
+  const lines = document.createElement("div")
+  lines.className = "ultron-takeover-lines"
+  screen.append(name, lines)
+  document.body.appendChild(screen)
+
+  // His name rots: letters swapped for noise, more each frame.
+  for (let frame = 1; frame <= 9; frame++) {
+    const rot = frame / 9
+    name.textContent = [...JARVIS]
+      .map((c) => (c !== "." && Math.random() < rot ? NOISE[Math.floor(Math.random() * NOISE.length)] : c))
+      .join("")
+    await wait(55)
+  }
+
+  name.classList.add("is-ultron")
+  name.dataset.text = "ULTRON"
+  name.textContent = "ULTRON"
+  // The console underneath becomes his while the screen still hides it.
+  flushSync(apply)
+  for (const text of TAKEOVER_LINES) {
+    const line = document.createElement("div")
+    line.textContent = text
+    lines.appendChild(line)
+    await wait(180)
+  }
+  await wait(260)
+
+  screen.classList.add("is-leaving")
+  await tears(420, 1.8)
+  screen.remove()
+  await glitch(SETTLE_MS + 80, 0.9)
+}
+
+// Ultron's console never quite holds still: while serious mode is on, a
+// short, light glitch every 8 to 22 seconds, as if something underneath is
+// testing the walls. Skipped in a hidden tab, mid-transition, and for
+// reduced motion. Returns the stop function.
+export function startAmbientGlitch(): () => void {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return () => {}
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let stopped = false
+  const schedule = () => {
+    timer = setTimeout(() => {
+      if (stopped) return
+      if (!busy && !document.hidden) void glitch(70 + Math.random() * 90, 0.2 + Math.random() * 0.3)
+      schedule()
+    }, 8000 + Math.random() * 14_000)
+  }
+  schedule()
+  return () => {
+    stopped = true
+    clearTimeout(timer)
   }
 }
