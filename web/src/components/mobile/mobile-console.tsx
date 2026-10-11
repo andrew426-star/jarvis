@@ -701,7 +701,7 @@ function MobileChat({
             {messages.length === 0 && !pending ? (
               <div className="flex flex-col gap-3">
                 <p className="t-body" style={{ color: "var(--text-secondary)", fontSize: 14 }}>
-                  Awaiting input, sir. Tap the core to speak, or type below.
+                  {serious ? "Awaiting input, Andrew." : "Awaiting input, sir."} Tap the core to speak, or type below.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {SUGGESTIONS.map((s) => (

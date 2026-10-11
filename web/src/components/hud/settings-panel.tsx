@@ -9,6 +9,7 @@ import { useJarvis } from "@/lib/store"
 import { BrowserSettings } from "@/components/hud/browser-settings"
 import { FilesSettings } from "@/components/hud/files-settings"
 import { VoiceSettings } from "@/components/hud/voice-settings"
+import { UltronModelSettings } from "@/components/hud/ultron-model-settings"
 
 // Everything in this panel is either wired to something real or is not
 // here at all.
@@ -250,6 +251,7 @@ function Appearance() {
       >
         Serious mode turns the whole console red-hot: palette, grid, scanlines and edges. Both settings persist per browser.
       </p>
+      <UltronModelSettings />
     </>
   )
 }

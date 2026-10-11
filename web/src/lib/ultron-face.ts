@@ -2,8 +2,11 @@
 
 import * as THREE from "three"
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js"
+import { STLLoader } from "three/addons/loaders/STLLoader.js"
+import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js"
 
 import type { AgentStatus } from "@/lib/store"
+import { loadUltronModel, onUltronModelChange, type UltronModel } from "@/lib/ultron-model"
 
 // Ultron's head, for the console's centre in serious mode (lib/core-cipher.ts
 // swaps it in for Jarvis's cipher). Built and checked against two Age of
@@ -27,6 +30,11 @@ import type { AgentStatus } from "@/lib/store"
 //   chin      ribbed plates under the lower lip, a disc at the bottom
 //   fins      thick blades from the temples, round the cheeks to the chin
 //   neck      stacked segments
+//
+// Andrew can load his own STL of the head (Settings > Appearance; kept in
+// this browser, lib/ultron-model.ts): it replaces the built sculpt, in the
+// same metal and light, with the irises set in its eye sockets, found by
+// rendering its depth from the front and taking the deepest point of each.
 //
 // Every proportion is in LAYOUT, measured off the references. It pays
 // attention: the head follows the pointer or a hand, the irises narrow when
@@ -481,6 +489,13 @@ export interface FaceInput {
 export class UltronFace {
   readonly group = new THREE.Group()
   private readonly head = new THREE.Group()
+  /** The built head; hidden while Andrew's own model is shown. */
+  private readonly sculpt = new THREE.Group()
+  private model: THREE.Mesh | null = null
+  private readonly irisHome: THREE.Vector3[] = []
+  private readonly renderer: THREE.WebGLRenderer
+  private readonly stopModel: () => void
+  private disposed = false
   private readonly jaw = new THREE.Group()
   private readonly metal: THREE.MeshStandardMaterial
   private readonly coreMaterial: THREE.MeshBasicMaterial
@@ -505,6 +520,7 @@ export class UltronFace {
   private narrow = 0
 
   constructor(glow: THREE.Texture, color: number, renderer: THREE.WebGLRenderer) {
+    this.renderer = renderer
     // Gunmetal, reflecting a studio room.
     const pmrem = new THREE.PMREMGenerator(renderer)
     this.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
@@ -522,9 +538,9 @@ export class UltronFace {
     this.group.add(key, this.rim, under, new THREE.AmbientLight(0xffffff, 0.12))
 
     const built = buildHead()
-    this.head.add(new THREE.Mesh(built.plates, this.metal), new THREE.Mesh(built.core, this.coreMaterial))
+    this.sculpt.add(new THREE.Mesh(built.plates, this.metal), new THREE.Mesh(built.core, this.coreMaterial))
     this.jaw.add(new THREE.Mesh(built.jaw, this.metal))
-    this.head.add(this.jaw)
+    this.sculpt.add(this.jaw)
 
     // Eyes: a dark ball in each opening, a red iris on it, a bloom.
     const eyeball = new THREE.MeshStandardMaterial({ color: 0x0a0a0c, metalness: 0.6, roughness: 0.2, envMap: this.environment })
@@ -533,7 +549,7 @@ export class UltronFace {
       const at = face(L.eyeX * side, L.eyeY, -0.06)
       const ball = new THREE.Mesh(new THREE.SphereGeometry(0.15, 24, 16), eyeball)
       ball.position.copy(at)
-      this.head.add(ball)
+      this.sculpt.add(ball)
       const iris = new THREE.Group()
       iris.position.copy(at).add(new THREE.Vector3(0, 0, 0.145))
       iris.lookAt(iris.position.clone().add(new THREE.Vector3(side * 0.12, 0.04, 1)))
@@ -545,6 +561,7 @@ export class UltronFace {
       iris.add(bloom)
       this.eyeGlows.push(bloom)
       this.irises.push(iris)
+      this.irisHome.push(iris.position.clone())
       this.head.add(iris)
     }
 
@@ -555,25 +572,25 @@ export class UltronFace {
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
     )
     this.mouthGlow.position.set(0, L.mouthY - 0.02, face(0, L.mouthY - 0.02).z + 0.02)
-    this.head.add(this.mouthGlow)
+    this.sculpt.add(this.mouthGlow)
 
     // Fins: a thick blade and a thinner one inside it.
     for (const side of [1, -1]) {
       const curve = new THREE.CatmullRomCurve3(L.fin.map(([x, y, z]) => new THREE.Vector3(x, y, z)))
       const inner = new THREE.CatmullRomCurve3(L.fin.map(([x, y, z]) => new THREE.Vector3(x * 0.9, y * 0.97, z + 0.04)))
-      this.head.add(new THREE.Mesh(sweptBlade(curve, 0.34, 0.07, side), this.metal), new THREE.Mesh(sweptBlade(inner, 0.12, 0.04, side), this.metal))
+      this.sculpt.add(new THREE.Mesh(sweptBlade(curve, 0.34, 0.07, side), this.metal), new THREE.Mesh(sweptBlade(inner, 0.12, 0.04, side), this.metal))
     }
 
     // Neck: stacked segments over a dark core.
     const { r: nr, top: nt, bottom: nb, z: nz } = L.neck
     const neckCore = new THREE.Mesh(new THREE.CylinderGeometry(nr * 0.9, nr * 0.95, nt - nb, 32, 1, true), new THREE.MeshBasicMaterial({ color: 0x120204 }))
     neckCore.position.set(0, (nt + nb) / 2, nz)
-    this.head.add(neckCore)
+    this.sculpt.add(neckCore)
     for (let y = nt - 0.12; y > nb; y -= 0.3) {
       const rr = nr * (1 + (0.08 * (nt - y)) / (nt - nb))
       const ring = new THREE.Mesh(new THREE.CylinderGeometry(rr, rr * 1.02, 0.24, 48), this.metal)
       ring.position.set(0, y - 0.12, nz)
-      this.head.add(ring)
+      this.sculpt.add(ring)
     }
 
     // Thinking: a ring round the head, sweeping down.
@@ -591,9 +608,365 @@ export class UltronFace {
       this.group.add(mesh)
     }
 
+    this.head.add(this.sculpt)
     this.head.scale.setScalar(0.86)
     this.head.position.y = 0.05
     this.group.add(this.head)
+
+    void this.loadModel()
+    this.stopModel = onUltronModelChange(() => void this.loadModel())
+  }
+
+  // --- Andrew's own model ---------------------------------------------------
+
+  private async loadModel() {
+    const saved = await loadUltronModel()
+    if (!this.disposed) this.showModel(saved)
+  }
+
+  private showModel(saved: UltronModel | null) {
+    if (this.model) {
+      this.head.remove(this.model)
+      this.model.geometry.dispose()
+      const material = this.model.material as THREE.MeshStandardMaterial
+      material.emissiveMap?.dispose()
+      material.dispose()
+      for (const child of this.model.children) {
+        const screen = child as THREE.Mesh
+        screen.geometry.dispose()
+        const sheet = screen.material as THREE.MeshBasicMaterial
+        sheet.map?.dispose()
+        sheet.dispose()
+      }
+      this.model = null
+    }
+    const eyes = saved ? this.buildModel(saved) : null
+    this.sculpt.visible = !this.model
+    // On a model, the eyes are its own (glowing through its slots); only
+    // the blooms stay, over them.
+    this.irises.forEach((iris, i) => {
+      iris.position.copy(eyes ? eyes[i] : this.irisHome[i])
+      iris.lookAt(iris.position.clone().add(new THREE.Vector3((i === 0 ? 1 : -1) * 0.12, 0.04, 1)))
+      for (const child of iris.children) child.visible = !eyes
+    })
+  }
+
+  /** Parses, orients and fits the model; returns where its eyes are (right, left). */
+  private buildModel(saved: UltronModel): THREE.Vector3[] | null {
+    let geometry: THREE.BufferGeometry
+    try {
+      geometry = new STLLoader().parse(saved.data.slice(0))
+    } catch {
+      return null
+    }
+    if (saved.up === "z") geometry.rotateX(-Math.PI / 2)
+    geometry.rotateY((saved.turn * Math.PI) / 180)
+    // Smooth across the facets, sharp across real edges.
+    geometry = toCreasedNormals(geometry, Math.PI / 6)
+    geometry.computeBoundingBox()
+    const box = geometry.boundingBox!
+    const size = box.getSize(new THREE.Vector3())
+    const centre = box.getCenter(new THREE.Vector3())
+    // Filling the core's frame: a helmet has no neck to leave room for.
+    const scale = Math.min(4.7 / size.y, 5.0 / size.x)
+    geometry.translate(-centre.x, -centre.y, -centre.z)
+    geometry.scale(scale, scale, scale)
+    geometry.translate(0, 0.05, 0)
+    geometry.computeBoundingBox()
+    const front = this.readFront(geometry)
+    // Each vertex's place as seen from the front, so the glow mask (made
+    // from that view) lands where it was found.
+    const fitted = geometry.boundingBox!
+    const position = geometry.getAttribute("position")
+    const uv = new Float32Array(position.count * 2)
+    for (let i = 0; i < position.count; i += 1) {
+      uv[i * 2] = (position.getX(i) - fitted.min.x) / (fitted.max.x - fitted.min.x)
+      uv[i * 2 + 1] = (position.getY(i) - fitted.min.y) / (fitted.max.y - fitted.min.y)
+    }
+    geometry.setAttribute("uv", new THREE.BufferAttribute(uv, 2))
+    const material = this.metal.clone()
+    material.emissive.set(0xffffff)
+    material.emissiveMap = front.mask
+    material.emissiveIntensity = 1
+    this.model = new THREE.Mesh(geometry, material)
+    if (front.screen) this.model.add(front.screen)
+    this.head.add(this.model)
+    return front.eyes
+  }
+
+  /** The model seen from the front: its depth, the eye slots (holes in the
+   *  band where eyes sit, through to the inside) and the gem above them.
+   *  Returns the gem as a glow mask on the surface, a red honeycomb screen
+   *  set just behind the slots (as the real helmet's mesh inserts are), and
+   *  where each side's slots are, for the blooms. */
+  private readFront(geometry: THREE.BufferGeometry): { mask: THREE.CanvasTexture; screen: THREE.Mesh | null; eyes: THREE.Vector3[] } {
+    const box = geometry.boundingBox!
+    const N = 512
+    const depthRange = box.max.z - box.min.z + 0.2
+    const camera = new THREE.OrthographicCamera(box.min.x, box.max.x, box.max.y, box.min.y, 0, depthRange)
+    camera.position.set(0, 0, box.max.z + 0.1)
+    const material = new THREE.ShaderMaterial({
+      vertexShader: "void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+      fragmentShader: "void main() { gl_FragColor = vec4(vec3(gl_FragCoord.z), 1.0); }",
+      side: THREE.DoubleSide,
+    })
+    const scene = new THREE.Scene()
+    scene.add(new THREE.Mesh(geometry, material))
+    const target = new THREE.WebGLRenderTarget(N, N)
+    const renderer = this.renderer
+    const previous = renderer.getRenderTarget()
+    const clear = renderer.getClearColor(new THREE.Color())
+    const alpha = renderer.getClearAlpha()
+    const pixels = new Uint8Array(N * N * 4)
+    renderer.setRenderTarget(target)
+    renderer.setClearColor(0xffffff, 1)
+    renderer.clear()
+    renderer.render(scene, camera)
+    renderer.readRenderTargetPixels(target, 0, 0, N, N, pixels)
+    renderer.setRenderTarget(previous)
+    renderer.setClearColor(clear, alpha)
+    target.dispose()
+    material.dispose()
+
+    // Rows here run bottom-up, as the GPU reads them.
+    const depth = (px: number, py: number) => pixels[(py * N + px) * 4] / 255
+    const solid = (px: number, py: number) => depth(px, py) < 0.995
+    let top = -1
+    let bottom = N
+    for (let py = 0; py < N; py += 1) {
+      for (let px = 0; px < N; px += 1) {
+        if (!solid(px, py)) continue
+        top = Math.max(top, py)
+        bottom = Math.min(bottom, py)
+      }
+    }
+    const height = Math.max(1, top - bottom)
+    const mid = N / 2
+
+    // The face's front depth in the eye band (its median), and every pixel
+    // well behind it there - seen through a slot - is an eye.
+    const bandTop = Math.round(top - 0.22 * height)
+    const bandBottom = Math.round(top - 0.6 * height)
+    const band: number[] = []
+    for (let py = bandBottom; py <= bandTop; py += 1) {
+      for (let px = 0; px < N; px += 1) if (solid(px, py) && Math.abs(px - mid) < 0.3 * N) band.push(depth(px, py))
+    }
+    band.sort((a, b) => a - b)
+    const face = band.length ? band[Math.floor(band.length * 0.35)] : 0.3
+    const eye = new Uint8Array(N * N)
+    const sides = [
+      { n: 0, x: 0, y: 0, top: -1, bottom: N },
+      { n: 0, x: 0, y: 0, top: -1, bottom: N },
+    ]
+    // A slot is a sudden drop: well behind the nearest surface around it
+    // (a min filter, R pixels each way), where a side curving away is not.
+    const R = 10
+    const at = (px: number, py: number) => (solid(px, py) ? depth(px, py) : 1)
+    const rowMin = new Float32Array(N * N).fill(1)
+    for (let py = bandBottom - R; py <= bandTop + R; py += 1) {
+      if (py < 0 || py >= N) continue
+      for (let px = 0; px < N; px += 1) {
+        let m = 1
+        for (let k = Math.max(0, px - R); k <= Math.min(N - 1, px + R); k += 1) m = Math.min(m, at(k, py))
+        rowMin[py * N + px] = m
+      }
+    }
+    const near = (px: number, py: number) => {
+      let m = 1
+      for (let k = Math.max(0, py - R); k <= Math.min(N - 1, py + R); k += 1) m = Math.min(m, rowMin[k * N + px])
+      return m
+    }
+    for (let py = bandBottom; py <= bandTop; py += 1) {
+      for (let px = 0; px < N; px += 1) {
+        const off = Math.abs(px - mid) / N
+        if (off < 0.04 || off > 0.3) continue
+        const d = at(px, py)
+        if (d - near(px, py) < 0.1 || d - face < 0.08) continue
+        eye[py * N + px] = 1
+        const side = sides[px > mid ? 0 : 1]
+        side.n += 1
+        side.x += px
+        side.y += py
+        side.top = Math.max(side.top, py)
+        side.bottom = Math.min(side.bottom, py)
+      }
+    }
+
+    // Specks are not slots: keep connected regions of a real size only.
+    const seen = new Uint8Array(N * N)
+    const stack: number[] = []
+    for (let start = 0; start < N * N; start += 1) {
+      if (!eye[start] || seen[start]) continue
+      const region: number[] = []
+      stack.push(start)
+      seen[start] = 1
+      while (stack.length) {
+        const i = stack.pop()!
+        region.push(i)
+        for (const j of [i - 1, i + 1, i - N, i + N]) {
+          if (j >= 0 && j < N * N && eye[j] && !seen[j]) {
+            seen[j] = 1
+            stack.push(j)
+          }
+        }
+      }
+      if (region.length < 300) for (const i of region) eye[i] = 0
+    }
+    for (const side of sides) Object.assign(side, { n: 0, x: 0, y: 0, top: -1, bottom: N })
+    for (let py = bandBottom; py <= bandTop; py += 1) {
+      for (let px = 0; px < N; px += 1) {
+        if (!eye[py * N + px]) continue
+        const side = sides[px > mid ? 0 : 1]
+        side.n += 1
+        side.x += px
+        side.y += py
+        side.top = Math.max(side.top, py)
+        side.bottom = Math.min(side.bottom, py)
+      }
+    }
+
+    // The honeycomb, for the screen behind the slots: drawn top-down, so
+    // the canvas row is N - 1 - py.
+    const honeycomb = document.createElement("canvas")
+    honeycomb.width = honeycomb.height = N
+    const hctx = honeycomb.getContext("2d")!
+    const image = hctx.createImageData(N, N)
+    const HEX = 7
+    for (let py = 0; py < N; py += 1) {
+      for (let px = 0; px < N; px += 1) {
+        if (py < bandBottom - 4 || py > bandTop + 4) continue
+        // A honeycomb: bright cell walls, dimmer cells.
+        const qx = px / (HEX * 1.732)
+        const qy = py / HEX - (Math.floor(qx) % 2) * 0.5
+        const fx = qx - Math.floor(qx) - 0.5
+        const fy = qy - Math.floor(qy) - 0.5
+        const wall = Math.max(Math.abs(fx) * 1.6, Math.abs(fy)) > 0.38 ? 1 : 0.45
+        const o = ((N - 1 - py) * N + px) * 4
+        image.data[o] = 255 * wall
+        image.data[o + 1] = 18 * wall
+        image.data[o + 2] = 40 * wall
+        image.data[o + 3] = 255
+      }
+    }
+    hctx.putImageData(image, 0, 0)
+
+    // The gem's mask, on the surface: drawn top-down too.
+    const canvas = document.createElement("canvas")
+    canvas.width = canvas.height = N
+    const ctx = canvas.getContext("2d")!
+
+    // The slot cluster's rows: only rows with a real run of slot pixels, so
+    // stray specks at the corners do not stretch it.
+    let clusterTop = -1
+    let clusterBottom = N
+    for (let py = bandBottom; py <= bandTop; py += 1) {
+      let n = 0
+      for (let px = 0; px < N; px += 1) n += eye[py * N + px]
+      if (n < 12) continue
+      clusterTop = Math.max(clusterTop, py)
+      clusterBottom = Math.min(clusterBottom, py)
+    }
+    const found = sides.every((side) => side.n > 20) && clusterTop > clusterBottom
+    if (found) {
+      // The gem: a shield of light on the centre line, its point at the top
+      // of the upper slots - on the reference, 0.19 of the helmet's height
+      // and 0.7 as wide as it is tall.
+      const h = Math.max(8, 0.19 * height)
+      const w = h * 0.7
+      const cy = N - 1 - (clusterTop + h / 2 - h * 0.05)
+      ctx.save()
+      ctx.translate(mid, cy)
+      const gem = ctx.createLinearGradient(0, -h / 2, 0, h / 2)
+      gem.addColorStop(0, "#fff3a0")
+      gem.addColorStop(0.45, "#ffc21a")
+      gem.addColorStop(1, "#ff8a00")
+      ctx.fillStyle = gem
+      ctx.beginPath()
+      ctx.moveTo(-w / 2, -h / 2)
+      ctx.lineTo(w / 2, -h / 2)
+      ctx.lineTo(w / 2, h * 0.12)
+      ctx.lineTo(0, h / 2)
+      ctx.lineTo(-w / 2, h * 0.12)
+      ctx.closePath()
+      ctx.fill()
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.7)"
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.moveTo(0, -h / 2)
+      ctx.lineTo(0, h / 2)
+      ctx.moveTo(-w / 2, -h / 2)
+      ctx.lineTo(0, -h * 0.05)
+      ctx.lineTo(w / 2, -h / 2)
+      ctx.stroke()
+      ctx.restore()
+    }
+    const mask = new THREE.CanvasTexture(canvas)
+    mask.colorSpace = THREE.SRGBColorSpace
+
+    // The screen: a sheet following the slots' rims, a little behind them,
+    // covering the slots (and a margin), seen only through them.
+    const G = 128
+    const step = N / G
+    const inside = (gx: number, gy: number) => {
+      for (let dy = -2; dy <= 2; dy += 1) {
+        for (let dx = -2; dx <= 2; dx += 1) {
+          const px = Math.round((gx + dx) * step)
+          const py = Math.round((gy + dy) * step)
+          if (px >= 0 && py >= 0 && px < N && py < N && eye[py * N + px]) return true
+        }
+      }
+      return false
+    }
+    const verts: number[] = []
+    const uvs: number[] = []
+    const index: number[] = []
+    const slot = new Int32Array((G + 1) * (G + 1)).fill(-1)
+    for (let gy = 0; gy <= G; gy += 1) {
+      for (let gx = 0; gx <= G; gx += 1) {
+        if (!inside(gx, gy)) continue
+        const px = Math.min(N - 1, Math.round(gx * step))
+        const py = Math.min(N - 1, Math.round(gy * step))
+        const rim = near(px, py)
+        slot[gy * (G + 1) + gx] = verts.length / 3
+        verts.push(
+          box.min.x + (gx / G) * (box.max.x - box.min.x),
+          box.min.y + (gy / G) * (box.max.y - box.min.y),
+          box.max.z + 0.1 - rim * depthRange - 0.09,
+        )
+        uvs.push(gx / G, gy / G)
+      }
+    }
+    for (let gy = 0; gy < G; gy += 1) {
+      for (let gx = 0; gx < G; gx += 1) {
+        const a = slot[gy * (G + 1) + gx]
+        const b = slot[gy * (G + 1) + gx + 1]
+        const c = slot[(gy + 1) * (G + 1) + gx]
+        const d = slot[(gy + 1) * (G + 1) + gx + 1]
+        if (a < 0 || b < 0 || c < 0 || d < 0) continue
+        index.push(a, b, c, c, b, d)
+      }
+    }
+    let screen: THREE.Mesh | null = null
+    if (index.length) {
+      const sheet = new THREE.BufferGeometry()
+      sheet.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3))
+      sheet.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2))
+      sheet.setIndex(index)
+      const map = new THREE.CanvasTexture(honeycomb)
+      map.colorSpace = THREE.SRGBColorSpace
+      screen = new THREE.Mesh(sheet, new THREE.MeshBasicMaterial({ map, side: THREE.DoubleSide, toneMapped: false }))
+    }
+
+    const world = (px: number, py: number, d: number) =>
+      new THREE.Vector3(
+        box.min.x + ((px + 0.5) / N) * (box.max.x - box.min.x),
+        box.min.y + ((py + 0.5) / N) * (box.max.y - box.min.y),
+        box.max.z + 0.1 - d * depthRange + 0.05,
+      )
+    const eyes = found
+      ? sides.map((side) => world(side.x / side.n, side.y / side.n, face))
+      : [new THREE.Vector3(0.18 * (box.max.x - box.min.x), box.max.y - 0.4 * (box.max.y - box.min.y), box.max.z), new THREE.Vector3(-0.18 * (box.max.x - box.min.x), box.max.y - 0.4 * (box.max.y - box.min.y), box.max.z)]
+    return { mask, screen, eyes }
   }
 
   update(dt: number, t: number, input: FaceInput) {
@@ -620,6 +993,12 @@ export class UltronFace {
     // with energy and voice, pulsing while he thinks.
     const hot = 0.55 + energy * 0.5 + amp * 0.9 + (thinking ? 0.25 + 0.25 * Math.sin(t * 18) : 0)
     this.coreMaterial.color.copy(tint).multiplyScalar(Math.min(1.6, 0.5 + hot * 0.6))
+    if (this.model) {
+      const flicker = this.glitch > 0 && Math.random() < 0.4 ? 0.3 : 1
+      ;(this.model.material as THREE.MeshStandardMaterial).emissiveIntensity = (0.6 + hot * 0.4) * flicker
+      const screen = this.model.children[0] as THREE.Mesh | undefined
+      if (screen) (screen.material as THREE.MeshBasicMaterial).color.setScalar(Math.min(1.4, 0.55 + hot * 0.45) * flicker)
+    }
     this.rim.color.copy(tint)
     this.rim.intensity = 2.6 + hot * 1.2
     this.scanMaterial.color.copy(tint)
@@ -692,6 +1071,8 @@ export class UltronFace {
   }
 
   dispose() {
+    this.disposed = true
+    this.stopModel()
     this.group.traverse((object) => {
       const mesh = object as THREE.Mesh
       mesh.geometry?.dispose()

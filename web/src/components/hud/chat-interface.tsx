@@ -5,6 +5,7 @@ import { WifiOffIcon } from "lucide-react"
 
 import { ChatMessage, type ChatMessageData } from "@/components/hud/chat-message"
 import { ThinkingIndicator } from "@/components/thinking-indicator"
+import { useJarvis } from "@/lib/store"
 
 // The comms terminal. Occupies the lower region of the centre column,
 // above the visualiser and below the reactor.
@@ -36,6 +37,8 @@ export function ChatInterface({
 }: ChatInterfaceProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Serious mode is Ultron, who calls him Andrew.
+  const serious = useJarvis((state) => state.mode === "serious")
 
   useEffect(() => {
     // scrollTop rather than scrollIntoView: the latter walks up the tree
@@ -56,7 +59,7 @@ export function ChatInterface({
     >
       {visible.length === 0 && !pending && (
         <p className="t-body text-center" style={{ color: "var(--text-secondary)" }}>
-          Awaiting input, sir. Speak, or type below.
+          {serious ? "Awaiting input, Andrew. Speak, or type below." : "Awaiting input, sir. Speak, or type below."}
         </p>
       )}
 
