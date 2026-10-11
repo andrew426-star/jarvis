@@ -6,6 +6,7 @@ import { audioAmplitude } from "@/lib/audio-amplitude"
 import { accentHex, cssHex, onCore, type CoreEvent } from "@/lib/core-events"
 import { subscribeHands, type HandPointer } from "@/lib/hand-tracking"
 import type { AgentStatus } from "@/lib/store"
+import { UltronFace } from "@/lib/ultron-face"
 
 // The console's centre, as a 3D holographic cipher: a geodesic shell of
 // points around nested wireframe polyhedra, three tilted bands of
@@ -18,6 +19,10 @@ import type { AgentStatus } from "@/lib/store"
 //                 an error flashes it red and shakes it
 //   pointer     - the mouse or a tracked hand near it tilts it toward you
 //   mode        - the accent colour, read live, so a mode wipe recolours it
+//
+// In serious mode the cipher gives way to Ultron's face (lib/ultron-face.ts),
+// which follows the pointer, a hand and Andrew's typing; the switch cuts
+// between them with a few frames of glitch.
 //
 // One WebGL context, additive line and point materials, no post-processing:
 // it sits in a corner of the layout and has to stay cheap.
@@ -178,6 +183,11 @@ export class CoreCipher {
   private readonly tiltTarget = new THREE.Vector2()
   private pointerAt: { x: number; y: number } | null = null
 
+  private readonly face: UltronFace
+  private ultron = false
+  private swap = 0
+  private lastTyped = -100
+
   constructor(private readonly container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
@@ -289,6 +299,10 @@ export class CoreCipher {
       })
     }
 
+    this.face = new UltronFace(glowMap, color)
+    this.root.add(this.face.group)
+    this.ultron = document.documentElement.classList.contains("serious")
+
     this.applyReveal()
 
     // Sizing.
@@ -307,6 +321,12 @@ export class CoreCipher {
     const onLeave = () => {
       this.pointerAt = null
     }
+    // Typing anywhere in the console: Ultron's eyes go to it.
+    const onKey = () => {
+      this.lastTyped = this.clock.elapsedTime
+    }
+    window.addEventListener("keydown", onKey)
+    this.cleanups.push(() => window.removeEventListener("keydown", onKey))
     window.addEventListener("pointermove", onMove)
     document.addEventListener("pointerleave", onLeave)
     this.cleanups.push(() => {
@@ -374,10 +394,19 @@ export class CoreCipher {
   }
 
   private applyReveal() {
-    this.coreGroup.visible = this.revealed >= 0
-    this.innerGroup.visible = this.revealed >= 1
-    this.bandGroup.visible = this.revealed >= 2
+    // Mid-swap, each side flickers in and out at random, like a bad signal.
+    const flicker = this.swap > 0
+    const jarvis = flicker ? Math.random() < 0.5 : !this.ultron
+    const ultron = flicker ? !jarvis || Math.random() < 0.3 : this.ultron
+    this.coreGroup.visible = jarvis && this.revealed >= 0
+    this.innerGroup.visible = jarvis && this.revealed >= 1
+    this.bandGroup.visible = jarvis && this.revealed >= 2
     this.outerGroup.visible = this.revealed >= 3
+    for (const electron of this.electrons) {
+      electron.head.visible = jarvis
+      electron.trail.visible = jarvis
+    }
+    this.face.group.visible = ultron && this.revealed >= 0
   }
 
   private resize() {
@@ -450,6 +479,16 @@ export class CoreCipher {
       this.accentCheck = 0.2
       this.accent.setHex(accentHex())
       this.danger.setHex(cssHex("--error", 0xff3333))
+      const serious = document.documentElement.classList.contains("serious")
+      if (serious !== this.ultron) {
+        this.ultron = serious
+        this.swap = 0.5
+        this.shake = 0.8
+      }
+    }
+    if (this.swap > 0) {
+      this.swap = Math.max(0, this.swap - dt)
+      this.applyReveal()
     }
     this.flash = Math.max(0, this.flash - dt * 1.6)
     const tint = this.accent.clone().lerp(this.danger, this.flash)
@@ -561,6 +600,13 @@ export class CoreCipher {
       this.tiltTarget.set(0, 0)
     }
     this.tilt.lerp(this.tiltTarget, Math.min(1, dt * 3))
+
+    // Ultron turns his own head (toward the pointer); the scene stays square.
+    if (this.face.group.visible) {
+      const look = this.ultron && this.tiltTarget.lengthSq() > 0 ? { x: this.tiltTarget.y / 0.5, y: this.tiltTarget.x / 0.35 } : null
+      this.face.update(dt, t, { status: this.status, amp: this.amp, energy: e, look, sinceTyped: t - this.lastTyped, tint })
+      if (this.ultron) this.tilt.set(0, 0)
+    }
 
     // Error shake.
     this.shake = Math.max(0, this.shake - dt * 2.2)
