@@ -183,7 +183,10 @@ export class CoreCipher {
   private readonly tiltTarget = new THREE.Vector2()
   private pointerAt: { x: number; y: number } | null = null
 
-  private readonly face: UltronFace
+  // Built the first time serious mode is on: it is a large mesh.
+  private face: UltronFace | null = null
+  private glowMap: THREE.Texture
+  private disposed = false
   private ultron = false
   private swap = 0
   private lastTyped = -100
@@ -299,8 +302,19 @@ export class CoreCipher {
       })
     }
 
-    this.face = new UltronFace(glowMap, color)
-    this.root.add(this.face.group)
+    this.glowMap = glowMap
+    // Ultron's head takes most of a second to build; do it while the console
+    // is idle, so switching to serious mode never waits on it.
+    const idle = (window as Window & { requestIdleCallback?: (fn: () => void, o?: { timeout: number }) => number }).requestIdleCallback
+    const prebuild = () => {
+      if (!this.face && !this.disposed) {
+        this.face = new UltronFace(this.glowMap, this.accent.getHex(), this.renderer)
+        this.face.group.visible = false
+        this.root.add(this.face.group)
+      }
+    }
+    const timer = setTimeout(() => (idle ? idle(prebuild, { timeout: 4000 }) : prebuild()), 3000)
+    this.cleanups.push(() => clearTimeout(timer))
     this.ultron = document.documentElement.classList.contains("serious")
 
     this.applyReveal()
@@ -352,9 +366,11 @@ export class CoreCipher {
   }
 
   dispose() {
+    this.disposed = true
     cancelAnimationFrame(this.raf)
     this.cleanups.forEach((fn) => fn())
     this.bands.forEach((band) => band.dispose())
+    this.face?.dispose()
     this.scene.traverse((object) => {
       const mesh = object as THREE.Mesh
       mesh.geometry?.dispose()
@@ -406,7 +422,11 @@ export class CoreCipher {
       electron.head.visible = jarvis
       electron.trail.visible = jarvis
     }
-    this.face.group.visible = ultron && this.revealed >= 0
+    if (ultron && !this.face) {
+      this.face = new UltronFace(this.glowMap, this.accent.getHex(), this.renderer)
+      this.root.add(this.face.group)
+    }
+    if (this.face) this.face.group.visible = ultron && this.revealed >= 0
   }
 
   private resize() {
@@ -602,7 +622,7 @@ export class CoreCipher {
     this.tilt.lerp(this.tiltTarget, Math.min(1, dt * 3))
 
     // Ultron turns his own head (toward the pointer); the scene stays square.
-    if (this.face.group.visible) {
+    if (this.face?.group.visible) {
       const look = this.ultron && this.tiltTarget.lengthSq() > 0 ? { x: this.tiltTarget.y / 0.5, y: this.tiltTarget.x / 0.35 } : null
       this.face.update(dt, t, { status: this.status, amp: this.amp, energy: e, look, sinceTyped: t - this.lastTyped, tint })
       if (this.ultron) this.tilt.set(0, 0)
