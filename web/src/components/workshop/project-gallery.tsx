@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { AnimatePresence, animate, motion } from "framer-motion"
-import { ChevronLeftIcon, ChevronRightIcon, FolderOpenIcon, LayersIcon, Loader2Icon, PlusIcon, UploadIcon, XIcon } from "lucide-react"
+import { ChevronLeftIcon, ChevronRightIcon, FolderOpenIcon, LayersIcon, Loader2Icon, PlusIcon, Trash2Icon, UploadIcon, XIcon } from "lucide-react"
 
 import { deleteProject, getGallery, openProject, saveProject } from "@/lib/jarvis-client"
 import { sfx } from "@/lib/sfx"
@@ -42,6 +42,8 @@ export function ProjectGallery() {
   // Which way the ring last turned (1 on, -1 back), for the card's slide.
   const [direction, setDirection] = useState(0)
   const importInput = useRef<HTMLInputElement>(null)
+  // Delete asks twice: the first press arms it (for 4 s), the second deletes.
+  const [deleteArmed, setDeleteArmed] = useState<string | null>(null)
 
   useEffect(() => {
     if (!token) return
@@ -168,6 +170,31 @@ export function ProjectGallery() {
       setBusy(false)
       if (importInput.current) importInput.current.value = ""
     }
+  }
+
+  async function remove(id: string) {
+    if (!token || busy) return
+    if (deleteArmed !== id) {
+      setDeleteArmed(id)
+      setTimeout(() => setDeleteArmed((armed) => (armed === id ? null : armed)), 4000)
+      return
+    }
+    setDeleteArmed(null)
+    setBusy(true)
+    const r = await deleteProject(id, token).catch((err) => ({ ok: false as const, error: String(err) }))
+    if (r.ok) {
+      // The folder open on the stage goes with it.
+      if (useProject.getState().project?.id === id) useProject.getState().close()
+      const g = await getGallery(token).catch(() => null)
+      if (g?.ok) {
+        setProjects(g.projects ?? [])
+        setSelected((i) => Math.max(0, Math.min(i, (g.projects?.length ?? 1) - 1)))
+      }
+      sfx.click()
+    } else {
+      setError(r.error ?? "Could not delete it.")
+    }
+    setBusy(false)
   }
 
   // Arrows turn the ring, Enter opens, Escape leaves.
@@ -341,9 +368,22 @@ export function ProjectGallery() {
               <span className="t-time">
                 {current.board && current.board !== "uno" ? "ESP32 SKETCH" : current.compiled ? "SKETCH COMPILED" : "NO COMPILED SKETCH"} · UPDATED {new Date(current.updated_at).toLocaleDateString()}
               </span>
-              <button type="button" className="btn flex items-center" style={{ gap: 6, padding: "5px 14px" }} disabled={busy} onClick={() => void openFolder(current.id)}>
-                {busy ? <Loader2Icon size={12} className="animate-spin" /> : <FolderOpenIcon size={12} />} OPEN FOLDER
-              </button>
+              <span className="flex items-center" style={{ gap: 6 }}>
+                <button
+                  type="button"
+                  className="btn flex items-center"
+                  style={{ gap: 6, padding: "5px 10px", color: deleteArmed === current.id ? "var(--error)" : undefined }}
+                  disabled={busy}
+                  onClick={() => void remove(current.id)}
+                  title={deleteArmed === current.id ? "Press again to delete it for good" : "Delete this project"}
+                  aria-label={`Delete ${current.name}`}
+                >
+                  <Trash2Icon size={12} /> {deleteArmed === current.id ? "CONFIRM DELETE" : "DELETE"}
+                </button>
+                <button type="button" className="btn flex items-center" style={{ gap: 6, padding: "5px 14px" }} disabled={busy} onClick={() => void openFolder(current.id)}>
+                  {busy ? <Loader2Icon size={12} className="animate-spin" /> : <FolderOpenIcon size={12} />} OPEN FOLDER
+                </button>
+              </span>
             </div>
           </div>
         </motion.section>

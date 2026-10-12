@@ -475,34 +475,54 @@ interface Holo {
   time: { value: number }
 }
 
-/** The platform's aesthetic on a metal material: a red rim where the
- *  surface turns away (fresnel), fine scanlines in screen space like the
- *  HUD's, and a slow bright band sweeping down the head. Emission only, so
- *  the metal still takes the light underneath. */
-function holoMetal(material: THREE.MeshStandardMaterial, holo: Holo): THREE.MeshStandardMaterial {
+/** Four flat bands of light, as cel animation shades: what makes the metal
+ *  read as the What If...? series' painted, inked look rather than chrome. */
+function toonBands(): THREE.DataTexture {
+  const bands = new THREE.DataTexture(new Uint8Array([22, 78, 168, 255]), 4, 1, THREE.RedFormat)
+  bands.minFilter = THREE.NearestFilter
+  bands.magFilter = THREE.NearestFilter
+  bands.needsUpdate = true
+  return bands
+}
+
+/** Ultron's metal in the What If...? series' style: cel-shaded silver in
+ *  flat bands, and a crisp rim of the console's red where the surface turns
+ *  away - a hard-edged band, as the show paints it, brighter with his heat. */
+function toonMetal(material: THREE.MeshToonMaterial, holo: Holo): THREE.MeshToonMaterial {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.holoTint = holo.tint
     shader.uniforms.holoHeat = holo.heat
-    shader.uniforms.holoTime = holo.time
     shader.fragmentShader = shader.fragmentShader
-      .replace(
-        "void main() {",
-        "uniform vec3 holoTint;\nuniform float holoHeat;\nuniform float holoTime;\nvoid main() {",
-      )
+      .replace("void main() {", "uniform vec3 holoTint;\nuniform float holoHeat;\nvoid main() {")
       .replace(
         "#include <emissivemap_fragment>",
         `#include <emissivemap_fragment>
         {
-          vec3 viewDir = normalize(vViewPosition);
-          float rim = pow(1.0 - abs(dot(normal, viewDir)), 3.4);
-          float scan = 0.5 + 0.5 * sin(gl_FragCoord.y * 1.9);
-          float band = exp(-pow(mod(vViewPosition.y * 0.55 + holoTime * 0.9, 6.0) - 3.0, 2.0) * 6.0);
-          totalEmissiveRadiance += holoTint * (rim * (0.5 + 0.5 * holoHeat) * (0.75 + 0.25 * scan) + band * 0.12 + scan * 0.025);
+          float facing = 1.0 - abs(dot(normal, normalize(vViewPosition)));
+          float rim = smoothstep(0.74, 0.78, facing);
+          totalEmissiveRadiance += holoTint * rim * (0.45 + 0.45 * holoHeat);
         }`,
       )
   }
-  material.customProgramCacheKey = () => "ultron-holo-metal"
+  material.customProgramCacheKey = () => "ultron-toon-metal"
   return material
+}
+
+/** The ink line round a model: its surface pushed out along the normals and
+ *  drawn from the back in near-black - an inverted hull, the outline cel
+ *  art draws round every shape. */
+function inkOutline(geometry: THREE.BufferGeometry, width: number): THREE.Mesh {
+  const position = geometry.getAttribute("position")
+  const normal = geometry.getAttribute("normal")
+  const pushed = new Float32Array(position.count * 3)
+  for (let i = 0; i < position.count; i += 1) {
+    pushed[i * 3] = position.getX(i) + normal.getX(i) * width
+    pushed[i * 3 + 1] = position.getY(i) + normal.getY(i) * width
+    pushed[i * 3 + 2] = position.getZ(i) + normal.getZ(i) * width
+  }
+  const hull = new THREE.BufferGeometry()
+  hull.setAttribute("position", new THREE.BufferAttribute(pushed, 3))
+  return new THREE.Mesh(hull, new THREE.MeshBasicMaterial({ color: 0x0b0607, side: THREE.BackSide }))
 }
 
 // --- the head ----------------------------------------------------------------
@@ -541,7 +561,9 @@ export class UltronFace {
   private readonly stopModel: () => void
   private disposed = false
   private readonly jaw = new THREE.Group()
-  private readonly metal: THREE.MeshStandardMaterial
+  private readonly metal: THREE.MeshToonMaterial
+  private readonly gemMaterial: THREE.MeshToonMaterial
+  private readonly glowMap: THREE.Texture
   private readonly coreMaterial: THREE.MeshBasicMaterial
   private readonly rim: THREE.DirectionalLight
   private readonly environment: THREE.Texture
@@ -570,22 +592,22 @@ export class UltronFace {
     const pmrem = new THREE.PMREMGenerator(renderer)
     this.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
     pmrem.dispose()
-    // Dark, red-tinged gunmetal with soft reflections: the console's red does
-    // the rest (holoMetal), so it reads as part of the HUD, not chrome on it.
-    this.metal = holoMetal(
-      new THREE.MeshStandardMaterial({ color: 0x302326, metalness: 0.85, roughness: 0.42, envMap: this.environment, envMapIntensity: 0.4 }),
-      this.holo,
-    )
+    // Cel-shaded silver in the What If...? style (toonMetal), and the Mind
+    // Stone's gold, glowing.
+    const bands = toonBands()
+    this.metal = toonMetal(new THREE.MeshToonMaterial({ color: 0xb7bdc8, gradientMap: bands }), this.holo)
+    this.gemMaterial = new THREE.MeshToonMaterial({ color: 0xffd34a, emissive: 0xffa31a, emissiveIntensity: 0.9, gradientMap: bands })
+    this.glowMap = glow
     this.coreMaterial = new THREE.MeshBasicMaterial({ color, vertexColors: true })
 
     // Lights travel with the group, not the head, so turning shows the form.
-    const key = new THREE.DirectionalLight(0xfff4ec, 2.6)
-    key.position.set(-3, 4, 5)
-    this.rim = new THREE.DirectionalLight(color, 3.2)
+    const key = new THREE.DirectionalLight(0xfff6f0, 2.4)
+    key.position.set(-5, 4, 2.2)
+    this.rim = new THREE.DirectionalLight(color, 0.7)
     this.rim.position.set(4, 1.5, -3)
-    const under = new THREE.DirectionalLight(color, 0.6)
+    const under = new THREE.DirectionalLight(color, 0.15)
     under.position.set(0, -4, 2)
-    this.group.add(key, this.rim, under, new THREE.AmbientLight(0xffffff, 0.12))
+    this.group.add(key, this.rim, under, new THREE.AmbientLight(0x8fa3cc, 0.22))
 
     const built = buildHead()
     this.sculpt.add(new THREE.Mesh(built.plates, this.metal), new THREE.Mesh(built.core, this.coreMaterial))
@@ -689,15 +711,14 @@ export class UltronFace {
     if (this.model) {
       this.head.remove(this.model)
       this.model.geometry.dispose()
-      const material = this.model.material as THREE.MeshStandardMaterial
-      material.emissiveMap?.dispose()
-      material.dispose()
+      // Its own children (outline, glow, screen) go; the shared metal and
+      // gem materials stay.
       for (const child of this.model.children) {
-        const screen = child as THREE.Mesh
-        screen.geometry.dispose()
-        const sheet = screen.material as THREE.MeshBasicMaterial
-        sheet.map?.dispose()
-        sheet.dispose()
+        const part = child as THREE.Mesh
+        part.geometry?.dispose()
+        const material = part.material as THREE.MeshBasicMaterial
+        material.map?.dispose()
+        material.dispose()
       }
       this.model = null
     }
@@ -735,32 +756,60 @@ export class UltronFace {
     geometry.translate(0, 0.05, 0)
     geometry.computeBoundingBox()
     const front = this.readFront(geometry)
-    // Each vertex's place as seen from the front, so the glow mask (made
-    // from that view) lands where it was found.
-    const fitted = geometry.boundingBox!
+    // The gem's own faces: those on the front surface inside its socket.
+    // Ordered metal first, gem after, as two groups of one mesh.
     const position = geometry.getAttribute("position")
-    const uv = new Float32Array(position.count * 2)
-    for (let i = 0; i < position.count; i += 1) {
-      uv[i * 2] = (position.getX(i) - fitted.min.x) / (fitted.max.x - fitted.min.x)
-      uv[i * 2 + 1] = (position.getY(i) - fitted.min.y) / (fitted.max.y - fitted.min.y)
+    const metalTris: number[] = []
+    const gemTris: number[] = []
+    const centroid = new THREE.Vector3()
+    const gemCentre = new THREE.Vector3()
+    const a = new THREE.Vector3()
+    const b = new THREE.Vector3()
+    const c = new THREE.Vector3()
+    for (let t = 0; t < position.count / 3; t += 1) {
+      a.fromBufferAttribute(position, t * 3)
+      b.fromBufferAttribute(position, t * 3 + 1)
+      c.fromBufferAttribute(position, t * 3 + 2)
+      centroid.copy(a).add(b).add(c).multiplyScalar(1 / 3)
+      if (front.isGem(centroid)) {
+        gemTris.push(t * 3, t * 3 + 1, t * 3 + 2)
+        gemCentre.add(centroid)
+      } else {
+        metalTris.push(t * 3, t * 3 + 1, t * 3 + 2)
+      }
     }
-    geometry.setAttribute("uv", new THREE.BufferAttribute(uv, 2))
-    const material = holoMetal(this.metal.clone(), this.holo)
-    material.emissive.set(0xffffff)
-    material.emissiveMap = front.mask
-    material.emissiveIntensity = 1
-    this.model = new THREE.Mesh(geometry, material)
+    geometry.setIndex([...metalTris, ...gemTris])
+    geometry.clearGroups()
+    geometry.addGroup(0, metalTris.length, 0)
+    geometry.addGroup(metalTris.length, gemTris.length, 1)
+    this.model = new THREE.Mesh(geometry, [this.metal, this.gemMaterial])
+    // The ink line round it: the same surface pushed out a little along its
+    // normals, drawn from the back in near-black (an inverted hull).
+    this.model.add(inkOutline(geometry, 0.032))
+    if (gemTris.length) {
+      gemCentre.multiplyScalar(3 / gemTris.length)
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glowMap, color: 0xffc23a, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
+      glow.position.copy(gemCentre).add(new THREE.Vector3(0, 0, 0.12))
+      glow.scale.setScalar(0.55)
+      glow.userData.gemGlow = true
+      this.model.add(glow)
+    }
     if (front.screen) this.model.add(front.screen)
     this.head.add(this.model)
     return front.eyes
   }
 
   /** The model seen from the front: its depth, the eye slots (holes in the
-   *  band where eyes sit, through to the inside) and the gem above them.
-   *  Returns the gem as a glow mask on the surface, a red honeycomb screen
-   *  set just behind the slots (as the real helmet's mesh inserts are), and
-   *  where each side's slots are, for the blooms. */
-  private readFront(geometry: THREE.BufferGeometry): { mask: THREE.CanvasTexture; screen: THREE.Mesh | null; eyes: THREE.Vector3[] } {
+   *  band where eyes sit, through to the inside) and the gem's socket above
+   *  them. Returns a red honeycomb screen set just behind the slots (as the
+   *  real helmet's mesh inserts are), where each side's slots are, and a
+   *  test for which of its faces are the gem. */
+  private readFront(geometry: THREE.BufferGeometry): {
+    screen: THREE.Mesh | null
+    eyes: THREE.Vector3[]
+    /** Whether a point of the model is the gem: on its front surface, in the socket. */
+    isGem: (p: THREE.Vector3) => boolean
+  } {
     const box = geometry.boundingBox!
     const N = 512
     const depthRange = box.max.z - box.min.z + 0.2
@@ -768,7 +817,10 @@ export class UltronFace {
     camera.position.set(0, 0, box.max.z + 0.1)
     const material = new THREE.ShaderMaterial({
       vertexShader: "void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
-      fragmentShader: "void main() { gl_FragColor = vec4(vec3(gl_FragCoord.z), 1.0); }",
+      // 16 bits of depth (high byte red, low green): a gem socket a couple
+      // of millimetres deep is a handful of 8-bit steps, too few to find.
+      fragmentShader:
+        "void main() { float d = gl_FragCoord.z * 255.0; gl_FragColor = vec4(floor(d) / 255.0, fract(d), 0.0, 1.0); }",
       side: THREE.DoubleSide,
     })
     const scene = new THREE.Scene()
@@ -784,13 +836,14 @@ export class UltronFace {
     renderer.clear()
     renderer.render(scene, camera)
     renderer.readRenderTargetPixels(target, 0, 0, N, N, pixels)
+    // Cleared to white: background reads as depth 1 (both bytes full).
     renderer.setRenderTarget(previous)
     renderer.setClearColor(clear, alpha)
     target.dispose()
     material.dispose()
 
     // Rows here run bottom-up, as the GPU reads them.
-    const depth = (px: number, py: number) => pixels[(py * N + px) * 4] / 255
+    const depth = (px: number, py: number) => pixels[(py * N + px) * 4] / 255 + pixels[(py * N + px) * 4 + 1] / 65025
     const solid = (px: number, py: number) => depth(px, py) < 0.995
     let top = -1
     let bottom = N
@@ -911,11 +964,6 @@ export class UltronFace {
     }
     hctx.putImageData(image, 0, 0)
 
-    // The gem's mask, on the surface: drawn top-down too.
-    const canvas = document.createElement("canvas")
-    canvas.width = canvas.height = N
-    const ctx = canvas.getContext("2d")!
-
     // The slot cluster's rows: only rows with a real run of slot pixels, so
     // stray specks at the corners do not stretch it.
     let clusterTop = -1
@@ -928,41 +976,68 @@ export class UltronFace {
       clusterBottom = Math.min(clusterBottom, py)
     }
     const found = sides.every((side) => side.n > 20) && clusterTop > clusterBottom
+
+    // The gem: the model's own socket for it - the recess on the centre line
+    // just above the slots. Every pixel's recess is its depth behind the
+    // nearest surface within a few pixels; the deepest one near the centre
+    // line seeds a fill over the socket, out to where the recess fades.
+    const gem = new Uint8Array(N * N)
     if (found) {
-      // The gem: a shield of light on the centre line, its point at the top
-      // of the upper slots - on the reference, 0.19 of the helmet's height
-      // and 0.7 as wide as it is tall.
-      const h = Math.max(8, 0.19 * height)
-      const w = h * 0.7
-      const cy = N - 1 - (clusterTop + h / 2 - h * 0.05)
-      ctx.save()
-      ctx.translate(mid, cy)
-      const gem = ctx.createLinearGradient(0, -h / 2, 0, h / 2)
-      gem.addColorStop(0, "#fff3a0")
-      gem.addColorStop(0.45, "#ffc21a")
-      gem.addColorStop(1, "#ff8a00")
-      ctx.fillStyle = gem
-      ctx.beginPath()
-      ctx.moveTo(-w / 2, -h / 2)
-      ctx.lineTo(w / 2, -h / 2)
-      ctx.lineTo(w / 2, h * 0.12)
-      ctx.lineTo(0, h / 2)
-      ctx.lineTo(-w / 2, h * 0.12)
-      ctx.closePath()
-      ctx.fill()
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.7)"
-      ctx.lineWidth = 1.5
-      ctx.beginPath()
-      ctx.moveTo(0, -h / 2)
-      ctx.lineTo(0, h / 2)
-      ctx.moveTo(-w / 2, -h / 2)
-      ctx.lineTo(0, -h * 0.05)
-      ctx.lineTo(w / 2, -h / 2)
-      ctx.stroke()
-      ctx.restore()
+      const g0 = clusterTop - Math.round(0.04 * height)
+      const g1 = Math.min(N - 1, clusterTop + Math.round(0.2 * height))
+      const halfW = Math.round(0.08 * N)
+      const RG = 6
+      const recess = new Float32Array(N * N)
+      for (let py = g0; py <= g1; py += 1) {
+        for (let px = mid - halfW; px <= mid + halfW; px += 1) {
+          let m = 2
+          for (let dy = -RG; dy <= RG; dy += 1) for (let dx = -RG; dx <= RG; dx += 1) m = Math.min(m, at(px + dx, py + dy))
+          recess[py * N + px] = at(px, py) - m
+        }
+      }
+      let seed = -1
+      let best = 0
+      for (let py = g0; py <= g1; py += 1) {
+        for (let px = mid - Math.round(0.015 * N); px <= mid + Math.round(0.015 * N); px += 1) {
+          if (recess[py * N + px] > best && solid(px, py)) {
+            best = recess[py * N + px]
+            seed = py * N + px
+          }
+        }
+      }
+      if (seed >= 0) {
+        const floor = best * 0.3
+        const fill = [seed]
+        gem[seed] = 1
+        while (fill.length) {
+          const i = fill.pop()!
+          const px = i % N
+          const py = Math.floor(i / N)
+          for (const [qx, qy] of [[px - 1, py], [px + 1, py], [px, py - 1], [px, py + 1]]) {
+            if (qx < mid - halfW || qx > mid + halfW || qy < g0 || qy > g1) continue
+            const j = qy * N + qx
+            if (gem[j] || !solid(qx, qy) || recess[j] < floor) continue
+            gem[j] = 1
+            fill.push(j)
+          }
+        }
+        // Close it into the whole socket floor: fill the holes the facets
+        // leave (pixels whose recess dips between ridges).
+        for (let pass = 0; pass < 2; pass += 1) {
+          const grown = gem.slice()
+          for (let py = g0; py <= g1; py += 1) {
+            for (let px = mid - halfW; px <= mid + halfW; px += 1) {
+              const i = py * N + px
+              if (gem[i] || !solid(px, py)) continue
+              let n = 0
+              for (const j of [i - 1, i + 1, i - N, i + N]) n += gem[j]
+              if (n >= 3) grown[i] = 1
+            }
+          }
+          gem.set(grown)
+        }
+      }
     }
-    const mask = new THREE.CanvasTexture(canvas)
-    mask.colorSpace = THREE.SRGBColorSpace
 
     // The screen: a sheet following the slots' rims, a little behind them,
     // covering the slots (and a margin), seen only through them.
@@ -1027,7 +1102,15 @@ export class UltronFace {
     const eyes = found
       ? sides.map((side) => world(side.x / side.n, side.y / side.n, face))
       : [new THREE.Vector3(0.18 * (box.max.x - box.min.x), box.max.y - 0.4 * (box.max.y - box.min.y), box.max.z), new THREE.Vector3(-0.18 * (box.max.x - box.min.x), box.max.y - 0.4 * (box.max.y - box.min.y), box.max.z)]
-    return { mask, screen, eyes }
+    const isGem = (p: THREE.Vector3) => {
+      const px = Math.floor(((p.x - box.min.x) / (box.max.x - box.min.x)) * N)
+      const py = Math.floor(((p.y - box.min.y) / (box.max.y - box.min.y)) * N)
+      if (px < 0 || py < 0 || px >= N || py >= N || !gem[py * N + px]) return false
+      // On the front surface there, not the inside of the helmet behind it.
+      const d = (box.max.z + 0.1 - p.z) / depthRange
+      return Math.abs(d - depth(px, py)) < 0.01
+    }
+    return { screen, eyes, isGem }
   }
 
   update(dt: number, t: number, input: FaceInput) {
@@ -1059,12 +1142,14 @@ export class UltronFace {
     this.holo.time.value += dt
     if (this.model) {
       const flicker = this.glitch > 0 && Math.random() < 0.4 ? 0.3 : 1
-      ;(this.model.material as THREE.MeshStandardMaterial).emissiveIntensity = (0.6 + hot * 0.4) * flicker
-      const screen = this.model.children[0] as THREE.Mesh | undefined
-      if (screen) (screen.material as THREE.MeshBasicMaterial).color.setScalar(Math.min(1.4, 0.55 + hot * 0.45) * flicker)
+      this.gemMaterial.emissiveIntensity = (0.7 + hot * 0.35) * flicker
+      for (const child of this.model.children) {
+        if (child.userData.gemGlow) ((child as THREE.Sprite).material as THREE.SpriteMaterial).opacity = Math.min(1, 0.5 + hot * 0.3) * flicker
+        else if (child instanceof THREE.Mesh && (child.material as THREE.MeshBasicMaterial).map) (child.material as THREE.MeshBasicMaterial).color.setScalar(Math.min(1.4, 0.55 + hot * 0.45) * flicker)
+      }
     }
     this.rim.color.copy(tint)
-    this.rim.intensity = 2.6 + hot * 1.2
+    this.rim.intensity = 0.5 + hot * 0.4
     this.scanMaterial.color.copy(tint)
 
     // Irises: narrow while Andrew types or talks; blink now and then.
