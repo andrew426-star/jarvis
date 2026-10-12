@@ -465,6 +465,46 @@ function sweptBlade(curve: THREE.CatmullRomCurve3, width: number, thick: number,
   return geometry
 }
 
+// --- the console's look on the metal -------------------------------------------
+
+/** Shared by every metal surface of the head (the built one and Andrew's
+ *  model): the live accent, his heat, and a clock for the sweep. */
+interface Holo {
+  tint: { value: THREE.Color }
+  heat: { value: number }
+  time: { value: number }
+}
+
+/** The platform's aesthetic on a metal material: a red rim where the
+ *  surface turns away (fresnel), fine scanlines in screen space like the
+ *  HUD's, and a slow bright band sweeping down the head. Emission only, so
+ *  the metal still takes the light underneath. */
+function holoMetal(material: THREE.MeshStandardMaterial, holo: Holo): THREE.MeshStandardMaterial {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.holoTint = holo.tint
+    shader.uniforms.holoHeat = holo.heat
+    shader.uniforms.holoTime = holo.time
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "void main() {",
+        "uniform vec3 holoTint;\nuniform float holoHeat;\nuniform float holoTime;\nvoid main() {",
+      )
+      .replace(
+        "#include <emissivemap_fragment>",
+        `#include <emissivemap_fragment>
+        {
+          vec3 viewDir = normalize(vViewPosition);
+          float rim = pow(1.0 - abs(dot(normal, viewDir)), 3.4);
+          float scan = 0.5 + 0.5 * sin(gl_FragCoord.y * 1.9);
+          float band = exp(-pow(mod(vViewPosition.y * 0.55 + holoTime * 0.9, 6.0) - 3.0, 2.0) * 6.0);
+          totalEmissiveRadiance += holoTint * (rim * (0.5 + 0.5 * holoHeat) * (0.75 + 0.25 * scan) + band * 0.12 + scan * 0.025);
+        }`,
+      )
+  }
+  material.customProgramCacheKey = () => "ultron-holo-metal"
+  return material
+}
+
 // --- the head ----------------------------------------------------------------
 
 const SHARDS = 7
@@ -522,6 +562,7 @@ export class UltronFace {
   private blinkTimer = 4
   private open = 0
   private narrow = 0
+  private readonly holo: Holo = { tint: { value: new THREE.Color(0xff1430) }, heat: { value: 0.5 }, time: { value: 0 } }
 
   constructor(glow: THREE.Texture, color: number, renderer: THREE.WebGLRenderer) {
     this.renderer = renderer
@@ -529,7 +570,12 @@ export class UltronFace {
     const pmrem = new THREE.PMREMGenerator(renderer)
     this.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
     pmrem.dispose()
-    this.metal = new THREE.MeshStandardMaterial({ color: 0x474b52, metalness: 0.92, roughness: 0.3, envMap: this.environment, envMapIntensity: 0.7 })
+    // Dark, red-tinged gunmetal with soft reflections: the console's red does
+    // the rest (holoMetal), so it reads as part of the HUD, not chrome on it.
+    this.metal = holoMetal(
+      new THREE.MeshStandardMaterial({ color: 0x302326, metalness: 0.85, roughness: 0.42, envMap: this.environment, envMapIntensity: 0.4 }),
+      this.holo,
+    )
     this.coreMaterial = new THREE.MeshBasicMaterial({ color, vertexColors: true })
 
     // Lights travel with the group, not the head, so turning shows the form.
@@ -699,7 +745,7 @@ export class UltronFace {
       uv[i * 2 + 1] = (position.getY(i) - fitted.min.y) / (fitted.max.y - fitted.min.y)
     }
     geometry.setAttribute("uv", new THREE.BufferAttribute(uv, 2))
-    const material = this.metal.clone()
+    const material = holoMetal(this.metal.clone(), this.holo)
     material.emissive.set(0xffffff)
     material.emissiveMap = front.mask
     material.emissiveIntensity = 1
@@ -1008,6 +1054,9 @@ export class UltronFace {
     // with energy and voice, pulsing while he thinks.
     const hot = 0.55 + energy * 0.5 + amp * 0.9 + (thinking ? 0.25 + 0.25 * Math.sin(t * 18) : 0)
     this.coreMaterial.color.copy(tint).multiplyScalar(Math.min(1.6, 0.5 + hot * 0.6))
+    this.holo.tint.value.copy(tint)
+    this.holo.heat.value = Math.min(1.5, hot * 0.7)
+    this.holo.time.value += dt
     if (this.model) {
       const flicker = this.glitch > 0 && Math.random() < 0.4 ? 0.3 : 1
       ;(this.model.material as THREE.MeshStandardMaterial).emissiveIntensity = (0.6 + hot * 0.4) * flicker
