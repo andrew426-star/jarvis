@@ -101,10 +101,13 @@ export async function addMesh(file: File, name: string, token: string, onProgres
   if (!result.ok || !result.mesh) throw new Error(result.error ?? "Could not upload it.")
   session.delete(name)
   await keep(name, simple.data)
+  // Ultron's head listens for this: a new "ultron-head" shows at once.
+  window.dispatchEvent(new Event("ultron-model"))
   return result.mesh
 }
 
 export async function forgetMesh(name: string) {
   session.delete(name)
   await keep(name, null)
+  window.dispatchEvent(new Event("ultron-model"))
 }
