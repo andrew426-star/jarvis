@@ -7,6 +7,10 @@ import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js"
 
 import type { AgentStatus } from "@/lib/store"
 import { loadUltronModel, onUltronModelChange, type UltronModel } from "@/lib/ultron-model"
+import { loadMesh } from "@/lib/workshop/meshes"
+
+/** The workshop mesh that, uploaded, is his head everywhere. */
+const ULTRON_MESH = "ultron-head"
 
 // Ultron's head, for the console's centre in serious mode (lib/core-cipher.ts
 // swaps it in for Jarvis's cipher). Built and checked against two Age of
@@ -619,8 +623,19 @@ export class UltronFace {
 
   // --- Andrew's own model ---------------------------------------------------
 
+  /** Andrew's model: one loaded in this browser (Settings > Appearance), or
+   *  else the workshop mesh "ultron-head" (Workshop > Meshes), which follows
+   *  him to every device he signs in on. Neither: the built head. */
   private async loadModel() {
-    const saved = await loadUltronModel()
+    let saved = await loadUltronModel()
+    if (!saved) {
+      try {
+        const bytes = await loadMesh(ULTRON_MESH)
+        saved = { name: ULTRON_MESH, data: bytes.slice().buffer, up: "z", turn: 0 }
+      } catch {
+        saved = null
+      }
+    }
     if (!this.disposed) this.showModel(saved)
   }
 

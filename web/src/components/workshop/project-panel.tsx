@@ -21,6 +21,7 @@ import {
 } from "lucide-react"
 
 import { HoloViewer } from "@/components/workshop/holo-viewer"
+import { MeshesSection } from "@/components/workshop/meshes-section"
 import { STATUS_LABEL } from "@/components/workshop/project-gallery"
 import { RigTab } from "@/components/workshop/rig-tab"
 import { Schematic } from "@/components/workshop/schematic"
@@ -465,6 +466,8 @@ function PartsTab() {
           </section>
         )
       })}
+
+      <MeshesSection />
 
       <div className="flex items-center justify-between">
         <Heading>SHOPPING LIST</Heading>

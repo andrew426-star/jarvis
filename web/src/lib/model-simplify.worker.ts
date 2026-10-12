@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-// Andrew's Ultron head model, made ready for the console off the main
+// A model Andrew loads (Ultron's head, a workshop mesh), made ready off the main
 // thread (lib/ultron-model.ts): an STL or a 3MF (a Bambu Studio project
 // holds its mesh as hundreds of megabytes of XML) in, a binary STL out,
 // simplified to a few hundred thousand triangles so the console stays

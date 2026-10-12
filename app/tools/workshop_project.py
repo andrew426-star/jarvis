@@ -1204,7 +1204,11 @@ PROJECT_SCHEMA = {
                         "type": "object",
                         "properties": {
                             "name": {"type": "string"},
-                            "code": {"type": "string", "description": "OpenSCAD, as for the workshop's scad action."},
+                            "code": {"type": "string", "description": (
+                                "OpenSCAD, as for the workshop's scad action. A shell Andrew has as a mesh (the MESHES "
+                                "line lists them, with their size in mm) comes in with import(\"mesh/<name>.stl\") - "
+                                "scale, rotate and translate it into the design frame, and difference() the holes and "
+                                "union() the mounts the electronics need, so the real shell is still what prints.")},
                             "notes": {"type": "array", "items": {"type": "string"}},
                             "group": {"type": "string", "description": "Sub-assembly it belongs to."},
                             "material": {"type": "string", "enum": list(FILAMENTS), "description": "What it is printed in, for how it renders: pla, silk (shiny, metallic sheen), petg (glossy), matte, resin (smooth), carbon (carbon-fibre fill), metal (plated or painted metal finish), clear, marble (veined; color2 the veins), wood (wood-fill, rings and grain), glitter (sparkling flakes; color2 the flakes), dual_silk (two-colour silk, color and color2 on its two faces), glow (glow-in-the-dark; color2 the glow), thermo (thermochromic: turns color2 at about 31 C), uv (UV-reactive: fluoresces color2 under a blacklight)."},

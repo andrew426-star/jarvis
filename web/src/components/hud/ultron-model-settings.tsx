@@ -65,7 +65,7 @@ export function UltronModelSettings() {
             ? error
             : model
               ? `${model.name}${model.triangles ? ` · ${model.triangles.toLocaleString()} triangles` : ""}`
-              : "The built-in head. Load an STL or 3MF of your own to show it instead."}
+              : "The built-in head - or your mesh ultron-head from Workshop > Meshes, if you uploaded one. Load an STL or 3MF here to show a model in this browser instead."}
       </p>
       {model && !busy && (
         <div className="flex min-w-0 items-center justify-between" style={{ gap: "var(--sp-2)" }}>

@@ -4,6 +4,7 @@ import * as THREE from "three"
 import { STLLoader } from "three/addons/loaders/STLLoader.js"
 
 import type { BuiltItem } from "@/lib/workshop/models"
+import { loadMesh, meshesIn } from "@/lib/workshop/meshes"
 import type { ScadRequest, ScadResponse } from "@/lib/workshop/scad.worker"
 
 // Printable parts as OpenSCAD. Jarvis (or the templates menu) writes an
@@ -31,12 +32,21 @@ function getWorker(): Worker {
 
 export class ScadError extends Error {}
 
-/** Compile OpenSCAD source to binary STL bytes (millimetres, Z-up). */
-export function compileScad(code: string): Promise<Uint8Array> {
+/** Compile OpenSCAD source to binary STL bytes (millimetres, Z-up). Any
+ *  mesh it imports (import("mesh/<name>.stl"), workshop/meshes.ts) is
+ *  fetched first and handed to OpenSCAD as a file. */
+export async function compileScad(code: string): Promise<Uint8Array> {
+  const names = meshesIn(code)
+  const files: Record<string, Uint8Array> = {}
+  try {
+    for (const [i, bytes] of (await Promise.all(names.map(loadMesh))).entries()) files[`/mesh/${names[i]}.stl`] = bytes
+  } catch (err) {
+    throw new ScadError(err instanceof Error ? err.message : String(err))
+  }
   const id = nextId++
   return new Promise((resolve, reject) => {
     waiting.set(id, (response) => (response.ok ? resolve(response.stl) : reject(new ScadError(response.error))))
-    getWorker().postMessage({ id, code } satisfies ScadRequest)
+    getWorker().postMessage({ id, code, files } satisfies ScadRequest)
   })
 }
 

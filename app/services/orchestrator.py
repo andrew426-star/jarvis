@@ -23,6 +23,7 @@ from app.memory.session_buffer import append_turn, count_turns, get_recent_turns
 from app.services.browser_link import context_line as browser_context_line
 from app.services.situation import situation_note
 from app.services.ultron import ULTRON_PERSONA, is_ultron
+from app.services.workshop_meshes import meshes_line
 from app.tools.camera import CAMERA_LOOK_SCHEMA, CAMERA_ON_NOTE, CHECK_WORK, CHECK_WORK_LOOK, make_camera_look
 from app.tools.engineering import ENGINEERING_SCHEMA, make_engineering
 from app.tools.console_control import (
@@ -631,6 +632,11 @@ def stream_invoke(
         building = project_state_line(console_state)
         if building:
             system.append(building)
+        # The meshes printed parts can import, while the workshop is open.
+        if (console_state or {}).get("workshop_open"):
+            meshes = meshes_line()
+            if meshes:
+                system.append(meshes)
     # Ultron's own bench (app/tools/engineering.py): serious mode only.
     if is_ultron(console_state):
         declarations = [*declarations, _ENGINEERING_DECLARATION]

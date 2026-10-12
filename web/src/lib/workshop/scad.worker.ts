@@ -15,6 +15,8 @@ import { JARVIS_SCAD } from "@/lib/workshop/jarvis-scad"
 export interface ScadRequest {
   id: number
   code: string
+  /** Files the program imports (meshes), by absolute path. */
+  files?: Record<string, Uint8Array>
 }
 
 export type ScadResponse =
@@ -29,6 +31,17 @@ self.onmessage = async (event: MessageEvent<ScadRequest>) => {
     const instance = scad.getInstance()
     instance.FS.writeFile("/jarvis.scad", JARVIS_SCAD)
     instance.FS.writeFile("/part.scad", code)
+    for (const [path, bytes] of Object.entries(event.data.files ?? {})) {
+      const dir = path.slice(0, path.lastIndexOf("/"))
+      if (dir) {
+        try {
+          instance.FS.mkdir(dir)
+        } catch {
+          // Already there.
+        }
+      }
+      instance.FS.writeFile(path, bytes)
+    }
     // Manifold: fast (tens of milliseconds, not the seconds CGAL takes) and
     // always a closed, printable solid.
     let status = 1

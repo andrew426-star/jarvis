@@ -902,6 +902,52 @@ export async function saveProject(project: Project, token: string): Promise<Proj
   return res.json()
 }
 
+export async function deleteProject(id: string, token: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await jarvisFetch(`/workshop/projects/${encodeURIComponent(id)}`, token, { method: "DELETE" })
+  return res.json()
+}
+
+// --- workshop meshes (lib/workshop/meshes.ts) ------------------------------------
+
+export interface MeshInfo {
+  name: string
+  triangles: number
+  bytes: number
+  size_mm: number[]
+  source?: string
+  uploaded_at?: string
+}
+
+export async function listMeshes(token: string): Promise<{ ok: boolean; meshes?: MeshInfo[]; error?: string }> {
+  const res = await jarvisFetch("/workshop/meshes", token, { method: "GET" })
+  return res.json()
+}
+
+export async function fetchMeshBytes(name: string, token: string): Promise<ArrayBuffer> {
+  const res = await jarvisFetch(`/workshop/meshes/${encodeURIComponent(name)}.stl`, token, { method: "GET" })
+  return res.arrayBuffer()
+}
+
+export async function uploadMesh(
+  name: string,
+  stl: ArrayBuffer,
+  size: number[],
+  source: string,
+  token: string
+): Promise<{ ok: boolean; mesh?: MeshInfo; error?: string }> {
+  const res = await jarvisFetch(`/workshop/meshes/${encodeURIComponent(name)}`, token, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream", "X-Mesh-Size": size.map((v) => v.toFixed(1)).join(","), "X-Mesh-Source": source.slice(0, 120) },
+    body: stl,
+  })
+  return res.json()
+}
+
+export async function deleteMesh(name: string, token: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await jarvisFetch(`/workshop/meshes/${encodeURIComponent(name)}`, token, { method: "DELETE" })
+  return res.json()
+}
+
 // --- the phone camera link (lib/phone-camera.ts) -------------------------------
 
 const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })

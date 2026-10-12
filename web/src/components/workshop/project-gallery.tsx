@@ -2,13 +2,13 @@
 
 import { useEffect, useRef, useState } from "react"
 import { AnimatePresence, animate, motion } from "framer-motion"
-import { ChevronLeftIcon, ChevronRightIcon, FolderOpenIcon, LayersIcon, Loader2Icon, PlusIcon, XIcon } from "lucide-react"
+import { ChevronLeftIcon, ChevronRightIcon, FolderOpenIcon, LayersIcon, Loader2Icon, PlusIcon, UploadIcon, XIcon } from "lucide-react"
 
-import { getGallery, openProject, saveProject } from "@/lib/jarvis-client"
+import { deleteProject, getGallery, openProject, saveProject } from "@/lib/jarvis-client"
 import { sfx } from "@/lib/sfx"
 import type { GalleryScene } from "@/lib/workshop/project/gallery-scene"
 import { useProject } from "@/lib/workshop/project/store"
-import { emptyProject, type GalleryProject } from "@/lib/workshop/project/types"
+import { emptyProject, type GalleryProject, type Project } from "@/lib/workshop/project/types"
 
 // The project gallery, over the workshop stage: a revolving ring of every
 // project, each one's finished product projected as a hologram. The card
@@ -41,6 +41,7 @@ export function ProjectGallery() {
   const [grabbing, setGrabbing] = useState(false)
   // Which way the ring last turned (1 on, -1 back), for the card's slide.
   const [direction, setDirection] = useState(0)
+  const importInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!token) return
@@ -103,6 +104,70 @@ export function ProjectGallery() {
     load(r.project, r.report)
     setTab("overview")
     setOpen(false)
+  }
+
+  // Import: project files (.json) - one project, or {projects: [...],
+  // delete: [names]}. A project with an id, or the name of one already
+  // here, updates it in place through the same save Jarvis uses (checks,
+  // BOM); names under delete are removed. Then the gallery reloads.
+  async function importFiles(files: FileList | null) {
+    if (!token || !files?.length || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const byName = new Map((projects ?? []).map((p) => [p.name.toLowerCase(), p.id]))
+      for (const file of Array.from(files)) {
+        const data = JSON.parse(await file.text()) as { projects?: Project[]; delete?: string[] } & Partial<Project>
+        const list = data.projects ?? (data.name ? [data as Project] : [])
+        for (const raw of list) {
+          // A patch onto the project it names: its fields replace the old
+          // ones; printed parts replace those of the same name (or join),
+          // remove_printed drops some; layout entries merge; notes_prepend
+          // goes in front of the old notes.
+          const { remove_printed: remove = [], notes_prepend: prepend, ...project } = raw as Project & {
+            remove_printed?: string[]
+            notes_prepend?: string
+          }
+          const id = project.id || byName.get(String(project.name ?? "").toLowerCase())
+          let merged = { ...project, id: id ?? null } as Project
+          if (id) {
+            const old = await openProject(id, token)
+            if (old.ok) {
+              const printed = old.project.printed.filter((p) => !remove.includes(p.name) && !project.printed?.some((q) => q.name === p.name))
+              // An entry without code changes only what it gives (a colour, a material).
+              const incoming = (project.printed ?? []).map((p) => {
+                const before = old.project.printed.find((q) => q.name === p.name)
+                return before && !p.code ? { ...before, ...p } : p
+              })
+              merged = {
+                ...old.project,
+                ...project,
+                ...(prepend ? { notes: prepend + old.project.notes } : {}),
+                id,
+                printed: [...printed, ...incoming],
+                layout: Object.fromEntries(
+                  Object.entries({ ...old.project.layout, ...(project.layout ?? {}) }).filter(([name]) => !remove.includes(name))
+                ),
+              }
+            }
+          }
+          const r = await saveProject(merged, token)
+          if (!r.ok) throw new Error(`${project.name}: ${r.error}`)
+        }
+        for (const name of data.delete ?? []) {
+          const id = byName.get(name.toLowerCase())
+          if (id) await deleteProject(id, token)
+        }
+      }
+      const r = await getGallery(token)
+      if (r.ok) setProjects(r.projects ?? [])
+      sfx.click()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+      if (importInput.current) importInput.current.value = ""
+    }
   }
 
   // Arrows turn the ring, Enter opens, Escape leaves.
@@ -202,6 +267,10 @@ export function ProjectGallery() {
               <PlusIcon size={12} /> NEW PROJECT
             </button>
           )}
+          <button type="button" className="btn flex items-center" style={{ gap: 5, padding: "4px 10px" }} disabled={busy} onClick={() => importInput.current?.click()} title="Import project files (.json)">
+            <UploadIcon size={12} /> IMPORT
+          </button>
+          <input ref={importInput} type="file" accept=".json,application/json" multiple hidden onChange={(e) => void importFiles(e.target.files)} />
           <button type="button" className="btn" style={{ width: 28, height: 28, padding: 0 }} onClick={() => setOpen(false)} aria-label="Close the gallery" title="Back to the stage (Esc)">
             <XIcon className="mx-auto size-4" />
           </button>

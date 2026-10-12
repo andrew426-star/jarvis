@@ -5,7 +5,7 @@
 // Appearance. It is kept in this browser's IndexedDB and never uploaded:
 // the file is his, and it stays on his machine.
 
-import type { ModelResponse } from "@/lib/ultron-model.worker"
+import { simplifyModel } from "@/lib/model-simplify"
 
 export type UpAxis = "z" | "y"
 
@@ -56,28 +56,12 @@ async function put(model: UltronModel | null) {
   window.dispatchEvent(new Event(EVENT))
 }
 
-/** Reads an STL or 3MF, simplifies it off the main thread
- *  (ultron-model.worker.ts) and keeps it. Resolves with its triangle count. */
+/** Reads an STL or 3MF, simplifies it (model-simplify.ts) and keeps it.
+ *  Resolves with its triangle count. */
 export async function saveUltronModel(file: File, onProgress?: (text: string) => void): Promise<number> {
-  if (!/\.(stl|3mf)$/i.test(file.name)) throw new Error("That is not an STL or 3MF file.")
-  const data = await file.arrayBuffer()
-  const worker = new Worker(new URL("./ultron-model.worker.ts", import.meta.url), { type: "module" })
-  try {
-    const result = await new Promise<{ data: ArrayBuffer; triangles: number }>((resolve, reject) => {
-      worker.onmessage = (event: MessageEvent<ModelResponse>) => {
-        const message = event.data
-        if (message.kind === "progress") onProgress?.(message.text)
-        else if (message.kind === "done") resolve(message)
-        else reject(new Error(message.error))
-      }
-      worker.onerror = () => reject(new Error("Could not read that model."))
-      worker.postMessage({ name: file.name, data }, [data])
-    })
-    await put({ name: file.name, data: result.data, up: "z", turn: 0, triangles: result.triangles })
-    return result.triangles
-  } finally {
-    worker.terminate()
-  }
+  const result = await simplifyModel(file, onProgress)
+  await put({ name: file.name, data: result.data, up: "z", turn: 0, triangles: result.triangles })
+  return result.triangles
 }
 
 export async function orientUltronModel(change: Partial<Pick<UltronModel, "up" | "turn">>): Promise<void> {
