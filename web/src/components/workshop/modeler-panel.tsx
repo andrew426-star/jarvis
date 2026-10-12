@@ -66,7 +66,7 @@ export const MODELER_WIDTH = 360
 
 /** What the server takes per printed part (app/tools/workshop_project.py). */
 const MAX_SCAD_CHARS = 40_000
-const MAX_PRINTED = 12
+const MAX_PRINTED = 48
 
 const ADD_KINDS: { kind: Exclude<PieceKind, "object">; icon: typeof BoxIcon; title: string }[] = [
   { kind: "panel", icon: SquareIcon, title: "A flat or curved panel: rounded corners, a hole grid" },

@@ -6,7 +6,7 @@ import { CableIcon, Loader2Icon, Move3dIcon, PlusIcon, RotateCcwIcon, Trash2Icon
 import { useProject } from "@/lib/workshop/project/store"
 import { ARM_X, CONTROLLER, limitsOf, rigOf, type RigSegment } from "@/lib/workshop/project/rig"
 import { editSegment, saveRigSoon, setRig } from "@/lib/workshop/project/rig-edit"
-import { ANCHORS, type Anchor } from "@/lib/workshop/project/types"
+import { anchorLabel, ANCHORS, type Anchor, type Side } from "@/lib/workshop/project/types"
 import { JUMPER_MM } from "@/lib/workshop/project/wires3d"
 
 // The open project's rig (lib/workshop/project/rig.ts): the pieces that
@@ -20,16 +20,9 @@ import { JUMPER_MM } from "@/lib/workshop/project/wires3d"
 const AXES = ["X", "Y", "Z"] as const
 const AXIS_COLOR = ["#ff5a5a", "#5aff8c", "#5aa8ff"]
 const JOINT_AXIS = ["ROLL (X)", "PITCH (Y)", "YAW (Z)"]
-const ANCHOR_LABEL: Record<Anchor, string> = {
-  face: "Face",
-  chest: "Chest",
-  shoulder: "Shoulder",
-  upper_arm: "Upper arm",
-  forearm: "Forearm",
-  wrist: "Wrist",
-  hand: "Hand",
-  desk: "Desk",
-}
+const ANCHOR_LABEL = Object.fromEntries(
+  ANCHORS.map((a) => [a, a === "upper_arm" ? "Upper arm" : anchorLabel(a).charAt(0) + anchorLabel(a).slice(1).toLowerCase()])
+) as Record<Anchor, string>
 
 const field = {
   background: "rgba(0,0,0,0.4)",
@@ -246,6 +239,19 @@ function SegmentEditor({
           <option key={a} value={a}>Follows the {ANCHOR_LABEL[a].toLowerCase()} on its own</option>
         ))}
       </select>
+      {s.anchor && s.anchor !== "desk" && s.anchor !== "face" && s.anchor !== "chest" && (
+        <select
+          className="t-label w-full"
+          value={s.side ?? ""}
+          onChange={(e) => change(s.name, (x) => ({ ...x, side: (e.target.value || undefined) as Side | undefined }))}
+          style={{ ...field, color: "var(--accent)", marginTop: 4 }}
+          aria-label="Which arm it follows"
+        >
+          <option value="">On the side the build is worn</option>
+          <option value="right">On his right</option>
+          <option value="left">On his left</option>
+        </select>
+      )}
       {s.anchor && (
         <p className="t-time" style={{ marginTop: 4, lineHeight: 1.45 }}>
           In the try-on it follows the {ANCHOR_LABEL[s.anchor].toLowerCase()} while the build stays on the {main ? ANCHOR_LABEL[main].toLowerCase() : "main anchor"}, and its wires stretch between them.

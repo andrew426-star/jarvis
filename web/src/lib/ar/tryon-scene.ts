@@ -6,25 +6,31 @@ import { resolveCue } from "@/lib/ar/actions"
 import { DepthField } from "@/lib/ar/depth"
 import { ActionRig } from "@/lib/ar/effects"
 import { CameraLighting } from "@/lib/ar/lighting"
-import { PoseFilter } from "@/lib/ar/one-euro"
+import { PointsFilter, PoseFilter } from "@/lib/ar/one-euro"
 import {
   anchorPose,
+  BULGE_CM,
   loadSensor,
   readCues,
+  readMuscles,
   referenceOf,
   sense,
   sensorForCue,
   sensorReady,
   sensorsFor,
+  sideOf,
   unproject,
   VERTICAL_FOV,
   type AnchorPose,
+  type HandSense,
+  type Muscles,
   type Sensor,
+  type Senses,
 } from "@/lib/ar/tracker"
 import { accentHex } from "@/lib/core-events"
 import { hologram } from "@/lib/workshop/project/holo"
 import type { Rig } from "@/lib/workshop/project/rig"
-import type { Anchor, Cue, Wear, WearAction } from "@/lib/workshop/project/types"
+import type { Anchor, Side, Wear, WearAction } from "@/lib/workshop/project/types"
 
 // A project shown on Andrew through his own camera: the model drawn at
 // real size over the live picture, held to his face, chest, shoulder, arm,
@@ -53,6 +59,8 @@ const REWIRE_MS = 50
 interface TrackedSegment {
   name: string
   anchor: Anchor
+  /** Pinned to one of his arms (a gauntlet pair), else the build's side. */
+  side?: Side
   filter: PoseFilter
   pose: AnchorPose | null
   lastSeen: number
@@ -78,6 +86,82 @@ export const DEFAULT_DESK: DeskPlacement = { x: 0, y: -16, distance: 55, spin: 0
 
 export type TryOnStatus = "loading" | "searching" | "tracking" | "error"
 
+const RELAXED: Muscles = { forearm: 0, upper_arm: 0, shoulder: 0, chest: 0 }
+
+/** The bones of a hand as landmark pairs: each finger's three, and the
+ *  palm's edges and spokes. */
+const HAND_BONES: [number, number][] = [
+  [1, 2], [2, 3], [3, 4],
+  [5, 6], [6, 7], [7, 8],
+  [9, 10], [10, 11], [11, 12],
+  [13, 14], [14, 15], [15, 16],
+  [17, 18], [18, 19], [19, 20],
+  [0, 1], [0, 5], [0, 9], [0, 13], [0, 17], [5, 9], [9, 13], [13, 17], [1, 5], [2, 5],
+]
+/** Each landmark's flesh radius, cm: the wrist, then each finger base to tip. */
+const HAND_RADIUS = [2.2, 1.5, 1.15, 1.0, 0.85, 1.0, 0.9, 0.8, 0.7, 1.0, 0.9, 0.82, 0.72, 0.95, 0.85, 0.78, 0.68, 0.85, 0.75, 0.68, 0.6]
+
+/**
+ * His real hand, joint by joint, as a stand-in that hides what passes
+ * behind it: a sphere at each of the 21 points and a capsule along each
+ * bone, posed every frame from the tracked hand (cm, camera space). So a
+ * finger crossing in front of a helmet, a repulsor or a web shooter's pod
+ * covers exactly the pixels it does in the picture - and catches its shadow.
+ */
+class HandOccluder {
+  readonly group = new THREE.Group()
+  private readonly joints: THREE.Mesh[] = []
+  private readonly bones: THREE.Mesh[] = []
+  private readonly filter = new PointsFilter()
+  lastSeen = 0
+
+  constructor(material: THREE.Material) {
+    const ball = new THREE.SphereGeometry(1, 16, 12)
+    const rod = new THREE.CylinderGeometry(1, 1, 1, 16, 1, true)
+    for (let i = 0; i < 21; i += 1) this.joints.push(new THREE.Mesh(ball, material))
+    for (let i = 0; i < HAND_BONES.length; i += 1) this.bones.push(new THREE.Mesh(rod, material))
+    for (const m of [...this.joints, ...this.bones]) {
+      m.renderOrder = -1
+      m.receiveShadow = true
+      m.frustumCulled = false
+      this.group.add(m)
+    }
+    this.group.visible = false
+  }
+
+  update(hand: HandSense | null, now: number) {
+    if (!hand) {
+      if (now - this.lastSeen > LOST_MS) {
+        this.group.visible = false
+        this.filter.reset()
+      }
+      return
+    }
+    this.lastSeen = now
+    this.group.visible = true
+    const P = this.filter.apply(hand.P, now / 1000)
+    P.forEach((p, i) => {
+      this.joints[i].position.copy(p)
+      this.joints[i].scale.setScalar(HAND_RADIUS[i])
+    })
+    const up = new THREE.Vector3(0, 1, 0)
+    HAND_BONES.forEach(([a, b], i) => {
+      const m = this.bones[i]
+      const d = P[b].clone().sub(P[a])
+      const length = d.length()
+      m.position.copy(P[a]).addScaledVector(d, 0.5)
+      m.quaternion.setFromUnitVectors(up, d.divideScalar(Math.max(length, 1e-6)))
+      const r = Math.min(HAND_RADIUS[a], HAND_RADIUS[b])
+      m.scale.set(r, length, r)
+    })
+  }
+
+  dispose() {
+    this.joints[0]?.geometry.dispose()
+    this.bones[0]?.geometry.dispose()
+  }
+}
+
 /** The stand-ins for his body: depth only, plus the model's shadow on them. */
 function standIn(anchor: Anchor, flip: boolean): THREE.Object3D {
   const material = new THREE.ShadowMaterial({ opacity: 0.38 })
@@ -91,13 +175,15 @@ function standIn(anchor: Anchor, flip: boolean): THREE.Object3D {
     m.position.set(...at)
     g.add(m)
   }
-  /** A cylinder along `axis` (design frame). */
-  const limb = (r: number, length: number, axis: "x" | "z", at: [number, number, number], flatten = 1) => {
+  /** A cylinder along `axis` (design frame); `flex` names the muscle it
+   *  swells with (radius r, mm). */
+  const limb = (r: number, length: number, axis: "x" | "z", at: [number, number, number], flatten = 1, flex?: keyof Muscles) => {
     const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, length, 32), material)
     if (axis === "x") m.rotation.z = Math.PI / 2
     else m.rotation.x = Math.PI / 2
     m.scale.z = flatten
     m.position.set(...at)
+    if (flex) m.userData.flex = { muscle: flex, radius: r, flatten }
     g.add(m)
   }
   // Shapes in the design frame (mm), where the body is.
@@ -112,7 +198,7 @@ function standIn(anchor: Anchor, flip: boolean): THREE.Object3D {
     // His torso, toward his middle from whichever shoulder it is.
     sphere(160, 110, 260, [flip ? -180 : 180, 70, -180])
   } else if (anchor === "upper_arm") {
-    limb(46, 330, "x", [0, 0, 0], 0.9)
+    limb(46, 330, "x", [0, 0, 0], 0.9, "upper_arm")
     sphere(60, 60, 60, [-170, 0, 0])
   } else if (anchor === "desk") {
     // The desk itself: catches the shadow, and hides what goes below it.
@@ -121,7 +207,7 @@ function standIn(anchor: Anchor, flip: boolean): THREE.Object3D {
     g.add(plane)
   } else {
     const radius = anchor === "forearm" ? 34 : 29
-    limb(radius, 300, "x", [anchor === "hand" ? -190 : -130, 0, 0], 0.75)
+    limb(radius, 300, "x", [anchor === "hand" ? -190 : -130, 0, 0], 0.75, "forearm")
     if (anchor === "hand") g.add(new THREE.Mesh(new THREE.BoxGeometry(95, 85, 28), material))
   }
   g.traverse((node) => {
@@ -198,7 +284,7 @@ export class TryOnScene {
   private actionRig: ActionRig | null = null
   private gestures = true
   private pending: (string | undefined)[] = []
-  private cues = new Set<Cue>()
+  private cues = new Set<string>()
   /** Sensors to run each frame: the anchor's, its extras, the cues'. */
   private sensors = new Set<Sensor>()
   private cueSensors = new Set<Sensor>()
@@ -210,7 +296,20 @@ export class TryOnScene {
   private bodyRig: Rig | null = null
   private tracked: TrackedSegment[] = []
   private segmentSensors = new Set<Sensor>()
+  /** Pin the main anchor to the worn side (a build with a pair of sides). */
+  private sided = false
   private lastRewire = 0
+  /** Each side's muscles, smoothed. */
+  private muscles: Record<Side, Muscles> = { left: { ...RELAXED }, right: { ...RELAXED } }
+  private readonly occluderMaterial = (() => {
+    const m = new THREE.ShadowMaterial({ opacity: 0.38 })
+    m.transparent = false
+    return m
+  })()
+  private readonly handStandIns: Record<Side, HandOccluder> = { left: new HandOccluder(this.occluderMaterial), right: new HandOccluder(this.occluderMaterial) }
+  /** A live line of what the tracking reads: muscle, fingers. */
+  onReadout: ((text: string | null) => void) | null = null
+  private lastReadout = 0
   private raf = 0
   private disposed = false
   private status: TryOnStatus = "loading"
@@ -244,6 +343,7 @@ export class TryOnScene {
     this.design.scale.setScalar(0.1)
     this.anchorRoot.add(this.design)
     this.scene.add(this.anchorRoot)
+    this.scene.add(this.handStandIns.left.group, this.handStandIns.right.group)
     this.raf = requestAnimationFrame(this.frame)
   }
 
@@ -265,9 +365,11 @@ export class TryOnScene {
   setRig(rig: Rig | null) {
     this.bodyRig = rig
     this.tracked = []
+    this.sided = (rig?.segments ?? []).some((s) => !!s.side)
     for (const s of rig?.segments ?? []) {
-      if (!s.anchor || s.anchor === this.anchor) continue
-      this.tracked.push({ name: s.name, anchor: s.anchor, filter: new PoseFilter(), pose: null, lastSeen: 0 })
+      // On the anchor (and side) the whole build follows: nothing of its own to track.
+      if (!s.anchor || (s.anchor === this.anchor && (!s.side || s.side === sideOf(undefined, this.flip)))) continue
+      this.tracked.push({ name: s.name, anchor: s.anchor, side: s.side, filter: new PoseFilter(), pose: null, lastSeen: 0 })
     }
     this.segmentSensors = new Set(
       this.tracked.flatMap((t) => {
@@ -283,7 +385,7 @@ export class TryOnScene {
   }
 
   /** Each tracked segment where its body point is now, or back at rest. */
-  private poseSegments(poses: Map<Anchor, AnchorPose | null>, now: number) {
+  private poseSegments(poses: Map<string, AnchorPose | null>, now: number) {
     const rig = this.bodyRig
     if (!rig || !this.model || !this.tracked.length) return false
     let moved = false
@@ -292,7 +394,7 @@ export class TryOnScene {
     for (const t of this.tracked) {
       const j = rig.joints.get(t.name)
       if (!j) continue
-      const seen = poses.get(t.anchor)
+      const seen = poses.get(`${t.anchor}:${t.side ?? ""}`)
       if (seen) {
         t.lastSeen = now
         t.pose = t.anchor === "desk" ? seen : t.filter.apply(seen.position, seen.quaternion, now / 1000)
@@ -390,7 +492,12 @@ export class TryOnScene {
       this.overlay,
       this.model,
       this.actions,
-      (cue) => resolveCue(cue, this.anchor),
+      (cue, action) => {
+        const resolved = resolveCue(cue, this.anchor)
+        // An action on a segment pinned to a side listens to that side only.
+        const side = action.segment ? rig?.joints.get(action.segment)?.segment.side : undefined
+        return side && ["palm", "fist", "point", "thwip", "raise"].includes(resolved) ? `${resolved}:${sideOf(side, this.flip)}` : resolved
+      },
       this.onAction,
       (action) => rig?.frameFor(action.at, action.segment) ?? this.model!
     )
@@ -400,6 +507,8 @@ export class TryOnScene {
   setFlip(flip: boolean) {
     this.flip = flip
     if (this.anchor === "shoulder") this.placeStand()
+    // Which segments follow a body point of their own depends on the side.
+    if (this.bodyRig) this.setRig(this.bodyRig)
   }
 
   private placeStand() {
@@ -452,6 +561,39 @@ export class TryOnScene {
     return { position: new THREE.Vector3(d.x, d.y, -d.distance), quaternion: upright.multiply(spin) }
   }
 
+  /** Each side's muscles from this frame, eased (a muscle takes a moment
+   *  to tense and to let go), and the stand-ins swollen to match. */
+  private feelMuscles(senses: Senses, dt: number) {
+    const now = readMuscles(senses)
+    const k = 1 - Math.exp(-dt * 9)
+    for (const side of ["left", "right"] as const) {
+      for (const key of Object.keys(RELAXED) as (keyof Muscles)[]) this.muscles[side][key] += (now[side][key] - this.muscles[side][key]) * k
+    }
+    const worn = this.muscles[sideOf(undefined, this.flip)]
+    this.stand?.traverse((node) => {
+      const flex = node.userData.flex as { muscle: keyof Muscles; radius: number; flatten: number } | undefined
+      if (!flex) return
+      // The cylinder's cross-section is its local x and z.
+      const swell = 1 + (worn[flex.muscle] * BULGE_CM[flex.muscle] * 10) / flex.radius
+      node.scale.set(swell, 1, flex.flatten * swell)
+    })
+  }
+
+  /** A few times a second: the worn side's muscles and fingers, for the strip. */
+  private readout(senses: Senses, now: number) {
+    if (!this.onReadout || now - this.lastReadout < 120) return
+    this.lastReadout = now
+    const side = sideOf(undefined, this.flip)
+    const m = this.muscles[side]
+    const pct = (x: number) => `${Math.round(x * 100)}`.padStart(3, " ")
+    const parts: string[] = []
+    const hand = senses.hands?.find((h) => h.side === side) ?? senses.hand
+    if (hand) parts.push(`${hand.side === "left" ? "L" : "R"} HAND ${hand.curl.map((c) => (c > 0.66 ? "●" : c > 0.33 ? "◐" : "○")).join("")}`)
+    if (hand || senses.pose) parts.push(`GRIP${pct(m.forearm)}%`)
+    if (senses.pose) parts.push(`BICEPS${pct(m.upper_arm)}%`, `DELT${pct(m.shoulder)}%`, `PEC${pct(Math.max(this.muscles.left.chest, this.muscles.right.chest))}%`)
+    this.onReadout(parts.length ? parts.join(" · ") : null)
+  }
+
   /** The sensors to run on this frame. */
   private running(): Sensor[] {
     const out = [...this.sensors].filter(sensorReady)
@@ -477,20 +619,25 @@ export class TryOnScene {
     this.lighting.update(video, now)
 
     let pose: AnchorPose | null = null
-    const segmentPoses = new Map<Anchor, AnchorPose | null>()
+    const segmentPoses = new Map<string, AnchorPose | null>()
     const fresh = video.currentTime !== this.lastVideoTime
     if (this.status !== "loading" && this.status !== "error" && fresh) {
       try {
         const senses = sense(video, this.running(), this.flip)
-        const tracked = anchorPose(senses, this.anchor, this.flip)
+        this.feelMuscles(senses, dt)
+        const tracked = anchorPose(senses, this.anchor, this.flip, this.sided ? sideOf(undefined, this.flip) : undefined, this.muscles)
         if (tracked) pose = tracked.pose
         for (const t of this.tracked) {
-          if (segmentPoses.has(t.anchor)) continue
-          segmentPoses.set(t.anchor, t.anchor === "desk" ? this.deskPose() : (anchorPose(senses, t.anchor, this.flip)?.pose ?? null))
+          const key = `${t.anchor}:${t.side ?? ""}`
+          if (segmentPoses.has(key)) continue
+          segmentPoses.set(key, t.anchor === "desk" ? this.deskPose() : (anchorPose(senses, t.anchor, this.flip, t.side, this.muscles)?.pose ?? null))
         }
         const ref = referenceOf(senses, tracked)
         if (ref) this.depth?.setReference(ref)
         this.cues = readCues(senses)
+        // His hands, finger by finger, hide what is behind them.
+        for (const side of ["left", "right"] as const) this.handStandIns[side].update(senses.hands?.find((h) => h.side === side) ?? null, now)
+        this.readout(senses, now)
       } catch {
         pose = null
       }
@@ -551,6 +698,8 @@ export class TryOnScene {
       material?.dispose?.()
     })
     this.occlusion.material.dispose()
+    this.handStandIns.left.dispose()
+    this.handStandIns.right.dispose()
     this.renderer.dispose()
   }
 }

@@ -11,7 +11,7 @@ import { useJarvis } from "@/lib/store"
 import { compileScadCached } from "@/lib/workshop/openscad"
 import { buildDesign } from "@/lib/workshop/project/assembly"
 import { useProject } from "@/lib/workshop/project/store"
-import { ANCHORS, type Anchor } from "@/lib/workshop/project/types"
+import { anchorLabel, WEAR_ANCHORS, type Anchor } from "@/lib/workshop/project/types"
 
 // The try-on, inside the camera window: a canvas over the video, fitted
 // and mirrored exactly like it, with the open project worn on Andrew, and
@@ -20,17 +20,7 @@ import { ANCHORS, type Anchor } from "@/lib/workshop/project/types"
 // project's actions: a button each (Space fires the first), and whether
 // his gestures fire them.
 
-const ANCHOR_LABEL: Record<Anchor, string> = {
-  face: "FACE",
-  chest: "CHEST",
-  shoulder: "SHOULDER",
-  upper_arm: "ARM",
-  forearm: "FOREARM",
-  wrist: "WRIST",
-  hand: "HAND",
-  desk: "DESK",
-}
-const HINT: Record<Anchor, string> = {
+const HINT: Partial<Record<Anchor, string>> = {
   face: "FACE THE CAMERA",
   chest: "STEP BACK SO YOUR SHOULDERS ARE IN VIEW",
   shoulder: "STEP BACK SO YOUR SHOULDERS ARE IN VIEW",
@@ -75,6 +65,9 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
   /** The last fire request the scene has had. */
   const handled = useRef(0)
   const drag = useRef<{ x: number; y: number; desk: typeof desk } | null>(null)
+  /** The tracking's live readout (muscle, fingers), written straight to the
+   *  element several times a second rather than through React. */
+  const readoutRef = useRef<HTMLSpanElement>(null)
 
   // The scene lives while the try-on is on, and gets a fresh model when
   // the project or the way it is shown changes.
@@ -93,6 +86,12 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
         (name) => useTryOn.getState().fired(name)
       )
       sceneRef.current = scene
+      scene.onReadout = (text) => {
+        const el = readoutRef.current
+        if (!el) return
+        el.textContent = text ?? ""
+        el.style.display = text ? "block" : "none"
+      }
       const group = project.wear?.group
       const shown = group
         ? { ...project, parts: project.parts.filter((p) => p.group === group), printed: project.printed.filter((p) => p.group === group) }
@@ -213,7 +212,7 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
 
       <div className="absolute flex flex-col items-start" style={{ top: 6, right: 6, gap: 4 }}>
         <div className="flex" style={{ gap: 3, padding: 3, ...pill }} role="radiogroup" aria-label="Where to wear it">
-          {ANCHORS.map((a) => (
+          {WEAR_ANCHORS.map((a) => (
             <button
               key={a}
               type="button"
@@ -224,7 +223,7 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
               style={{ padding: "2px 6px", fontSize: 10 }}
               onClick={() => set({ anchor: a })}
             >
-              {ANCHOR_LABEL[a]}
+              {anchorLabel(a)}
             </button>
           ))}
         </div>
@@ -297,6 +296,13 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
         </div>
       )}
 
+      <span
+        ref={readoutRef}
+        className="t-label pointer-events-none absolute"
+        style={{ left: 6, bottom: depth && depthText ? 30 : 6, padding: "2px 8px", color: "var(--accent)", display: "none", whiteSpace: "pre", fontVariantNumeric: "tabular-nums", ...pill }}
+        title="What the tracking reads: each finger's curl (open ○ to closed ●), and how tensed the worn arm's muscles are"
+      />
+
       {depth && depthText && (
         <span className="t-label pointer-events-none absolute" style={{ left: 6, bottom: 6, padding: "2px 8px", color: depthReady ? "var(--accent)" : "var(--warning)", ...pill }}>
           {depthText}
@@ -309,7 +315,7 @@ export function TryOnLayer({ mirrored, fit }: { mirrored: boolean; fit: "cover" 
             ? "LOADING TRACKING..."
             : status === "error"
               ? (detail ?? "TRACKING FAILED").toUpperCase()
-              : `${project?.name.toUpperCase() ?? ""} · ${HINT[anchor]}`}
+              : `${project?.name.toUpperCase() ?? ""} · ${HINT[anchor] ?? "HOLD YOUR HAND UP"}`}
         </span>
       ) : null}
     </>

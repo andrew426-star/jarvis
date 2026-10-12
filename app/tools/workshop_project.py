@@ -25,13 +25,15 @@ TABLE = "jarvis_workshop_projects"
 PARTS_JSON = Path(__file__).resolve().parents[2] / "web" / "src" / "lib" / "workshop" / "parts.json"
 MAX_PARTS = 80
 MAX_WIRES = 300
-MAX_PRINTED = 12
+MAX_PRINTED = 48
 MAX_SCAD_CHARS = 40_000
 MAX_CODE_CHARS = 60_000
 STATUSES = ("idea", "design", "simulate", "build", "complete")
 # Where a project is worn or set for the camera try-on, and the frame its
 # design uses there (mm; see WEAR_GUIDE).
-ANCHORS = ("face", "chest", "shoulder", "upper_arm", "forearm", "wrist", "hand", "desk")
+FINGER_ANCHORS = tuple(f"{f}_{b}" for f in ("thumb", "index", "middle", "ring", "pinky") for b in (1, 2, 3))
+ANCHORS = ("face", "chest", "shoulder", "upper_arm", "forearm", "wrist", "hand", "desk") + FINGER_ANCHORS
+SIDES = ("left", "right")
 WEAR_GUIDE = (
     "wear: how the camera try-on shows it on him, live: {anchor, group?, offset?, rot?, scale?, actions?}. "
     "Design worn things in the anchor's own frame, in mm, so they land on him at real size. "
@@ -49,19 +51,29 @@ WEAR_GUIDE = (
     "hand (the palm faces -z); a wrist is about 60 x 40 mm, a forearm 70 x 55, so a watch face "
     "sits near z = 22, a bracer's shell wraps the x axis, and from the forearm origin the palm "
     "centre is near x = 150, z = -20. desk: origin on the desk surface, z up, front faces -y. "
+    "Finger bones (thumb_1..3, index_1..3, middle_1..3, ring_1..3, pinky_1..3; 1 the base bone - "
+    "the thumb's 1 is its bone in the palm - 3 the tip): origin on the bone's axis at its middle, "
+    "x toward the tip, z out of the nail side; a finger is about 17 mm thick at the base, 14 at the tip. "
+    "The tracking follows every finger bone, the chest, each shoulder (turning partway with the raised "
+    "arm), and the muscles: grip, biceps, deltoid and chest tension swell the body under the build, so "
+    "leave 3-5 mm of clearance (padding, elastic) over a forearm or upper arm. "
     "group shows only that sub-assembly; parts with no layout position are left out of the "
     "try-on. offset (mm) and rot (degrees) nudge the whole thing in the anchor frame."
 )
-MAX_SEGMENTS = 12
+MAX_SEGMENTS = 40
 SEGMENT_GUIDE = (
     "segments: the pieces that move on their own, so the workshop and the try-on articulate "
-    "like the body does: [{name, members, parent?, pivot?, move?, pose?, limits?, anchor?, at?}]. "
+    "like the body does: [{name, members, parent?, pivot?, move?, pose?, limits?, anchor?, side?, at?}]. "
     "members: part ids, printed part names or groups; the wires to them follow wherever the "
     "segment goes (the workshop re-routes them and flags runs longer than a 20 cm jumper). "
     "Anything worn across a joint MUST be split at it: a gauntlet is a bracer on the wrist "
     "(the wear anchor) plus a hand plate segment with anchor 'hand' and pivot on the wrist "
-    "joint, limits [[-25,25],[-70,70],[-30,30]] (roll, flexion, side to side); fingers are "
-    "segments with parent the hand; a full arm adds forearm and upper_arm segments; shoulder "
+    "joint, limits [[-25,25],[-70,70],[-30,30]] (roll, flexion, side to side); finger armour is "
+    "one printed part per finger bone (each cap modelled straight, as worn on the open hand), "
+    "each its own segment with parent the hand and anchor that bone (index_2...) - name the "
+    "printed parts by finger and bone ('Index 2 R') and the workshop rigs them itself; a "
+    "pair (both gauntlets) gives each side's segments side 'left' or 'right' (default: the side "
+    "the build is worn); a full arm adds forearm and upper_arm segments; shoulder "
     "armour on a chest piece is a segment with anchor 'shoulder'. In the try-on a segment with "
     "an anchor follows that body point on its own; one without rides with its parent. "
     "pivot: the joint centre (mm, design frame); pose: how far it is turned (x, y, z degrees) "
@@ -203,6 +215,8 @@ def _segments(raw, names: set[str], problems: list[str]) -> list[dict]:
             segment["limits"] = pairs
         if item.get("anchor") in ANCHORS:
             segment["anchor"] = item["anchor"]
+        if item.get("side") in SIDES:
+            segment["side"] = item["side"]
         out.append(segment)
     # A parent must be another segment, and following parents must end.
     by_name = {s["name"].lower(): s for s in out}
@@ -1276,6 +1290,7 @@ PROJECT_SCHEMA = {
                             "pose": {"type": "array", "items": {"type": "number"}},
                             "limits": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
                             "anchor": {"type": "string", "enum": list(ANCHORS)},
+                            "side": {"type": "string", "enum": list(SIDES)},
                             "at": {"type": "array", "items": {"type": "number"}},
                         },
                         "required": ["name", "members"],

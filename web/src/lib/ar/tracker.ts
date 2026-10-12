@@ -3,7 +3,7 @@
 import type { FaceLandmarker, HandLandmarker, NormalizedLandmark, PoseLandmarker } from "@mediapipe/tasks-vision"
 import * as THREE from "three"
 
-import { BODY_ANCHORS, type Anchor, type Cue } from "@/lib/workshop/project/types"
+import { BODY_ANCHORS, FINGERS, isFingerAnchor, type Anchor, type Cue, type FingerAnchor, type Side } from "@/lib/workshop/project/types"
 
 // Where on Andrew a project is worn, frame by frame, from the webcam: a
 // pose in the camera's own metric space (centimetres, camera at the
@@ -14,12 +14,23 @@ import { BODY_ANCHORS, type Anchor, type Cue } from "@/lib/workshop/project/type
 //  - face: the head's rotation from MediaPipe's facial transformation
 //    matrix; its distance from the gap between the irises (about 63 mm);
 //    the jaw's opening from its blendshapes.
-//  - hand: a full pose fit of the hand's 21 points in metres (MediaPipe's
-//    world landmarks) to the same 21 in the picture, which gives its
-//    distance and tilt together; which fingers are out.
+//  - hand: both hands, each told left from right, by a full pose fit of
+//    its 21 points in metres (MediaPipe's world landmarks) to the same 21
+//    in the picture, which gives distance and tilt together. From the fit,
+//    a frame on every bone of every finger (so finger armour articulates
+//    on the real finger), how far each finger is curled, and which are out.
 //  - pose: the same fit for the body's 33 points (those in view), for the
 //    chest, a shoulder or an upper arm - and the elbow, so a forearm runs
-//    along the real forearm rather than the line of the hand.
+//    along the real forearm rather than the line of the hand. A shoulder
+//    piece turns partway with the upper arm, as the deltoid under it does.
+//
+// Muscle: a camera cannot see a muscle tense, but the joints say what the
+// muscles are doing - a closed grip is the forearm's flexors working, a
+// bent elbow under load the biceps, a raised arm the deltoid, an arm
+// driven across the body the chest. Each comes out 0 (relaxed) to 1
+// (fully tensed), and swells the body under the build to match: armour
+// resting on a muscle rides out on it, and the stand-ins that hide what is
+// behind him thicken with it.
 //
 // All assume the camera sees about 63 degrees top to bottom, MediaPipe's
 // own assumption for the face; the render uses the same, so the model
@@ -55,10 +66,13 @@ export interface Tracked {
 /** The sensors an anchor needs to be found at all, and those that only
  *  improve it (loaded alongside, never waited for). */
 export function sensorsFor(anchor: Anchor): { need: Sensor[]; extra: Sensor[] } {
-  if (anchor === "face") return { need: ["face"], extra: [] }
+  // The hands as extras everywhere on him: a hand passing in front of a
+  // helmet or a chest piece hides it, finger by finger.
+  if (anchor === "face") return { need: ["face"], extra: ["hand"] }
   if (anchor === "desk") return { need: [], extra: [] }
-  if (BODY_ANCHORS.includes(anchor)) return { need: ["pose"], extra: [] }
-  return { need: ["hand"], extra: anchor === "hand" ? [] : ["pose"] }
+  if (BODY_ANCHORS.includes(anchor)) return { need: ["pose"], extra: ["hand"] }
+  // The body for the forearm's line and the arm's muscles.
+  return { need: ["hand"], extra: ["pose"] }
 }
 
 /** The sensor a gesture cue is read from. */
@@ -95,11 +109,17 @@ async function create(sensor: Sensor) {
       vision.FaceLandmarker.createFromOptions(files, options("CPU"))
     )
   } else if (sensor === "hand") {
-    hands = await vision.HandLandmarker.createFromOptions(files, {
-      baseOptions: base(HAND_MODEL, "GPU"),
-      runningMode: "VIDEO",
+    const options = (delegate: "GPU" | "CPU") => ({
+      baseOptions: base(HAND_MODEL, delegate),
+      runningMode: "VIDEO" as const,
       numHands: 2,
+      minHandDetectionConfidence: 0.6,
+      minHandPresenceConfidence: 0.6,
+      minTrackingConfidence: 0.6,
     })
+    hands = await vision.HandLandmarker.createFromOptions(files, options("GPU")).catch(() =>
+      vision.HandLandmarker.createFromOptions(files, options("CPU"))
+    )
   } else {
     const options = (delegate: "GPU" | "CPU") => ({
       baseOptions: base(POSE_MODEL, delegate),
@@ -285,7 +305,11 @@ interface FitState {
   last: Vec6 | null
 }
 
-const fitState: Record<"hand" | "pose", FitState> = { hand: { sign: -1, last: null }, pose: { sign: -1, last: null } }
+const fitState: Record<"left" | "right" | "pose", FitState> = {
+  left: { sign: -1, last: null },
+  right: { sign: -1, last: null },
+  pose: { sign: -1, last: null },
+}
 
 /**
  * Fit a shape's world landmarks (metres) to its picture landmarks, using
@@ -334,7 +358,9 @@ function fitShape(
 
 // --- hand ----------------------------------------------------------------------------
 
-interface HandSense {
+export interface HandSense {
+  /** His left or right hand. */
+  side: Side
   /** The 21 points, cm, camera space. */
   P: THREE.Vector3[]
   image: NormalizedLandmark[]
@@ -344,48 +370,104 @@ interface HandSense {
   /** Which fingers (index, middle, ring, pinky) are out straight, and which curled in. */
   out: boolean[]
   curled: boolean[]
+  /** How far each finger (thumb to pinky) is curled: 0 straight, 1 a fist. */
+  curl: number[]
+  /** Each finger bone's frame: on the bone's axis at its middle, x toward
+   *  the tip, z out of its back (the nail side), cm, camera space. */
+  bones: Map<FingerAnchor, AnchorPose>
 }
 
-const FINGERS: [number, number][] = [[6, 8], [10, 12], [14, 16], [18, 20]]
+const FINGER_TIPS: [number, number][] = [[6, 8], [10, 12], [14, 16], [18, 20]]
+/** Each finger's first landmark (thumb: its base in the palm). */
+const FINGER_BASE = [1, 5, 9, 13, 17]
 
-function senseHand(video: HTMLVideoElement, flip: boolean): HandSense | null {
-  if (!hands) return null
+/** The angle between two directions, radians. */
+const bend = (a: THREE.Vector3, b: THREE.Vector3) => a.angleTo(b)
+
+export function handFrames(P: THREE.Vector3[], along: THREE.Vector3, back: THREE.Vector3) {
+  // The hand's own across-axis (design y): finger bones keep it as they
+  // curl, turning about it at every knuckle.
+  const across = new THREE.Vector3().crossVectors(back, along).normalize()
+  // Which way along it the thumb is.
+  const thumbward = across.clone().multiplyScalar(Math.sign(P[2].clone().sub(P[9]).dot(across)) || 1)
+  const bones = new Map<FingerAnchor, AnchorPose>()
+  const curl: number[] = []
+  FINGERS.forEach((finger, f) => {
+    const base = FINGER_BASE[f]
+    // The bones from the knuckle out (the thumb's from the side of the palm).
+    const joints = [base, base + 1, base + 2, base + 3]
+    const dirs = [0, 1, 2].map((k) => P[joints[k + 1]].clone().sub(P[joints[k]]))
+    for (let k = 0; k < 3; k += 1) {
+      const x = dirs[k].clone().normalize()
+      // A finger's nail side turns with it about the hand's across-axis;
+      // the thumb's faces out between the back of the hand and its side.
+      const hint = finger === "thumb" ? back.clone().add(thumbward).normalize() : new THREE.Vector3().crossVectors(x, across)
+      const z = hint.addScaledVector(x, -hint.dot(x)).normalize()
+      const y = new THREE.Vector3().crossVectors(z, x)
+      bones.set(`${finger}_${k + 1}` as FingerAnchor, {
+        position: P[joints[k]].clone().add(P[joints[k + 1]]).multiplyScalar(0.5),
+        quaternion: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z)),
+      })
+    }
+    // Curl: the bend at each joint, from the line into the finger.
+    if (finger === "thumb") {
+      curl.push(THREE.MathUtils.clamp((bend(dirs[0], dirs[1]) + bend(dirs[1], dirs[2])) / THREE.MathUtils.degToRad(110), 0, 1))
+    } else {
+      const palm = P[base].clone().sub(P[0])
+      const total = bend(palm, dirs[0]) + bend(dirs[0], dirs[1]) + bend(dirs[1], dirs[2])
+      curl.push(THREE.MathUtils.clamp((total - THREE.MathUtils.degToRad(15)) / THREE.MathUtils.degToRad(230), 0, 1))
+    }
+  })
+  return { bones, curl }
+}
+
+function senseHands(video: HTMLVideoElement, flip: boolean): HandSense[] {
+  if (!hands) return []
   const result = hands.detectForVideo(video, stamp())
-  if (!result.landmarks?.length) {
-    fitState.hand.last = null
-    return null
-  }
+  const found = result.landmarks ?? []
   const W = video.videoWidth
   const H = video.videoHeight
-  // The biggest hand in the picture is the one held up to the camera.
-  const span = (lm: NormalizedLandmark[]) => Math.hypot((lm[0].x - lm[9].x) * W, (lm[0].y - lm[9].y) * H)
-  let best = 0
-  result.landmarks.forEach((lm, i) => {
-    if (span(lm) > span(result.landmarks[best])) best = i
-  })
-  const image = result.landmarks[best]
-  const world = result.worldLandmarks?.[best]
-  if (!world) return null
-  const P = fitShape(world, image, world.map((_, i) => i), [0, 9], W, H, fitState.hand, 1.5)
-  if (!P) return null
-
-  const along = P[9].clone().sub(P[0]).normalize()
-  const knuckles = P[5].clone().sub(P[17]).normalize()
-  const back = new THREE.Vector3().crossVectors(along, knuckles).normalize()
   // MediaPipe names hands as if the picture were mirrored; this stream is
-  // not, so its "Left" is his right hand.
-  const right = (result.handedness?.[best]?.[0]?.categoryName ?? "Left") === "Left"
-  if (right === flip) back.negate()
-
-  const reach = (i: number) => P[i].distanceTo(P[0])
-  return {
-    P,
-    image,
-    along,
-    back,
-    out: FINGERS.map(([pip, tip]) => reach(tip) > reach(pip) * 1.15),
-    curled: FINGERS.map(([pip, tip]) => reach(tip) < reach(pip) * 1.02),
+  // not, so its "Left" is his right hand. Two hands with the same name: the
+  // one further to the picture's left is his right (he faces the camera).
+  // Flipped, the other way round (the names are wrong for this camera).
+  let sides: Side[] = found.map((_, i) => ((result.handedness?.[i]?.[0]?.categoryName ?? "Left") === "Left" ? "right" : "left"))
+  if (found.length === 2 && sides[0] === sides[1]) sides = found[0][0].x < found[1][0].x ? ["right", "left"] : ["left", "right"]
+  if (flip) sides = sides.map((x) => (x === "right" ? "left" : "right"))
+  const out: HandSense[] = []
+  for (const side of ["left", "right"] as const) {
+    const i = sides.indexOf(side)
+    const image = found[i]
+    const world = result.worldLandmarks?.[i]
+    if (i < 0 || !image || !world) {
+      fitState[side].last = null
+      continue
+    }
+    const P = fitShape(world, image, world.map((_, k) => k), [0, 9], W, H, fitState[side], 1.5)
+    if (!P) continue
+    const along = P[9].clone().sub(P[0]).normalize()
+    const knuckles = P[5].clone().sub(P[17]).normalize()
+    const back = new THREE.Vector3().crossVectors(along, knuckles).normalize()
+    if (side === "left") back.negate()
+    const reach = (k: number) => P[k].distanceTo(P[0])
+    out.push({
+      side,
+      P,
+      image,
+      along,
+      back,
+      out: FINGER_TIPS.map(([pip, tip]) => reach(tip) > reach(pip) * 1.15),
+      curled: FINGER_TIPS.map(([pip, tip]) => reach(tip) < reach(pip) * 1.02),
+      ...handFrames(P, along, back),
+    })
   }
+  return out
+}
+
+/** The biggest hand in the picture: the one held up to the camera. */
+function largest(seen: HandSense[], W: number, H: number): HandSense | null {
+  const span = (h: HandSense) => Math.hypot((h.image[0].x - h.image[9].x) * W, (h.image[0].y - h.image[9].y) * H)
+  return seen.reduce<HandSense | null>((best, h) => (!best || span(h) > span(best) ? h : best), null)
 }
 
 // --- body ----------------------------------------------------------------------------
@@ -406,6 +488,8 @@ const L_WRIST = 15
 const R_WRIST = 16
 const L_HIP = 23
 const R_HIP = 24
+const L_EAR = 7
+const R_EAR = 8
 
 function sensePose(video: HTMLVideoElement): PoseSense | null {
   if (!pose) return null
@@ -424,6 +508,12 @@ function sensePose(video: HTMLVideoElement): PoseSense | null {
   return P ? { P, image, seen } : null
 }
 
+/** A body's sides as MediaPipe numbers them. */
+const ARM: Record<Side, { shoulder: number; elbow: number; wrist: number }> = {
+  left: { shoulder: L_SHOULDER, elbow: L_ELBOW, wrist: L_WRIST },
+  right: { shoulder: R_SHOULDER, elbow: R_ELBOW, wrist: R_WRIST },
+}
+
 /** His torso's frame: x to his left, y up, z out of his chest. */
 function torso(p: PoseSense) {
   const shoulders = p.P[L_SHOULDER].clone().add(p.P[R_SHOULDER]).multiplyScalar(0.5)
@@ -431,37 +521,66 @@ function torso(p: PoseSense) {
   const across = p.P[L_SHOULDER].clone().sub(p.P[R_SHOULDER])
   const width = across.length()
   across.normalize()
-  const up = shoulders.clone().sub(hips)
-  up.addScaledVector(across, -up.dot(across)).normalize()
+  // Up the spine: from the hips when they are in view; at a desk they
+  // rarely are (the model only guesses them), so then from the ears, which
+  // sit over the spine with the head leaning a little forward of it.
+  const fromHips = shoulders.clone().sub(hips)
+  fromHips.addScaledVector(across, -fromHips.dot(across)).normalize()
+  let up = fromHips
+  if (p.seen[L_EAR] && p.seen[R_EAR]) {
+    const ears = p.P[L_EAR].clone().add(p.P[R_EAR]).multiplyScalar(0.5)
+    const fromEars = ears.sub(shoulders)
+    fromEars.addScaledVector(across, -fromEars.dot(across)).normalize()
+    // Lean it back by the head's usual 15 degrees forward of the spine:
+    // about the across-axis, away from the face (the camera side).
+    const lean = THREE.MathUtils.degToRad(15)
+    const a = fromEars.clone().applyAxisAngle(across, lean)
+    const b = fromEars.clone().applyAxisAngle(across, -lean)
+    const spine = a.z < b.z ? a : b
+    up = p.seen[L_HIP] && p.seen[R_HIP] ? fromHips.lerp(spine, 0.3).normalize() : spine
+  }
   const forward = new THREE.Vector3().crossVectors(across, up).normalize()
   return { shoulders, hips, across, up, forward, width }
 }
 
-function bodyAnchor(p: PoseSense, anchor: Anchor, flip: boolean): Tracked | null {
+function bodyAnchor(p: PoseSense, anchor: Anchor, side: Side, muscle: Muscles | null): Tracked | null {
   const t = torso(p)
   const basis = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(t.across, t.up, t.forward))
   const upright = basis.clone().multiply(DESIGN_TO_BODY)
-  // The right side unless flipped.
-  const shoulderI = flip ? L_SHOULDER : R_SHOULDER
-  const elbowI = flip ? L_ELBOW : R_ELBOW
+  const shoulderI = ARM[side].shoulder
+  const elbowI = ARM[side].elbow
   let position: THREE.Vector3
   let quaternion = upright
   if (anchor === "chest") {
     // The joints are the skeleton's; the sternum is a quarter of the
-    // shoulder width in front of them, a fifth of the way to the hips.
-    position = t.shoulders.clone().lerp(t.hips, 0.2).addScaledVector(t.forward, t.width * 0.25)
+    // shoulder width in front of them, a fifth of the way down the torso
+    // (a shoulder width and a quarter down, where the hips are not seen).
+    const down = p.seen[L_HIP] && p.seen[R_HIP] ? t.shoulders.distanceTo(t.hips) : t.width * 1.25
+    position = t.shoulders.clone().addScaledVector(t.up, -down * 0.2).addScaledVector(t.forward, t.width * 0.25)
+    // The pectorals push a chest plate out as they tense.
+    if (muscle) position.addScaledVector(t.forward, muscle.chest * BULGE_CM.chest)
   } else if (anchor === "shoulder") {
-    position = p.P[shoulderI].clone().addScaledVector(t.up, 5)
+    // The point of the shoulder is carried by the arm: raised, the
+    // deltoid and the top of the shoulder turn with it about halfway.
+    let turn = new THREE.Quaternion()
+    if (p.seen[elbowI]) {
+      const arm = p.P[elbowI].clone().sub(p.P[shoulderI]).normalize()
+      turn = new THREE.Quaternion().slerp(new THREE.Quaternion().setFromUnitVectors(t.up.clone().negate(), arm), 0.45)
+    }
+    quaternion = turn.clone().multiply(upright)
+    const top = t.up.clone().applyQuaternion(turn)
+    position = p.P[shoulderI].clone().addScaledVector(top, 5 + (muscle ? muscle.shoulder * BULGE_CM.shoulder : 0))
   } else {
     if (!p.seen[elbowI]) return null
     const along = p.P[elbowI].clone().sub(p.P[shoulderI])
     const length = along.length()
     along.normalize()
-    const outward = t.across.clone().multiplyScalar(flip ? 1 : -1)
+    const outward = t.across.clone().multiplyScalar(side === "left" ? 1 : -1)
     outward.addScaledVector(along, -outward.dot(along)).normalize()
-    const side = new THREE.Vector3().crossVectors(outward, along)
-    quaternion = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(along, side, outward))
-    position = p.P[shoulderI].clone().addScaledVector(along, length / 2)
+    const sideways = new THREE.Vector3().crossVectors(outward, along)
+    quaternion = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(along, sideways, outward))
+    // Armour on the outside of the arm rides out on the tensed muscle.
+    position = p.P[shoulderI].clone().addScaledVector(along, length / 2).addScaledVector(outward, muscle ? muscle.upper_arm * BULGE_CM.upper_arm * 0.5 : 0)
   }
   const u = (p.image[L_SHOULDER].x + p.image[R_SHOULDER].x) / 2
   const v = (p.image[L_SHOULDER].y + p.image[R_SHOULDER].y) / 2
@@ -469,6 +588,10 @@ function bodyAnchor(p: PoseSense, anchor: Anchor, flip: boolean): Tracked | null
 }
 
 function handAnchor(h: HandSense, anchor: Anchor, body: PoseSense | null): Tracked {
+  if (isFingerAnchor(anchor)) {
+    const bone = h.bones.get(anchor)!
+    return { pose: { position: bone.position.clone(), quaternion: bone.quaternion.clone() }, reference: { u: h.image[0].x, v: h.image[0].y, cm: -h.P[0].z } }
+  }
   let along = h.along.clone()
   if (anchor !== "hand" && body) {
     // The body's forearm on the side whose wrist is under this hand's.
@@ -493,10 +616,53 @@ function handAnchor(h: HandSense, anchor: Anchor, body: PoseSense | null): Track
   return { pose: { position, quaternion }, reference: { u: h.image[0].x, v: h.image[0].y, cm: -P[0].z } }
 }
 
+// --- muscle ----------------------------------------------------------------------------
+
+/** How tensed each muscle group of one side is, 0 relaxed to 1 fully. */
+export interface Muscles {
+  /** The forearm's flexors: the grip. */
+  forearm: number
+  /** The biceps: the elbow bent, more so gripping. */
+  upper_arm: number
+  /** The deltoid: the arm raised. */
+  shoulder: number
+  /** The pectoral: the arm driven forward and across. */
+  chest: number
+}
+
+/** How far each swells at full tension, cm. */
+export const BULGE_CM = { forearm: 0.5, upper_arm: 1.0, shoulder: 0.6, chest: 0.6 }
+
+function musclesOf(hand: HandSense | null, body: PoseSense | null, side: Side): Muscles {
+  // The grip: the four fingers' curl, the thumb's counting for less.
+  const grip = hand ? (hand.curl[1] + hand.curl[2] + hand.curl[3] + hand.curl[4] + hand.curl[0] * 0.5) / 4.5 : 0
+  const m: Muscles = { forearm: grip, upper_arm: 0, shoulder: 0, chest: 0 }
+  if (!body) return m
+  const { shoulder: s, elbow: e, wrist: w } = ARM[side]
+  if (!body.seen[s] || !body.seen[e]) return m
+  const t = torso(body)
+  const upper = body.P[e].clone().sub(body.P[s]).normalize()
+  const deg = THREE.MathUtils.radToDeg
+  // Raised: the arm's angle from hanging straight down.
+  const raised = deg(upper.angleTo(t.up.clone().negate()))
+  m.shoulder = THREE.MathUtils.clamp((raised - 20) / 80, 0, 1)
+  if (body.seen[w]) {
+    const lower = body.P[w].clone().sub(body.P[e]).normalize()
+    const flexed = deg(upper.angleTo(lower))
+    m.upper_arm = THREE.MathUtils.clamp((flexed - 30) / 95, 0, 1) * (0.55 + 0.45 * grip)
+  }
+  // Forward of the chest and in toward the middle.
+  const inward = t.across.clone().multiplyScalar(side === "left" ? -1 : 1)
+  m.chest = THREE.MathUtils.clamp(upper.dot(t.forward) * 1.1 + upper.dot(inward) * 0.7 - 0.25, 0, 1)
+  return m
+}
+
 // --- a frame -------------------------------------------------------------------------
 
 export interface Senses {
   face?: FaceSense | null
+  /** Each hand seen; `hand` is the one held up to the camera. */
+  hands?: HandSense[]
   hand?: HandSense | null
   pose?: PoseSense | null
 }
@@ -507,18 +673,45 @@ export function sense(video: HTMLVideoElement, sensors: Iterable<Sensor>, flip: 
   if (!video.videoWidth) return out
   for (const s of new Set(sensors)) {
     if (s === "face") out.face = senseFace(video)
-    else if (s === "hand") out.hand = senseHand(video, flip)
-    else out.pose = sensePose(video)
+    else if (s === "hand") {
+      out.hands = senseHands(video, flip)
+      out.hand = largest(out.hands, video.videoWidth, video.videoHeight)
+    } else out.pose = sensePose(video)
   }
   return out
 }
 
-/** Where the anchor is this frame, or null when it is not in view. */
-export function anchorPose(senses: Senses, anchor: Anchor, flip: boolean): Tracked | null {
+/** The side of him an anchor is followed on: a segment's own, else the
+ *  build's (his right, his left when flipped). */
+export function sideOf(side: Side | undefined, flip: boolean): Side {
+  return side ?? (flip ? "left" : "right")
+}
+
+/** Each side's muscles this frame. */
+export function readMuscles(senses: Senses): Record<Side, Muscles> {
+  const hand = (side: Side) => senses.hands?.find((h) => h.side === side) ?? null
+  return { left: musclesOf(hand("left"), senses.pose ?? null, "left"), right: musclesOf(hand("right"), senses.pose ?? null, "right") }
+}
+
+/**
+ * Where the anchor is this frame, or null when it is not in view. `side`
+ * pins it to one of his arms (a gauntlet pair); without it a hand anchor
+ * follows whichever hand is held up, a body anchor his right (left flipped).
+ */
+export function anchorPose(senses: Senses, anchor: Anchor, flip: boolean, side?: Side, muscles?: Record<Side, Muscles>): Tracked | null {
   if (anchor === "desk") return null
   if (anchor === "face") return senses.face?.tracked ?? null
-  if (BODY_ANCHORS.includes(anchor)) return senses.pose ? bodyAnchor(senses.pose, anchor, flip) : null
-  return senses.hand ? handAnchor(senses.hand, anchor, senses.pose ?? null) : null
+  const s = sideOf(side, flip)
+  if (BODY_ANCHORS.includes(anchor)) {
+    if (!senses.pose) return null
+    // The chest takes both sides' pectorals.
+    const m = muscles?.[s] ?? null
+    const both = m && muscles && anchor === "chest" ? { ...m, chest: Math.max(muscles.left.chest, muscles.right.chest) } : m
+    return bodyAnchor(senses.pose, anchor, s, both)
+  }
+  const hand = side ? senses.hands?.find((h) => h.side === s) : senses.hand
+  if (!hand) return null
+  return handAnchor(hand, anchor, senses.pose ?? null)
 }
 
 /** A point of known distance, for the depth map, from whatever was seen. */
@@ -526,25 +719,31 @@ export function referenceOf(senses: Senses, anchored: Tracked | null): Tracked["
   return anchored?.reference ?? senses.face?.tracked.reference ?? null
 }
 
-/** The gestures he is making this frame. */
-export function readCues(senses: Senses): Set<Cue> {
-  const cues = new Set<Cue>()
-  const h = senses.hand
-  if (h) {
+/** The gestures he is making this frame: each as itself ("palm"), and a
+ *  hand's or arm's also with its side ("palm:left"), for an action that
+ *  rides on that side only - his left palm fires the left repulsor. */
+export function readCues(senses: Senses): Set<string> {
+  const cues = new Set<string>()
+  const add = (cue: Cue, side?: Side) => {
+    cues.add(cue)
+    if (side) cues.add(`${cue}:${side}`)
+  }
+  for (const h of senses.hands ?? []) {
     const [index, middle, ring, pinky] = [0, 1, 2, 3]
     const centre = [0, 5, 9, 13, 17].reduce((s, i) => s.add(h.P[i]), new THREE.Vector3()).divideScalar(5)
     const toCamera = centre.clone().negate().normalize()
     const palmOut = h.back.clone().negate().dot(toCamera) > 0.45
-    if (h.out.every(Boolean) && palmOut) cues.add("palm")
-    if (h.curled.every(Boolean)) cues.add("fist")
-    if (h.out[index] && h.curled[middle] && h.curled[ring] && h.curled[pinky]) cues.add("point")
-    if (h.out[index] && h.out[pinky] && h.curled[middle] && h.curled[ring]) cues.add("thwip")
+    if (h.out.every(Boolean) && palmOut) add("palm", h.side)
+    if (h.curled.every(Boolean)) add("fist", h.side)
+    if (h.out[index] && h.curled[middle] && h.curled[ring] && h.curled[pinky]) add("point", h.side)
+    if (h.out[index] && h.out[pinky] && h.curled[middle] && h.curled[ring]) add("thwip", h.side)
   }
-  if ((senses.face?.jawOpen ?? 0) > 0.45) cues.add("jaw")
+  if ((senses.face?.jawOpen ?? 0) > 0.45) add("jaw")
   const p = senses.pose
   if (p) {
-    for (const [w, s] of [[L_WRIST, L_SHOULDER], [R_WRIST, R_SHOULDER]]) {
-      if (p.seen[w] && p.seen[s] && p.image[w].y < p.image[s].y - 0.05) cues.add("raise")
+    for (const side of ["left", "right"] as const) {
+      const { wrist: w, shoulder: s } = ARM[side]
+      if (p.seen[w] && p.seen[s] && p.image[w].y < p.image[s].y - 0.05) add("raise", side)
     }
   }
   return cues

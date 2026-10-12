@@ -131,7 +131,7 @@ interface Target {
 
 interface Live {
   action: WearAction
-  cue: Cue
+  cue: string
   color: THREE.Color
   glow: THREE.Sprite
   light: THREE.PointLight
@@ -166,7 +166,9 @@ export class ActionRig {
     private readonly overlay: THREE.Scene,
     private readonly model: THREE.Object3D,
     actions: WearAction[],
-    cueFor: (cue: Cue) => Cue,
+    /** The cue an action listens for: the gesture, with its side
+     *  ("palm:left") when the action rides on one side's segment. */
+    cueFor: (cue: Cue, action: WearAction) => string,
     private readonly onFire: (name: string) => void,
     /** The frame an action's `at` is in (the segment it rides on: a palm
      *  repulsor moves with the tracked hand); default the whole model. */
@@ -181,7 +183,7 @@ export class ActionRig {
       scene.add(light)
       const live: Live = {
         action,
-        cue: cueFor(action.cue),
+        cue: cueFor(action.cue, action),
         color,
         glow,
         light,
@@ -497,7 +499,7 @@ export class ActionRig {
   }
 
   /** Advance everything by dt seconds; `cues` are the gestures seen now. */
-  update(dt: number, cues: Set<Cue>, gestures: boolean, visible: boolean, camera: THREE.PerspectiveCamera) {
+  update(dt: number, cues: Set<string>, gestures: boolean, visible: boolean, camera: THREE.PerspectiveCamera) {
     this.time += dt
     const spill = { strength: 0, at: null as THREE.Vector3 | null, color: null as THREE.Color | null }
     const lit = (strength: number, at: THREE.Vector3, color: THREE.Color) => {

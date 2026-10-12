@@ -60,8 +60,48 @@ export interface Placement {
   rot: number[]
 }
 
-export const ANCHORS = ["face", "chest", "shoulder", "upper_arm", "forearm", "wrist", "hand", "desk"] as const
+/** Where a whole build can be worn. */
+export const WEAR_ANCHORS = ["face", "chest", "shoulder", "upper_arm", "forearm", "wrist", "hand", "desk"] as const
+export const FINGERS = ["thumb", "index", "middle", "ring", "pinky"] as const
+export type Finger = (typeof FINGERS)[number]
+/** Each bone of each finger, base to tip (the thumb's 1 is its metacarpal,
+ *  the bone in the palm): a segment on one follows that bone on its own. */
+export const FINGER_ANCHORS = [
+  "thumb_1", "thumb_2", "thumb_3",
+  "index_1", "index_2", "index_3",
+  "middle_1", "middle_2", "middle_3",
+  "ring_1", "ring_2", "ring_3",
+  "pinky_1", "pinky_2", "pinky_3",
+] as const
+export type FingerAnchor = (typeof FINGER_ANCHORS)[number]
+export const ANCHORS = [...WEAR_ANCHORS, ...FINGER_ANCHORS] as const
 export type Anchor = (typeof ANCHORS)[number]
+export type Side = "left" | "right"
+
+export function isFingerAnchor(anchor: Anchor | undefined): anchor is FingerAnchor {
+  return !!anchor && (FINGER_ANCHORS as readonly string[]).includes(anchor)
+}
+
+const WEAR_LABEL: Record<(typeof WEAR_ANCHORS)[number], string> = {
+  face: "FACE",
+  chest: "CHEST",
+  shoulder: "SHOULDER",
+  upper_arm: "ARM",
+  forearm: "FOREARM",
+  wrist: "WRIST",
+  hand: "HAND",
+  desk: "DESK",
+}
+const BONE_LABEL = ["BASE", "MIDDLE", "TIP"]
+
+/** An anchor's name in capitals: "ARM", "INDEX MIDDLE". */
+export function anchorLabel(anchor: Anchor): string {
+  if (!isFingerAnchor(anchor)) return WEAR_LABEL[anchor]
+  const [finger, bone] = anchor.split("_")
+  // The thumb's bones: the one in the palm, then its two joints out.
+  const label = finger === "thumb" ? ["PALM", "BASE", "TIP"][+bone - 1] : BONE_LABEL[+bone - 1]
+  return `${finger.toUpperCase()} ${label}`
+}
 /** Anchors found by the body-pose model rather than the face or hands. */
 export const BODY_ANCHORS: readonly Anchor[] = ["chest", "shoulder", "upper_arm"]
 
@@ -116,6 +156,9 @@ export interface Segment {
   /** Try-on: the body point it follows on its own (the hand, while the
    *  bracer stays on the wrist). Without one it rides with its parent. */
   anchor?: Anchor
+  /** Which of his arms that anchor is on, for a pair (gauntlets): default
+   *  the side the build is worn on (his right, unless flipped). */
+  side?: Side
   /** The design point that sits on that anchor (default: where the
    *  anchor is at rest relative to the main one, along the arm). */
   at?: number[]

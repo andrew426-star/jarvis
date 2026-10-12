@@ -1,7 +1,7 @@
 import * as THREE from "three"
 
 import type { Cabling } from "@/lib/workshop/project/wires3d"
-import { PARTS, type Anchor, type Part, type PrintedPart, type Project, type Segment } from "@/lib/workshop/project/types"
+import { FINGERS, isFingerAnchor, PARTS, type Anchor, type FingerAnchor, type Part, type PrintedPart, type Project, type Segment, type Side } from "@/lib/workshop/project/types"
 
 // A project's rig: the pieces of it that move on their own (types.ts
 // Segment). Every project with a controller gets one segment for it, so
@@ -9,7 +9,9 @@ import { PARTS, type Anchor, type Part, type PrintedPart, type Project, type Seg
 // mount, a belt, a back plate - with its wiring following. A wearable on
 // the arm with no rig of its own gets the joint it obviously has: a
 // gauntlet's hand plate hinged at the wrist and tracked on the hand,
-// while the bracer stays on the wrist.
+// while the bracer stays on the wrist. Finger armour named by finger and
+// bone ("Index 2 R", "thumb tip") gets a segment on that bone, so every
+// cap follows its own bone of the real finger.
 //
 // In 3D each segment is three groups, in the design frame (mm, z up):
 //   holder  - what the stage's exploded view moves;
@@ -30,6 +32,35 @@ const FREE_LIMITS = [[-180, 180], [-180, 180], [-180, 180]]
 
 const HAND_RE = /\b(hand|palm|finger|knuckle|glove|repulsor)/i
 const ARM_RE = /\b(wrist|bracer|cuff|forearm|vambrace|gauntlet)/i
+/** A finger bone's reach: curl (y) and a little side to side (z). */
+const BONE_LIMITS = [[-10, 10], [-20, 110], [-25, 25]]
+
+/** The finger bone a name means: a finger, then which bone (1 base, 2
+ *  middle, 3 tip; the thumb's 1 is in the palm). Null if it names none. */
+export function fingerBoneOf(name: string): FingerAnchor | null {
+  const words = name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  const alias: Record<string, (typeof FINGERS)[number]> = { little: "pinky", pinkie: "pinky", pointer: "index" }
+  const finger = words.map((w) => alias[w] ?? w).find((w) => (FINGERS as readonly string[]).includes(w)) as (typeof FINGERS)[number] | undefined
+  if (!finger) return null
+  // "middle" is a finger before it is a bone: count only the words after it.
+  const rest = words.slice(words.findIndex((w) => (alias[w] ?? w) === finger) + 1)
+  const bone = rest.some((w) => ["3", "tip", "distal", "3rd"].includes(w))
+    ? 3
+    : rest.some((w) => ["2", "mid", "middle", "intermediate", "2nd"].includes(w))
+      ? 2
+      : rest.some((w) => ["1", "base", "proximal", "1st"].includes(w))
+        ? 1
+        : null
+  return bone ? (`${finger}_${bone}` as FingerAnchor) : null
+}
+
+/** The side a name says, if any ("Bracer shell L", "Right hand"). */
+export function sideNamed(name: string): Side | undefined {
+  const words = name.toLowerCase().split(/[^a-z0-9]+/)
+  if (words.some((w) => w === "r" || w === "right")) return "right"
+  if (words.some((w) => w === "l" || w === "left")) return "left"
+  return undefined
+}
 
 export interface RigSegment extends Segment {
   /** Made up here, not saved with the project (yet). */
@@ -88,6 +119,22 @@ export function rigOf(project: Pick<Project, "parts" | "printed" | "segments" | 
   const main = project.wear?.anchor
   const free = (m: Member) => !ownerOf(out, m.key, m.group)
 
+  // Finger armour by bone, worn on the arm or hand: a segment on each
+  // named bone (not already in a segment by name), hanging from the hand
+  // plate of its side if there is one. Pieces named by side pair up.
+  const sidedBuild = all.some((m) => sideNamed(m.key)) || saved.some((s) => s.side || sideNamed(s.name))
+  if (main && (ARM_X[main] !== undefined || isFingerAnchor(main))) {
+    for (const m of project.printed) {
+      const bone = fingerBoneOf(m.name)
+      if (!bone || out.some((s) => s.members.some((k) => k.toLowerCase() === m.name.toLowerCase()))) continue
+      const side = sidedBuild ? sideNamed(m.name) : undefined
+      const hand = out.find((s) => s.anchor === "hand" && (s.side ?? sideNamed(s.name)) === side)
+      out.push({ name: m.name, members: [m.name], parent: hand?.name, anchor: bone, side, limits: BONE_LIMITS, auto: true })
+    }
+  }
+  // Saved segments named for a side follow that side.
+  if (sidedBuild) for (const s of out) if (!s.side && s.anchor) s.side = sideNamed(s.name)
+
   if (!saved.length && main && ARM_X[main] !== undefined) {
     // Grouped pieces go by their group's name, loose ones by their own.
     const pick = (re: RegExp) => {
@@ -113,6 +160,12 @@ export function rigOf(project: Pick<Project, "parts" | "printed" | "segments" | 
     }
   }
 
+  // Finger bones made before the hand plate's joint hang from it too.
+  for (const s of out) {
+    if (!s.auto || s.parent || !isFingerAnchor(s.anchor)) continue
+    s.parent = out.find((h) => h.anchor === "hand" && (h.side ?? sideNamed(h.name)) === s.side)?.name
+  }
+
   const boards = project.parts.filter((p) => PARTS[p.type]?.kind === "mcu" && !ownerOf(out, p.id, p.group))
   if (boards.length && !out.some((s) => s.name === CONTROLLER)) {
     out.push({ name: CONTROLLER, members: boards.map((p) => p.id), auto: true })
@@ -131,6 +184,7 @@ export function savedSegments(segments: RigSegment[]): Segment[] {
     if (!zero(s.pose)) out.pose = v3(s.pose)
     if (s.limits) out.limits = s.limits
     if (s.anchor) out.anchor = s.anchor
+    if (s.side) out.side = s.side
     if (s.at) out.at = v3(s.at)
     return out
   })
@@ -256,6 +310,9 @@ export class Rig {
     const main = this.mainAnchor ? ARM_X[this.mainAnchor] : undefined
     if (own !== undefined && main !== undefined) return new THREE.Vector3(own - main, 0, 0)
     const centre = j.box.isEmpty() ? new THREE.Vector3() : j.box.getCenter(new THREE.Vector3())
+    // Finger armour sits on the back of its bone: the bone's axis (where
+    // the tracker puts the anchor) runs under the cap, at its underside.
+    if (isFingerAnchor(s.anchor) && !j.box.isEmpty()) centre.z = j.box.min.z
     return centre.add(new THREE.Vector3(...v3(s.move)))
   }
 
