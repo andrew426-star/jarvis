@@ -448,6 +448,78 @@ function stoneHum(seconds = 3.2) {
   }
 }
 
+// Ultron's faceplate (lib/ultron-face.ts), as an Iron Man helmet's: the
+// latch's click, the servos' whine climbing (falling to close) as the
+// plate swings, and the clunk of it seating.
+function helm(open: boolean, seconds = 0.9) {
+  const context = ensure()
+  if (!context || !master || muted) return
+  const now = context.currentTime
+  const out = context.createGain()
+  out.gain.value = 0.5
+  out.connect(mechGain ?? master)
+  const room = context.createGain()
+  room.gain.value = 0.18
+  out.connect(room)
+  room.connect(cathedral(context))
+  // A burst of filtered noise: the latch, and at the end the seat.
+  const noise = (at: number, length: number, freq: number, level: number) => {
+    const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * length), context.sampleRate)
+    const data = buffer.getChannelData(0)
+    for (let i = 0; i < data.length; i += 1) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 3)
+    const src = context.createBufferSource()
+    src.buffer = buffer
+    const band = context.createBiquadFilter()
+    band.type = "bandpass"
+    band.frequency.value = freq
+    band.Q.value = 1.4
+    const g = context.createGain()
+    g.gain.value = level
+    src.connect(band)
+    band.connect(g)
+    g.connect(out)
+    src.start(at)
+  }
+  noise(now, 0.06, 3200, 0.9)
+  // The servos: two detuned saws under a band-pass sweeping with them.
+  const band = context.createBiquadFilter()
+  band.type = "bandpass"
+  band.Q.value = 3
+  const whine = context.createGain()
+  whine.gain.setValueAtTime(0, now + 0.04)
+  whine.gain.linearRampToValueAtTime(0.16, now + 0.14)
+  whine.gain.setValueAtTime(0.16, now + seconds - 0.12)
+  whine.gain.linearRampToValueAtTime(0, now + seconds)
+  band.connect(whine)
+  whine.connect(out)
+  const [from, to] = open ? [190, 430] : [430, 190]
+  band.frequency.setValueAtTime(from * 4, now)
+  band.frequency.linearRampToValueAtTime(to * 4, now + seconds)
+  for (const detune of [0, 7]) {
+    const osc = context.createOscillator()
+    osc.type = "sawtooth"
+    osc.detune.value = detune
+    osc.frequency.setValueAtTime(from, now + 0.04)
+    osc.frequency.linearRampToValueAtTime(to, now + seconds)
+    osc.connect(band)
+    osc.start(now + 0.04)
+    osc.stop(now + seconds + 0.05)
+  }
+  // Seated: a low thump and a click over it.
+  const thump = context.createOscillator()
+  thump.frequency.setValueAtTime(90, now + seconds)
+  thump.frequency.exponentialRampToValueAtTime(45, now + seconds + 0.25)
+  const tg = context.createGain()
+  tg.gain.setValueAtTime(0, now + seconds)
+  tg.gain.linearRampToValueAtTime(0.5, now + seconds + 0.01)
+  tg.gain.exponentialRampToValueAtTime(0.0001, now + seconds + 0.3)
+  thump.connect(tg)
+  tg.connect(out)
+  thump.start(now + seconds)
+  thump.stop(now + seconds + 0.35)
+  noise(now + seconds, 0.05, 2400, 0.7)
+}
+
 // A minor, F major, D minor, E major: slow and modal, a chant rather
 // than a song.
 const CHORDS = [
@@ -912,6 +984,10 @@ export const sfx = {
   // Ultron's Mind Stone flaring (lib/ultron-face.ts).
   stoneHum(seconds?: number): void {
     stoneHum(seconds)
+  },
+  // Ultron's faceplate opening or closing (lib/ultron-face.ts).
+  helm(open: boolean, seconds?: number): void {
+    helm(open, seconds)
   },
 
   // Standby: the whole sound engine goes quiet (and stops decoding the

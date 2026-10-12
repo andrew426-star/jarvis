@@ -621,9 +621,140 @@ class VisionMouth {
   }
 }
 
+/** MCU Vision's face, painted flat for the sculpted face behind the
+ *  faceplate: crimson skin, the gold seams that run from his brow round
+ *  the eyes and down the cheeks to the jaw, the nose's seams, the chin's
+ *  plate, and the silver-gold panels at the sides of his face - each seam
+ *  cut in with a darker groove beside it, as the film's are. Laid out in
+ *  the face's own coordinates: u across (-1.3..1.3, the face's edges at
+ *  +-1), v up (-0.1 chin .. 1.1 brow). */
+function visionSkin(eyeV: number, mouthV: number, noseV: number): THREE.CanvasTexture {
+  const S = 1024
+  const canvas = document.createElement("canvas")
+  canvas.width = canvas.height = S
+  const c = canvas.getContext("2d")!
+  const X = (u: number) => ((u + 1.3) / 2.6) * S
+  const Y = (v: number) => (1 - (v + 0.1) / 1.2) * S
+  // Skin: crimson, a touch darker toward the edges.
+  const skin = c.createRadialGradient(X(0), Y(eyeV - 0.15), S * 0.05, X(0), Y(eyeV - 0.15), S * 0.55)
+  skin.addColorStop(0, "#c03358")
+  skin.addColorStop(1, "#8e2140")
+  c.fillStyle = skin
+  c.fillRect(0, 0, S, S)
+  // The side panels: silver-gold metal from the temple down past the jaw.
+  for (const side of [1, -1]) {
+    const grad = c.createLinearGradient(X(side * 0.78), 0, X(side * 1.3), 0)
+    grad.addColorStop(0, "#c9a85a")
+    grad.addColorStop(0.5, "#b9b3a6")
+    grad.addColorStop(1, "#8d877c")
+    c.fillStyle = grad
+    c.beginPath()
+    c.moveTo(X(side * 0.86), Y(1.1))
+    c.bezierCurveTo(X(side * 0.8), Y(eyeV), X(side * 0.86), Y(mouthV), X(side * 0.62), Y(-0.1))
+    c.lineTo(X(side * 1.3), Y(-0.1))
+    c.lineTo(X(side * 1.3), Y(1.1))
+    c.closePath()
+    c.fill()
+  }
+  /** A seam: a dark groove, then the gold line in it. */
+  const seam = (draw: () => void, width: number) => {
+    c.lineCap = "round"
+    c.lineJoin = "round"
+    c.strokeStyle = "#5a1027"
+    c.lineWidth = width * 2.4
+    c.beginPath()
+    draw()
+    c.stroke()
+    c.strokeStyle = "#e3c271"
+    c.lineWidth = width
+    c.beginPath()
+    draw()
+    c.stroke()
+  }
+  for (const side of [1, -1]) {
+    // From the brow, round the outside of the eye, down the cheek to the jaw.
+    seam(() => {
+      c.moveTo(X(side * 0.1), Y(1.08))
+      c.bezierCurveTo(X(side * 0.42), Y(eyeV + 0.24), X(side * 0.76), Y(eyeV + 0.1), X(side * 0.74), Y(eyeV - 0.12))
+      c.bezierCurveTo(X(side * 0.72), Y(mouthV + 0.12), X(side * 0.62), Y(mouthV - 0.06), X(side * 0.36), Y(0.02))
+    }, 7)
+    // Under the eye, out to the cheekbone.
+    seam(() => {
+      c.moveTo(X(side * 0.2), Y(eyeV - 0.1))
+      c.quadraticCurveTo(X(side * 0.48), Y(eyeV - 0.16), X(side * 0.72), Y(eyeV - 0.06))
+    }, 5)
+    // Down the side of the nose.
+    seam(() => {
+      c.moveTo(X(side * 0.09), Y(eyeV + 0.16))
+      c.lineTo(X(side * 0.08), Y(noseV + 0.08))
+    }, 4)
+    // From the nose's wing to the corner of the mouth.
+    seam(() => {
+      c.moveTo(X(side * 0.18), Y(noseV))
+      c.quadraticCurveTo(X(side * 0.34), Y((noseV + mouthV) / 2), X(side * 0.34), Y(mouthV - 0.04))
+    }, 4)
+  }
+  // The forehead's seam down the middle, under the stone.
+  seam(() => {
+    c.moveTo(X(0), Y(1.1))
+    c.lineTo(X(0), Y(eyeV + 0.12))
+  }, 6)
+  // The chin's plate.
+  seam(() => {
+    c.moveTo(X(-0.3), Y(mouthV - 0.12))
+    c.bezierCurveTo(X(-0.28), Y(0.02), X(0.28), Y(0.02), X(0.3), Y(mouthV - 0.12))
+  }, 5)
+  const map = new THREE.CanvasTexture(canvas)
+  map.colorSpace = THREE.SRGBColorSpace
+  map.anisotropy = 4
+  return map
+}
+
+/** One of Vision's eyes: the white, a blue iris that follows his gaze, the
+ *  pupil, and a dark upper lid that closes to blink. In its own frame, x
+ *  across, y up, z out of the face; r its half width. */
+class VisionEye {
+  readonly group = new THREE.Group()
+  readonly iris = new THREE.Group()
+  private readonly lid: THREE.Mesh
+
+  constructor(readonly r: number, side: number, bands: THREE.Texture) {
+    const white = new THREE.Mesh(new THREE.CircleGeometry(r, 40), new THREE.MeshToonMaterial({ color: 0xece2d8, gradientMap: bands }))
+    white.scale.y = 0.48
+    this.group.add(white)
+    const iris = new THREE.Mesh(new THREE.CircleGeometry(r * 0.44, 32), new THREE.MeshBasicMaterial({ color: 0x3f8fc4 }))
+    const ring = new THREE.Mesh(new THREE.RingGeometry(r * 0.4, r * 0.44, 32), new THREE.MeshBasicMaterial({ color: 0x173a55 }))
+    const pupil = new THREE.Mesh(new THREE.CircleGeometry(r * 0.18, 24), new THREE.MeshBasicMaterial({ color: 0x07080b }))
+    const glint = new THREE.Mesh(new THREE.CircleGeometry(r * 0.07, 12), new THREE.MeshBasicMaterial({ color: 0xffffff }))
+    iris.position.z = 0.002
+    ring.position.z = 0.0025
+    pupil.position.z = 0.003
+    glint.position.set(-r * 0.12 * side, r * 0.12, 0.004)
+    this.iris.add(iris, ring, pupil, glint)
+    // Only the part over the white shows: clipped by the white's outline in
+    // a stencil would be costly; the iris is small enough to stay inside.
+    this.group.add(this.iris)
+    this.lid = new THREE.Mesh(new THREE.CircleGeometry(r * 1.06, 40, 0, Math.PI), new THREE.MeshToonMaterial({ color: 0x8e2140, gradientMap: bands }))
+    this.lid.position.z = 0.006
+    this.group.add(this.lid)
+  }
+
+  /** Gaze -1..1 each way; open 0 (shut) .. 1. */
+  set(gaze: THREE.Vector2, open: number) {
+    this.iris.position.set(gaze.x * this.r * 0.42, gaze.y * this.r * 0.14, 0)
+    // The lid comes down from above, over the top of the white.
+    this.lid.scale.set(1, 0.5 * (1 - open) + 0.06, 1)
+    this.lid.position.y = this.r * 0.48 * (1 - (1 - open) * 1.0) - this.r * 0.02
+    this.lid.rotation.z = Math.PI
+    this.lid.scale.y = -(0.06 + 0.5 * (1 - open))
+  }
+}
+
 // --- the head ----------------------------------------------------------------
 
 const SHARDS = 7
+/** How long the faceplate takes to open or close, s. */
+const HELM_S = 0.9
 
 interface Shard {
   mesh: THREE.LineLoop
@@ -662,10 +793,18 @@ export class UltronFace {
   private readonly goldMaterial: THREE.MeshToonMaterial
   private readonly skinMaterial: THREE.MeshToonMaterial
   private readonly lipMaterial: THREE.MeshToonMaterial
-  /** The lower faceplate, which slides back to show Vision's mouth. */
-  private plate: THREE.Mesh | null = null
+  /** The faceplate, brow to chin, on its hinge: swings up into the helmet,
+   *  as an Iron Man helmet's does, to show Vision's face inside. */
+  private faceplate: THREE.Group | null = null
+  private hinge = new THREE.Vector3()
   private plateOpen = 0
+  private plateGoal = 0
+  /** The slots' glowing screen, which rides on the faceplate. */
+  private screen: THREE.Mesh | null = null
   private mouth: VisionMouth | null = null
+  private readonly visionEyes: VisionEye[] = []
+  private readonly visionMaterial: THREE.MeshToonMaterial
+  private readonly bands: THREE.Texture
   private gemAt: THREE.Vector3 | null = null
   private ring: THREE.Mesh | null = null
   /** The Mind Stone's flare, 1 at its peak, decaying. */
@@ -713,6 +852,9 @@ export class UltronFace {
     // Vision's skin, in the reference's crimson, and his lips a shade deeper.
     this.skinMaterial = new THREE.MeshToonMaterial({ color: 0xb02c4e, gradientMap: bands, side: THREE.DoubleSide })
     this.lipMaterial = new THREE.MeshToonMaterial({ color: 0x8a1b3c, gradientMap: bands, side: THREE.DoubleSide })
+    // Vision's face: its painted skin (visionSkin) on the toon bands.
+    this.visionMaterial = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: bands, side: THREE.DoubleSide })
+    this.bands = bands
     this.glowMap = glow
     this.coreMaterial = new THREE.MeshBasicMaterial({ color, vertexColors: true })
 
@@ -796,6 +938,9 @@ export class UltronFace {
       this.group.add(mesh)
     }
 
+    // The built head is the fallback only: hidden until loading finds no
+    // model, so the old head never shows while his own loads.
+    this.sculpt.visible = false
     this.head.add(this.sculpt)
     this.head.scale.setScalar(0.86)
     this.head.position.y = 0.05
@@ -833,13 +978,17 @@ export class UltronFace {
         if (child === this.model) return
         const part = child as THREE.Mesh
         part.geometry?.dispose()
+        // (An array of materials is the shared metal and gold.)
+        if (Array.isArray(part.material)) return
         const material = part.material as THREE.MeshBasicMaterial | undefined
         // The shared toon materials (metal, gem, gold, skin, lips) stay.
-        if (!material || [this.metal, this.gemMaterial, this.goldMaterial, this.skinMaterial, this.lipMaterial].includes(material as never)) return
+        if (!material || [this.metal, this.gemMaterial, this.goldMaterial, this.skinMaterial, this.lipMaterial, this.visionMaterial].includes(material as never)) return
         material.map?.dispose()
         material.dispose()
       })
-      this.plate = null
+      this.faceplate = null
+      this.screen = null
+      this.visionEyes.length = 0
       this.mouth = null
       this.ring = null
       this.gemAt = null
@@ -885,7 +1034,8 @@ export class UltronFace {
     const metalTris: number[] = []
     const gemTris: number[] = []
     const goldTris: number[] = []
-    const plateTris: number[] = []
+    const faceTris: number[] = []
+    const faceGoldTris: number[] = []
     const centroid = new THREE.Vector3()
     const gemCentre = new THREE.Vector3()
     const a = new THREE.Vector3()
@@ -900,7 +1050,7 @@ export class UltronFace {
       if (front.isGem(centroid)) {
         gemTris.push(...tri)
         gemCentre.add(centroid)
-      } else if (front.isPlate(centroid)) plateTris.push(...tri)
+      } else if (front.isFace(centroid)) (front.isGold(centroid) ? faceGoldTris : faceTris).push(...tri)
       else if (front.isGold(centroid)) goldTris.push(...tri)
       else metalTris.push(...tri)
     }
@@ -914,24 +1064,43 @@ export class UltronFace {
     // The ink line round it: the same surface pushed out a little along its
     // normals, drawn from the back in near-black (an inverted hull).
     this.model.add(inkOutline(geometry, 0.032, body))
-    // The lower faceplate: its own mesh on the same surface, so it can slide.
-    this.plate = null
-    if (plateTris.length) {
+    // The faceplate: its own mesh on the same surface, hung from its hinge
+    // (the group sits at the hinge; the mesh back by it, so at rest it is
+    // exactly where it was). The slots' screen rides on it.
+    this.faceplate = null
+    this.screen = front.screen
+    this.hinge.copy(front.hinge)
+    if (faceTris.length + faceGoldTris.length) {
       const plateGeometry = new THREE.BufferGeometry()
       plateGeometry.setAttribute("position", geometry.getAttribute("position"))
       plateGeometry.setAttribute("normal", geometry.getAttribute("normal"))
-      plateGeometry.setIndex(plateTris)
-      this.plate = new THREE.Mesh(plateGeometry, this.metal)
-      this.plate.add(inkOutline(geometry, 0.032, plateTris))
-      this.model.add(this.plate)
+      plateGeometry.setIndex([...faceTris, ...faceGoldTris])
+      plateGeometry.addGroup(0, faceTris.length, 0)
+      plateGeometry.addGroup(faceTris.length, faceGoldTris.length, 1)
+      const plate = new THREE.Mesh(plateGeometry, [this.metal, this.goldMaterial])
+      plate.add(inkOutline(geometry, 0.032, [...faceTris, ...faceGoldTris]))
+      plate.position.copy(front.hinge).negate()
+      if (front.screen) plate.add(front.screen)
+      this.faceplate = new THREE.Group()
+      this.faceplate.position.copy(front.hinge)
+      this.faceplate.add(plate)
+      this.model.add(this.faceplate)
+    } else if (front.screen) this.model.add(front.screen)
+    // Vision's face inside: the sculpted sheet, his eyes, his lips.
+    if (front.vision) {
+      this.model.add(front.vision.sheet)
+      front.vision.eyes.forEach((at, i) => {
+        const eye = new VisionEye(front.vision!.eyeSize, i === 0 ? 1 : -1, this.bands)
+        eye.group.position.copy(at)
+        this.visionEyes.push(eye)
+        this.model!.add(eye.group)
+      })
     }
-    if (front.skin) this.model.add(front.skin)
-    // Vision's mouth, behind the plate.
     this.mouth = null
     if (front.mouth) {
       const w = front.mouth.width
       this.mouth = new VisionMouth(w, w * 0.3, this.lipMaterial)
-      this.mouth.group.position.copy(front.mouth.at).add(new THREE.Vector3(0, w * 0.05, -0.11))
+      this.mouth.group.position.copy(front.mouth.at)
       this.model.add(this.mouth.group)
     }
     this.gemAt = null
@@ -951,7 +1120,6 @@ export class UltronFace {
       this.ring.position.copy(gemCentre).add(new THREE.Vector3(0, 0, 0.15))
       this.model.add(this.ring)
     }
-    if (front.screen) this.model.add(front.screen)
     this.head.add(this.model)
     return front.eyes
   }
@@ -966,13 +1134,15 @@ export class UltronFace {
     eyes: THREE.Vector3[]
     /** Whether a point of the model is the gem: on its front surface, in the socket. */
     isGem: (p: THREE.Vector3) => boolean
-    /** The lower faceplate over the mouth, which slides back. */
-    isPlate: (p: THREE.Vector3) => boolean
+    /** The faceplate: the helmet's face, brow to chin, which hinges up. */
+    isFace: (p: THREE.Vector3) => boolean
+    /** Its hinge: the axis (along x) through this point. */
+    hinge: THREE.Vector3
     /** The gold framing the lower face. */
     isGold: (p: THREE.Vector3) => boolean
-    /** Vision's skin, behind the lower openings. */
-    skin: THREE.Mesh | null
-    /** Where the mouth is, and how wide its slot. */
+    /** Vision's face inside: the sculpted sheet, where his eyes go, and their size. */
+    vision: { sheet: THREE.Mesh; eyes: THREE.Vector3[]; eyeSize: number } | null
+    /** Where Vision's lips go, and how wide. */
     mouth: { at: THREE.Vector3; width: number } | null
   } {
     const box = geometry.boundingBox!
@@ -1217,6 +1387,7 @@ export class UltronFace {
     const plateMask = new Uint8Array(N * N)
     const goldMask = new Uint8Array(N * N)
     let mouthBox: { x0: number; x1: number; y0: number; y1: number } | null = null
+    let visionMouth: { at: THREE.Vector3; width: number } | null = null
     // The background around the outline: empty pixels reached from the
     // image's border. Empty pixels it does not reach are seen through the
     // helmet - an opening, like the mouth slot on a helmet open beneath.
@@ -1308,35 +1479,107 @@ export class UltronFace {
       }
     }
 
-    // Vision's skin: a sheet behind the lower openings and the plate, set
-    // back from the rims, seen through them (and where the plate was).
-    let skin: THREE.Mesh | null = null
+    // The faceplate: the whole face of the helmet, brow to chin, as an Iron
+    // Man helmet's is - the front surface between the cheeks, below the Mind
+    // Stone (which stays on the brow, where Vision's own sits).
+    let gemBottom = N
+    for (let i = 0; i < N * N; i += 1) if (gem[i]) gemBottom = Math.min(gemBottom, Math.floor(i / N))
+    let eyeOuter = 0
+    for (let i = 0; i < N * N; i += 1) if (eye[i]) eyeOuter = Math.max(eyeOuter, Math.abs((i % N) - mid))
+    if (!eyeOuter) eyeOuter = 0.24 * N
+    const browPy = found ? Math.max(clusterTop + 3, Math.min(gemBottom - 3, clusterTop + Math.round(0.06 * height))) : Math.round(top - 0.25 * height)
+    const lowest = mouthBox ? mouthBox.y0 : browPy - Math.round(0.45 * height)
+    const chinPy = Math.max(bottom + 2, lowest - Math.round(0.1 * height))
+    const faceSpan = Math.max(1, browPy - chinPy)
+    /** The faceplate's half width at a row: the eye slots' reach at the
+     *  brow, narrowing to the chin. */
+    const eyesBottom = found ? clusterBottom - 4 : chinPy + 0.6 * faceSpan
+    const faceHalf = (py: number) => (eyeOuter + 0.03 * N) * (0.62 + 0.38 * THREE.MathUtils.clamp((py - chinPy) / Math.max(1, eyesBottom - chinPy), 0, 1))
+    const faceMask = new Uint8Array(N * N)
+    for (let py = chinPy; py <= browPy; py += 1) {
+      for (let px = 0; px < N; px += 1) if (solid(px, py) && !gem[py * N + px] && Math.abs(px - mid) <= faceHalf(py)) faceMask[py * N + px] = 1
+    }
+    const unitX = (box.max.x - box.min.x) / N
+    const unitY = (box.max.y - box.min.y) / N
+    // Hinged at the temples, as an Iron Man helmet's: at the brow's height,
+    // well back in the head, so the plate swings up close over the dome.
+    const hinge = new THREE.Vector3(0, box.min.y + browPy * unitY, box.min.z + 0.38 * (box.max.z - box.min.z))
+
+    // Vision's face behind it: the MCU Vision's, sculpted to fill the
+    // helmet - a sheet over the face's area following the helmet's own
+    // curve (smoothed), set back, with the face's forms on it (brow, eye
+    // sockets, nose, cheekbones, lips, chin) and kept everywhere behind the
+    // faceplate - shown only while the plate is open.
+    const eyeV = found ? ((clusterTop + clusterBottom) / 2 - chinPy) / faceSpan : 0.72
+    const mouthV = mouthBox ? ((mouthBox.y0 + mouthBox.y1) / 2 - chinPy) / faceSpan : 0.28
+    const noseV = mouthV + 0.36 * (eyeV - mouthV)
+    const faceH = faceSpan * unitY
+    const g = (x: number) => Math.exp(-x * x)
+    /** The face's forms at (u across, v up), forward of the base, in units. */
+    const relief = (u: number, v: number) => {
+      const au = Math.abs(u)
+      let r = -0.32 * Math.min(1.2, u * u)
+      // Brow ridge, and the eye sockets under it.
+      r += 0.05 * g((v - (eyeV + 0.13)) / 0.07) * g(u / 0.8)
+      r -= 0.08 * g((au - 0.42) / 0.2) * g((v - eyeV) / 0.1)
+      // The nose: a bridge between the eyes rising to the tip, its wings.
+      const along = THREE.MathUtils.clamp((eyeV + 0.05 - v) / (eyeV + 0.05 - noseV), 0, 1)
+      const below = v < noseV ? g((noseV - v) / 0.035) : 1
+      r += (0.03 + 0.15 * Math.pow(along, 1.6)) * below * g(u / (0.07 + 0.07 * along))
+      r += 0.045 * g((au - 0.13) / 0.06) * g((v - (noseV + 0.015)) / 0.035)
+      // Cheekbones.
+      r += 0.05 * g((au - 0.6) / 0.17) * g((v - (eyeV - 0.18)) / 0.1)
+      // The lips' fullness, the groove under them, the chin.
+      r += 0.05 * g(u / 0.38) * g((v - mouthV) / 0.08)
+      r -= 0.03 * g(u / 0.28) * g((v - (mouthV - 0.1)) / 0.03)
+      r += 0.06 * g(u / 0.3) * g((v - 0.08) / 0.09)
+      return r * faceH
+    }
+    let vision: { sheet: THREE.Mesh; eyes: THREE.Vector3[]; eyeSize: number } | null = null
+    const G2 = 160
+    const step2 = N / G2
+    /** The face's front: the eye band's depth. */
+    const faceFront = box.max.z + 0.1 - face * depthRange
+    const sheetZ = new Float32Array((G2 + 1) * (G2 + 1)).fill(NaN)
     {
-      const G2 = 128
-      const step2 = N / G2
       const covered = (gx: number, gy: number) => {
-        for (let dy = -2; dy <= 2; dy += 1) for (let dx = -2; dx <= 2; dx += 1) {
+        for (let dy = -3; dy <= 3; dy += 1) for (let dx = -3; dx <= 3; dx += 1) {
           const px = Math.round((gx + dx) * step2)
           const py = Math.round((gy + dy) * step2)
-          if (px >= 0 && py >= 0 && px < N && py < N && (low[py * N + px] || plateMask[py * N + px])) return true
+          if (px < 0 || py < 0 || px >= N || py >= N) continue
+          if (py < chinPy - 4 || Math.abs(px - mid) > faceHalf(py) * 1.08) continue
+          if (faceMask[py * N + px] || low[py * N + px]) return true
         }
         return false
       }
-      const v2: number[] = []
-      const ix2: number[] = []
+      const frontZ = (px: number, py: number) => box.max.z + 0.1 - (solid(px, py) ? depth(px, py) : near(px, py)) * depthRange
+      const verts: number[] = []
+      const uvs: number[] = []
+      const base: number[] = []
       const slot2 = new Int32Array((G2 + 1) * (G2 + 1)).fill(-1)
+      const back = 0.2 * faceH
       for (let gy = 0; gy <= G2; gy += 1) for (let gx = 0; gx <= G2; gx += 1) {
         if (!covered(gx, gy)) continue
         const px = Math.min(N - 1, Math.round(gx * step2))
         const py = Math.min(N - 1, Math.round(gy * step2))
-        slot2[gy * (G2 + 1) + gx] = v2.length / 3
-        // Rounded like a face: further back toward the cheeks.
-        const side = (px - mid) / (0.18 * N)
-        v2.push(box.min.x + (gx / G2) * (box.max.x - box.min.x), box.min.y + (gy / G2) * (box.max.y - box.min.y), box.max.z + 0.1 - near(px, py) * depthRange - 0.13 - 0.12 * side * side)
+        // Never out past the helmet's outline, into the background round it.
+        if (outside[py * N + px]) continue
+        // Seen right through the helmet there: only the face's own openings
+        // (the mouth's slot), not the gaps under its sides.
+        if (!solid(px, py) && Math.abs(px - mid) > faceHalf(py) * 0.7) continue
+        // Nor where the nearest surface is deep in the helmet (the neck and
+        // the jaw's inside, seen under it): a face is not that deep.
+        if (near(px, py) - face > (0.55 * faceH) / depthRange) continue
+        slot2[gy * (G2 + 1) + gx] = base.length
+        base.push(box.max.z + 0.1 - near(px, py) * depthRange - back)
+        verts.push(box.min.x + (gx / G2) * (box.max.x - box.min.x), box.min.y + (gy / G2) * (box.max.y - box.min.y), 0)
+        const u = THREE.MathUtils.clamp((px - mid) / faceHalf(py), -1.3, 1.3)
+        const v = THREE.MathUtils.clamp((py - chinPy) / faceSpan, -0.1, 1.1)
+        uvs.push((u + 1.3) / 2.6, (v + 0.1) / 1.2)
       }
-      // Smooth out the steps the depth read leaves, so it shades as skin.
-      for (let pass = 0; pass < 6; pass += 1) {
-        const z = v2.filter((_, k) => k % 3 === 2)
+      // The helmet's curve without its grooves and slots: smoothed well.
+      for (let pass = 0; pass < 14; pass += 1) {
+        const z = base.slice()
         for (let gy = 0; gy <= G2; gy += 1) for (let gx = 0; gx <= G2; gx += 1) {
           const i = slot2[gy * (G2 + 1) + gx]
           if (i < 0) continue
@@ -1347,26 +1590,66 @@ export class UltronFace {
             const qy = gy + dy
             if (qx < 0 || qy < 0 || qx > G2 || qy > G2) continue
             const j = slot2[qy * (G2 + 1) + qx]
-            if (j >= 0) { sum += z[j]; n += 1 }
+            if (j >= 0) {
+              sum += z[j]
+              n += 1
+            }
           }
-          v2[i * 3 + 2] = sum / n
+          base[i] = sum / n
         }
       }
-      for (let gy = 0; gy < G2; gy += 1) for (let gx = 0; gx < G2; gx += 1) {
-        const q = [slot2[gy * (G2 + 1) + gx], slot2[gy * (G2 + 1) + gx + 1], slot2[(gy + 1) * (G2 + 1) + gx], slot2[(gy + 1) * (G2 + 1) + gx + 1]]
-        if (q.some((x) => x < 0)) continue
-        ix2.push(q[0], q[1], q[2], q[2], q[1], q[3])
+      for (let gy = 0; gy <= G2; gy += 1) for (let gx = 0; gx <= G2; gx += 1) {
+        const i = slot2[gy * (G2 + 1) + gx]
+        if (i < 0) continue
+        const px = Math.min(N - 1, Math.round(gx * step2))
+        const py = Math.min(N - 1, Math.round(gy * step2))
+        const u = THREE.MathUtils.clamp((px - mid) / faceHalf(py), -1.3, 1.3)
+        const v = (py - chinPy) / faceSpan
+        const z = base[i] + relief(u, v)
+        verts[i * 3 + 2] = z
+        // A face is only so deep: past half its height behind its front
+        // (the sides curling away), it ends - inside the helmet's sides.
+        if (z < faceFront - 0.5 * faceH) continue
+        sheetZ[gy * (G2 + 1) + gx] = z
       }
-      if (ix2.length) {
+      const index: number[] = []
+      for (let gy = 0; gy < G2; gy += 1) for (let gx = 0; gx < G2; gx += 1) {
+        const cells = [gy * (G2 + 1) + gx, gy * (G2 + 1) + gx + 1, (gy + 1) * (G2 + 1) + gx, (gy + 1) * (G2 + 1) + gx + 1]
+        const q = cells.map((k) => slot2[k])
+        if (q.some((x) => x < 0) || cells.some((k) => Number.isNaN(sheetZ[k]))) continue
+        index.push(q[0], q[1], q[2], q[2], q[1], q[3])
+      }
+      if (index.length) {
         const sheet = new THREE.BufferGeometry()
-        sheet.setAttribute("position", new THREE.Float32BufferAttribute(v2, 3))
-        sheet.setIndex(ix2)
+        sheet.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3))
+        sheet.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2))
+        sheet.setIndex(index)
         sheet.computeVertexNormals()
-        skin = new THREE.Mesh(sheet, this.skinMaterial)
-        skin.userData.shared = true
+        this.visionMaterial.map?.dispose()
+        this.visionMaterial.map = visionSkin(eyeV, mouthV, noseV)
+        this.visionMaterial.needsUpdate = true
+        const mesh = new THREE.Mesh(sheet, this.visionMaterial)
+        mesh.add(inkOutline(sheet, 0.012))
+        // Where the face is at a pixel: the sheet's nearest point.
+        const onSheet = (px: number, py: number) => {
+          const gx = Math.round(px / step2)
+          const gy = Math.round(py / step2)
+          const z = sheetZ[gy * (G2 + 1) + gx]
+          return new THREE.Vector3(box.min.x + (gx / G2) * (box.max.x - box.min.x), box.min.y + (gy / G2) * (box.max.y - box.min.y), Number.isNaN(z) ? box.max.z - 0.3 : z)
+        }
+        const eyePy = chinPy + eyeV * faceSpan
+        const eyes = [1, -1].map((side) => onSheet(mid + side * 0.36 * faceHalf(eyePy), eyePy).add(new THREE.Vector3(0, 0, 0.012)))
+        vision = { sheet: mesh, eyes, eyeSize: 0.13 * faceHalf(eyePy) * unitX }
+        // The lips on the face, sized to it rather than to the slot.
+        if (mouthBox) {
+          const mouthPy = chinPy + mouthV * faceSpan
+          const at = onSheet(mid, mouthPy)
+          const width = Math.min(((mouthBox.x1 - mouthBox.x0) / N) * (box.max.x - box.min.x) * 1.2, 0.62 * faceHalf(mouthPy) * unitX)
+          visionMouth = { at: at.add(new THREE.Vector3(0, 0, -width * 0.04)), width }
+        }
       }
     }
-
+    void unitX
     // The screen: a sheet following the slots' rims, a little behind them,
     // covering the slots (and a margin), seen only through them.
     const G = 128
@@ -1444,22 +1727,27 @@ export class UltronFace {
       if (px < 0 || py < 0 || px >= N || py >= N || !mask[py * N + px]) return false
       return Math.abs((box.max.z + 0.1 - p.z) / depthRange - depth(px, py)) < 0.012
     }
-    const mouth = mouthBox
-      ? {
-          at: world((mouthBox.x0 + mouthBox.x1) / 2, (mouthBox.y0 + mouthBox.y1) / 2, near(Math.round(mid), Math.round((mouthBox.y0 + mouthBox.y1) / 2))),
-          // The lips span about a fifth of the model's width (fins and all),
-          // as the reference's do the face's - wider than the slot.
-          width: Math.max(((mouthBox.x1 - mouthBox.x0) / N) * (box.max.x - box.min.x) * 1.2, 0.17 * (box.max.x - box.min.x)),
-        }
-      : null
+    // The faceplate's faces: everything of the helmet in its area that is
+    // in front of Vision's face - its skin, its walls, the slots' sides and
+    // any inner layer - so nothing of it is left on his face when it opens.
+    const isFace = (p: THREE.Vector3) => {
+      const px = Math.floor(((p.x - box.min.x) / (box.max.x - box.min.x)) * N)
+      const py = Math.floor(((p.y - box.min.y) / (box.max.y - box.min.y)) * N)
+      if (px < 0 || py < 0 || px >= N || py >= N || !faceMask[py * N + px]) return false
+      const z = sheetZ[Math.round(py / step2) * (G2 + 1) + Math.round(px / step2)]
+      // Where the face has ended (curled away at its sides): all of it as
+      // deep as the face goes.
+      return p.z > (Number.isNaN(z) ? faceFront - 0.5 * faceH : z + 0.01)
+    }
     return {
       screen,
       eyes,
       isGem,
-      isPlate: (p: THREE.Vector3) => onFront(p, plateMask),
+      isFace,
+      hinge,
       isGold: (p: THREE.Vector3) => onFront(p, goldMask),
-      skin,
-      mouth,
+      vision,
+      mouth: visionMouth,
     }
   }
 
@@ -1519,16 +1807,39 @@ export class UltronFace {
           const sprite = child as THREE.Sprite
           ;(sprite.material as THREE.SpriteMaterial).opacity = Math.min(1, 0.5 + hot * 0.3 + f) * flicker
           sprite.scale.setScalar(0.45 * (1 + f * 3.2))
-        } else if (child instanceof THREE.Mesh && (child.material as THREE.MeshBasicMaterial).map) {
-          ;(child.material as THREE.MeshBasicMaterial).color.setScalar(Math.min(1.5, 0.6 + hot * 0.45 + f * 0.4) * flicker)
         }
       }
-      // The faceplate slides back while he is engaged, and closes again
-      // after a quiet quarter-minute.
-      const openTarget = t - this.lastActive < 15 ? 1 : 0
-      this.plateOpen += (openTarget - this.plateOpen) * Math.min(1, dt * 3)
+      if (this.screen) (this.screen.material as THREE.MeshBasicMaterial).color.setScalar(Math.min(1.5, 0.6 + hot * 0.45 + f * 0.4) * flicker)
+      // The faceplate opens while he is engaged and closes after a quiet
+      // quarter-minute: as an Iron Man helmet's, it unlatches and lifts
+      // clear of the face, then swings up and back on its hinge into the
+      // helmet, over his brow - at a machine's even pace, with its sound.
+      const goal = t - this.lastActive < 15 ? 1 : 0
+      if (goal !== this.plateGoal && this.faceplate) sfx.helm(goal === 1, HELM_S)
+      this.plateGoal = goal
+      this.plateOpen = THREE.MathUtils.clamp(this.plateOpen + (goal ? dt : -dt) / HELM_S, 0, 1)
       const o = this.plateOpen * this.plateOpen * (3 - 2 * this.plateOpen)
-      if (this.plate) this.plate.position.set(0, o * 0.16, -o * 0.62)
+      if (this.faceplate) {
+        // Out first (the first fifth), then up: the lift eases off as it swings.
+        const lift = Math.sin(Math.min(1, this.plateOpen * 2.5) * Math.PI * 0.5) * (1 - o * 0.6)
+        // Swung up, it settles down and back onto the dome, as the films'
+        // plates nest over the forehead.
+        this.faceplate.position.copy(this.hinge).add(new THREE.Vector3(0, lift * 0.04 - o * 0.32, lift * 0.1 - o * 0.18))
+        this.faceplate.rotation.x = -o * 1.62
+        this.faceplate.scale.setScalar(1 - o * 0.1)
+      }
+      // His own eyes behind it: Vision's, following the same gaze as the
+      // slots' light, blinking with it.
+      for (const eye of this.visionEyes) eye.set(this.gaze, 1 - this.blink)
+      // His face is there only while the plate is off it.
+      const bare = !this.faceplate || this.plateOpen > 0.02
+      this.model.traverse((node) => {
+        if ((node as THREE.Mesh).material === this.visionMaterial) node.visible = bare
+      })
+      for (const eye of this.visionEyes) eye.group.visible = bare
+      if (this.mouth) this.mouth.group.visible = bare
+      // The slots' blooms go with the faceplate.
+      for (const bloom of this.eyeGlows) bloom.visible = o < 0.35
       // Vision's mouth: the letter being said now, opened by the voice's
       // loudness; between words, it rests.
       if (this.mouth) {

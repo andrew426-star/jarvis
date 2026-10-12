@@ -427,11 +427,11 @@ function senseHands(video: HTMLVideoElement, flip: boolean): HandSense[] {
   const found = result.landmarks ?? []
   const W = video.videoWidth
   const H = video.videoHeight
-  // MediaPipe names hands as if the picture were mirrored; this stream is
-  // not, so its "Left" is his right hand. Two hands with the same name: the
-  // one further to the picture's left is his right (he faces the camera).
+  // The hand landmarker names each hand as his own for this (unmirrored)
+  // stream: "Right" is his right. Two hands with the same name: the one
+  // further to the picture's left is his right (he faces the camera).
   // Flipped, the other way round (the names are wrong for this camera).
-  let sides: Side[] = found.map((_, i) => ((result.handedness?.[i]?.[0]?.categoryName ?? "Left") === "Left" ? "right" : "left"))
+  let sides: Side[] = found.map((_, i) => ((result.handedness?.[i]?.[0]?.categoryName ?? "Right") === "Right" ? "right" : "left"))
   if (found.length === 2 && sides[0] === sides[1]) sides = found[0][0].x < found[1][0].x ? ["right", "left"] : ["left", "right"]
   if (flip) sides = sides.map((x) => (x === "right" ? "left" : "right"))
   const out: HandSense[] = []
