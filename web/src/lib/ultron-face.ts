@@ -7,6 +7,8 @@ import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js"
 
 import type { AgentStatus } from "@/lib/store"
 import { loadUltronModel, onUltronModelChange, type UltronModel } from "@/lib/ultron-model"
+import { sfx } from "@/lib/sfx"
+import { mouthShape } from "@/lib/speech-track"
 import { loadMesh } from "@/lib/workshop/meshes"
 
 /** The workshop mesh that, uploaded, is his head everywhere. */
@@ -501,6 +503,10 @@ function toonMetal(material: THREE.MeshToonMaterial, holo: Holo): THREE.MeshToon
           float facing = 1.0 - abs(dot(normal, normalize(vViewPosition)));
           float rim = smoothstep(0.74, 0.78, facing);
           totalEmissiveRadiance += holoTint * rim * (0.45 + 0.45 * holoHeat);
+          // A crisp sheen where the key light would glance off: the glossy
+          // highlight the reference renders paint on the metal.
+          float sheen = smoothstep(0.88, 0.91, dot(normal, normalize(vec3(-0.5, 0.62, 0.6))));
+          totalEmissiveRadiance += vec3(0.3, 0.34, 0.4) * sheen;
         }`,
       )
   }
@@ -511,7 +517,7 @@ function toonMetal(material: THREE.MeshToonMaterial, holo: Holo): THREE.MeshToon
 /** The ink line round a model: its surface pushed out along the normals and
  *  drawn from the back in near-black - an inverted hull, the outline cel
  *  art draws round every shape. */
-function inkOutline(geometry: THREE.BufferGeometry, width: number): THREE.Mesh {
+function inkOutline(geometry: THREE.BufferGeometry, width: number, index?: number[]): THREE.Mesh {
   const position = geometry.getAttribute("position")
   const normal = geometry.getAttribute("normal")
   const pushed = new Float32Array(position.count * 3)
@@ -522,7 +528,97 @@ function inkOutline(geometry: THREE.BufferGeometry, width: number): THREE.Mesh {
   }
   const hull = new THREE.BufferGeometry()
   hull.setAttribute("position", new THREE.BufferAttribute(pushed, 3))
+  if (index) hull.setIndex(index)
   return new THREE.Mesh(hull, new THREE.MeshBasicMaterial({ color: 0x0b0607, side: THREE.BackSide }))
+}
+
+// --- Vision's mouth ---------------------------------------------------------------
+
+/** Vision's lips, behind the helmet's lower faceplate: an upper lip with its
+ *  cupid's bow, a fuller lower lip, the dark of the mouth and a line of
+ *  teeth, reshaped every frame from a mouth shape (lib/speech-track.ts) so
+ *  he speaks the words being said. Built in its own frame: x across, y up,
+ *  z out of the face; w wide and h tall at rest. */
+class VisionMouth {
+  readonly group = new THREE.Group()
+  private readonly upper: THREE.Mesh
+  private readonly lower: THREE.Mesh
+  private readonly inside: THREE.Mesh
+  private readonly teeth: THREE.Mesh
+  private static readonly COLS = 33
+  private static readonly ROWS = 6
+
+  constructor(private readonly w: number, private readonly h: number, lip: THREE.Material) {
+    const grid = () => {
+      const g = new THREE.BufferGeometry()
+      const C = VisionMouth.COLS
+      const R = VisionMouth.ROWS
+      g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(C * R * 3), 3))
+      const index: number[] = []
+      for (let j = 0; j < R - 1; j += 1) for (let i = 0; i < C - 1; i += 1) {
+        const a = j * C + i
+        index.push(a, a + 1, a + C, a + C, a + 1, a + C + 1)
+      }
+      g.setIndex(index)
+      return g
+    }
+    const strip = () => {
+      const g = new THREE.BufferGeometry()
+      const C = VisionMouth.COLS
+      g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(C * 2 * 3), 3))
+      const index: number[] = []
+      for (let i = 0; i < C - 1; i += 1) index.push(i, i + 1, i + C, i + C, i + 1, i + C + 1)
+      g.setIndex(index)
+      return g
+    }
+    this.upper = new THREE.Mesh(grid(), lip)
+    this.lower = new THREE.Mesh(grid(), lip)
+    this.inside = new THREE.Mesh(strip(), new THREE.MeshBasicMaterial({ color: 0x1c0409, side: THREE.DoubleSide }))
+    this.teeth = new THREE.Mesh(strip(), new THREE.MeshBasicMaterial({ color: 0xe9e2d6, side: THREE.DoubleSide }))
+    this.group.add(this.inside, this.teeth, this.upper, this.lower)
+    this.set({ open: 0, wide: 0.5, round: 0, press: 0, tuck: 0 })
+  }
+
+  set(m: { open: number; wide: number; round: number; press: number; tuck: number }) {
+    const { w, h } = this
+    const C = VisionMouth.COLS
+    const R = VisionMouth.ROWS
+    const half = (w / 2) * (0.84 + 0.26 * m.wide - 0.3 * m.round)
+    const gap = h * 0.95 * m.open * (1 - m.press)
+    const thick = 1 - 0.28 * m.press
+    const up = this.upper.geometry.getAttribute("position") as THREE.BufferAttribute
+    const lo = this.lower.geometry.getAttribute("position") as THREE.BufferAttribute
+    const ins = this.inside.geometry.getAttribute("position") as THREE.BufferAttribute
+    const tee = this.teeth.geometry.getAttribute("position") as THREE.BufferAttribute
+    for (let i = 0; i < C; i += 1) {
+      const u = (i / (C - 1)) * 2 - 1
+      const f = Math.max(0, 1 - u * u)
+      const x = u * half * (1 - m.round * 0.12 * f)
+      const open = (gap / 2) * Math.pow(f, 0.7)
+      // Upper lip: the lip line, and the top edge with its cupid's bow.
+      const uIn = open
+      const uOut = open + h * thick * (0.34 * Math.pow(f, 0.55) - 0.07 * Math.exp(-((u / 0.13) ** 2)) + 0.035 * Math.exp(-(((Math.abs(u) - 0.2) / 0.09) ** 2)))
+      // Lower lip: fuller, tucking under the teeth for f and v.
+      const lIn = -open - m.tuck * h * 0.06 * f
+      const lOut = lIn - h * thick * 0.44 * Math.pow(f, 0.5) * (1 - 0.3 * m.tuck)
+      const bulge = h * 0.3 * Math.sqrt(f) * thick
+      const pout = m.round * h * 0.28 * Math.sqrt(f)
+      for (let j = 0; j < R; j += 1) {
+        const t = j / (R - 1)
+        const z = bulge * Math.sin(Math.PI * Math.min(1, t * 1.15)) + pout
+        up.setXYZ(j * C + i, x, uIn + (uOut - uIn) * t, z)
+        lo.setXYZ(j * C + i, x, lIn + (lOut - lIn) * t, z * 1.08)
+      }
+      ins.setXYZ(i, x, uIn, -h * 0.05)
+      ins.setXYZ(i + C, x, lIn, -h * 0.05)
+      tee.setXYZ(i, x * 0.86, uIn - h * 0.01, -h * 0.03)
+      tee.setXYZ(i + C, x * 0.86, uIn - Math.min(gap * 0.4, h * 0.16) * Math.pow(f, 0.5), -h * 0.03)
+    }
+    for (const a of [up, lo, ins, tee]) a.needsUpdate = true
+    this.upper.geometry.computeVertexNormals()
+    this.lower.geometry.computeVertexNormals()
+    this.teeth.visible = gap > h * 0.05
+  }
 }
 
 // --- the head ----------------------------------------------------------------
@@ -563,6 +659,22 @@ export class UltronFace {
   private readonly jaw = new THREE.Group()
   private readonly metal: THREE.MeshToonMaterial
   private readonly gemMaterial: THREE.MeshToonMaterial
+  private readonly goldMaterial: THREE.MeshToonMaterial
+  private readonly skinMaterial: THREE.MeshToonMaterial
+  private readonly lipMaterial: THREE.MeshToonMaterial
+  /** The lower faceplate, which slides back to show Vision's mouth. */
+  private plate: THREE.Mesh | null = null
+  private plateOpen = 0
+  private mouth: VisionMouth | null = null
+  private gemAt: THREE.Vector3 | null = null
+  private ring: THREE.Mesh | null = null
+  /** The Mind Stone's flare, 1 at its peak, decaying. */
+  private flare = 0
+  private lastFlare = -100
+  private lastActive = -100
+  private lastSeen = -100
+  private wasSpeaking = false
+  private readonly mouthNow = { open: 0, wide: 0.5, round: 0, press: 0, tuck: 0 }
   private readonly glowMap: THREE.Texture
   private readonly coreMaterial: THREE.MeshBasicMaterial
   private readonly rim: THREE.DirectionalLight
@@ -595,8 +707,12 @@ export class UltronFace {
     // Cel-shaded silver in the What If...? style (toonMetal), and the Mind
     // Stone's gold, glowing.
     const bands = toonBands()
-    this.metal = toonMetal(new THREE.MeshToonMaterial({ color: 0xb7bdc8, gradientMap: bands }), this.holo)
-    this.gemMaterial = new THREE.MeshToonMaterial({ color: 0xffd34a, emissive: 0xffa31a, emissiveIntensity: 0.9, gradientMap: bands })
+    this.metal = toonMetal(new THREE.MeshToonMaterial({ color: 0x75879b, gradientMap: bands }), this.holo)
+    this.gemMaterial = new THREE.MeshToonMaterial({ color: 0xffeeb0, emissive: 0xffd36a, emissiveIntensity: 0.9, gradientMap: bands })
+    this.goldMaterial = toonMetal(new THREE.MeshToonMaterial({ color: 0xc9a046, gradientMap: bands }), this.holo)
+    // Vision's skin, in the reference's crimson, and his lips a shade deeper.
+    this.skinMaterial = new THREE.MeshToonMaterial({ color: 0xb02c4e, gradientMap: bands, side: THREE.DoubleSide })
+    this.lipMaterial = new THREE.MeshToonMaterial({ color: 0x8a1b3c, gradientMap: bands, side: THREE.DoubleSide })
     this.glowMap = glow
     this.coreMaterial = new THREE.MeshBasicMaterial({ color, vertexColors: true })
 
@@ -713,13 +829,20 @@ export class UltronFace {
       this.model.geometry.dispose()
       // Its own children (outline, glow, screen) go; the shared metal and
       // gem materials stay.
-      for (const child of this.model.children) {
+      this.model.traverse((child) => {
+        if (child === this.model) return
         const part = child as THREE.Mesh
         part.geometry?.dispose()
-        const material = part.material as THREE.MeshBasicMaterial
+        const material = part.material as THREE.MeshBasicMaterial | undefined
+        // The shared toon materials (metal, gem, gold, skin, lips) stay.
+        if (!material || [this.metal, this.gemMaterial, this.goldMaterial, this.skinMaterial, this.lipMaterial].includes(material as never)) return
         material.map?.dispose()
         material.dispose()
-      }
+      })
+      this.plate = null
+      this.mouth = null
+      this.ring = null
+      this.gemAt = null
       this.model = null
     }
     const eyes = saved ? this.buildModel(saved) : null
@@ -761,6 +884,8 @@ export class UltronFace {
     const position = geometry.getAttribute("position")
     const metalTris: number[] = []
     const gemTris: number[] = []
+    const goldTris: number[] = []
+    const plateTris: number[] = []
     const centroid = new THREE.Vector3()
     const gemCentre = new THREE.Vector3()
     const a = new THREE.Vector3()
@@ -771,28 +896,60 @@ export class UltronFace {
       b.fromBufferAttribute(position, t * 3 + 1)
       c.fromBufferAttribute(position, t * 3 + 2)
       centroid.copy(a).add(b).add(c).multiplyScalar(1 / 3)
+      const tri = [t * 3, t * 3 + 1, t * 3 + 2]
       if (front.isGem(centroid)) {
-        gemTris.push(t * 3, t * 3 + 1, t * 3 + 2)
+        gemTris.push(...tri)
         gemCentre.add(centroid)
-      } else {
-        metalTris.push(t * 3, t * 3 + 1, t * 3 + 2)
-      }
+      } else if (front.isPlate(centroid)) plateTris.push(...tri)
+      else if (front.isGold(centroid)) goldTris.push(...tri)
+      else metalTris.push(...tri)
     }
-    geometry.setIndex([...metalTris, ...gemTris])
+    const body = [...metalTris, ...gemTris, ...goldTris]
+    geometry.setIndex(body)
     geometry.clearGroups()
     geometry.addGroup(0, metalTris.length, 0)
     geometry.addGroup(metalTris.length, gemTris.length, 1)
-    this.model = new THREE.Mesh(geometry, [this.metal, this.gemMaterial])
+    geometry.addGroup(metalTris.length + gemTris.length, goldTris.length, 2)
+    this.model = new THREE.Mesh(geometry, [this.metal, this.gemMaterial, this.goldMaterial])
     // The ink line round it: the same surface pushed out a little along its
     // normals, drawn from the back in near-black (an inverted hull).
-    this.model.add(inkOutline(geometry, 0.032))
+    this.model.add(inkOutline(geometry, 0.032, body))
+    // The lower faceplate: its own mesh on the same surface, so it can slide.
+    this.plate = null
+    if (plateTris.length) {
+      const plateGeometry = new THREE.BufferGeometry()
+      plateGeometry.setAttribute("position", geometry.getAttribute("position"))
+      plateGeometry.setAttribute("normal", geometry.getAttribute("normal"))
+      plateGeometry.setIndex(plateTris)
+      this.plate = new THREE.Mesh(plateGeometry, this.metal)
+      this.plate.add(inkOutline(geometry, 0.032, plateTris))
+      this.model.add(this.plate)
+    }
+    if (front.skin) this.model.add(front.skin)
+    // Vision's mouth, behind the plate.
+    this.mouth = null
+    if (front.mouth) {
+      const w = front.mouth.width
+      this.mouth = new VisionMouth(w, w * 0.3, this.lipMaterial)
+      this.mouth.group.position.copy(front.mouth.at).add(new THREE.Vector3(0, w * 0.05, -0.11))
+      this.model.add(this.mouth.group)
+    }
+    this.gemAt = null
     if (gemTris.length) {
       gemCentre.multiplyScalar(3 / gemTris.length)
-      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glowMap, color: 0xffc23a, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
+      this.gemAt = gemCentre.clone()
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glowMap, color: 0xffe08a, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
       glow.position.copy(gemCentre).add(new THREE.Vector3(0, 0, 0.12))
-      glow.scale.setScalar(0.55)
+      glow.scale.setScalar(0.45)
       glow.userData.gemGlow = true
       this.model.add(glow)
+      // The flare's shockwave: a ring that spreads from the stone.
+      this.ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.16, 0.2, 64),
+        new THREE.MeshBasicMaterial({ color: 0xffe9a0, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+      )
+      this.ring.position.copy(gemCentre).add(new THREE.Vector3(0, 0, 0.15))
+      this.model.add(this.ring)
     }
     if (front.screen) this.model.add(front.screen)
     this.head.add(this.model)
@@ -809,6 +966,14 @@ export class UltronFace {
     eyes: THREE.Vector3[]
     /** Whether a point of the model is the gem: on its front surface, in the socket. */
     isGem: (p: THREE.Vector3) => boolean
+    /** The lower faceplate over the mouth, which slides back. */
+    isPlate: (p: THREE.Vector3) => boolean
+    /** The gold framing the lower face. */
+    isGold: (p: THREE.Vector3) => boolean
+    /** Vision's skin, behind the lower openings. */
+    skin: THREE.Mesh | null
+    /** Where the mouth is, and how wide its slot. */
+    mouth: { at: THREE.Vector3; width: number } | null
   } {
     const box = geometry.boundingBox!
     const N = 512
@@ -877,7 +1042,7 @@ export class UltronFace {
     const R = 10
     const at = (px: number, py: number) => (solid(px, py) ? depth(px, py) : 1)
     const rowMin = new Float32Array(N * N).fill(1)
-    for (let py = bandBottom - R; py <= bandTop + R; py += 1) {
+    for (let py = 0; py < N; py += 1) {
       if (py < 0 || py >= N) continue
       for (let px = 0; px < N; px += 1) {
         let m = 1
@@ -939,26 +1104,32 @@ export class UltronFace {
       }
     }
 
-    // The honeycomb, for the screen behind the slots: drawn top-down, so
-    // the canvas row is N - 1 - py.
+    // The eyes' light, for the screen behind the slots: glowing bars, white-
+    // hot along their middle and red toward their edges, as the reference's
+    // eyes are. Each pixel's depth into its slot (a chamfer distance) sets
+    // how hot it is. Drawn top-down, so the canvas row is N - 1 - py.
+    const dist = new Float32Array(N * N)
+    for (let i = 0; i < N * N; i += 1) dist[i] = eye[i] ? 1e6 : 0
+    for (let py = 1; py < N - 1; py += 1) for (let px = 1; px < N - 1; px += 1) {
+      const i = py * N + px
+      if (dist[i]) dist[i] = Math.min(dist[i], dist[i - 1] + 1, dist[i - N] + 1, dist[i - N - 1] + 1.4, dist[i - N + 1] + 1.4)
+    }
+    for (let py = N - 2; py > 0; py -= 1) for (let px = N - 2; px > 0; px -= 1) {
+      const i = py * N + px
+      if (dist[i]) dist[i] = Math.min(dist[i], dist[i + 1] + 1, dist[i + N] + 1, dist[i + N + 1] + 1.4, dist[i + N - 1] + 1.4)
+    }
     const honeycomb = document.createElement("canvas")
     honeycomb.width = honeycomb.height = N
     const hctx = honeycomb.getContext("2d")!
     const image = hctx.createImageData(N, N)
-    const HEX = 7
-    for (let py = 0; py < N; py += 1) {
+    for (let py = Math.max(0, bandBottom - 6); py <= Math.min(N - 1, bandTop + 6); py += 1) {
       for (let px = 0; px < N; px += 1) {
-        if (py < bandBottom - 4 || py > bandTop + 4) continue
-        // A honeycomb: bright cell walls, dimmer cells.
-        const qx = px / (HEX * 1.732)
-        const qy = py / HEX - (Math.floor(qx) % 2) * 0.5
-        const fx = qx - Math.floor(qx) - 0.5
-        const fy = qy - Math.floor(qy) - 0.5
-        const wall = Math.max(Math.abs(fx) * 1.6, Math.abs(fy)) > 0.38 ? 1 : 0.45
+        const i = py * N + px
         const o = ((N - 1 - py) * N + px) * 4
-        image.data[o] = 255 * wall
-        image.data[o + 1] = 18 * wall
-        image.data[o + 2] = 40 * wall
+        const k = eye[i] ? Math.min(1, dist[i] / 7) : 0
+        image.data[o] = eye[i] ? 255 : 90
+        image.data[o + 1] = eye[i] ? 26 + 200 * k * k : 0
+        image.data[o + 2] = eye[i] ? 44 + 190 * k * k : 8
         image.data[o + 3] = 255
       }
     }
@@ -1039,6 +1210,163 @@ export class UltronFace {
       }
     }
 
+    // The lower face: the openings below the eyes (the cheek hollows and
+    // the mouth slot), the plate over the mouth that slides back, and the
+    // gold that frames them, as on the reference.
+    const low = new Uint8Array(N * N)
+    const plateMask = new Uint8Array(N * N)
+    const goldMask = new Uint8Array(N * N)
+    let mouthBox: { x0: number; x1: number; y0: number; y1: number } | null = null
+    // The background around the outline: empty pixels reached from the
+    // image's border. Empty pixels it does not reach are seen through the
+    // helmet - an opening, like the mouth slot on a helmet open beneath.
+    const outside = new Uint8Array(N * N)
+    {
+      const fill: number[] = []
+      for (let k = 0; k < N; k += 1) for (const i of [k, (N - 1) * N + k, k * N, k * N + N - 1]) if (!solid(i % N, Math.floor(i / N)) && !outside[i]) { outside[i] = 1; fill.push(i) }
+      while (fill.length) {
+        const i = fill.pop()!
+        const x = i % N
+        for (const j of [x > 0 ? i - 1 : -1, x < N - 1 ? i + 1 : -1, i - N, i + N]) {
+          if (j < 0 || j >= N * N || outside[j] || solid(j % N, Math.floor(j / N))) continue
+          outside[j] = 1
+          fill.push(j)
+        }
+      }
+    }
+    if (found) {
+      const lowTop = clusterBottom - 3
+      const lowBottom = bottom + Math.round(0.04 * height)
+      for (let py = lowBottom; py <= lowTop; py += 1) {
+        for (let px = 0; px < N; px += 1) {
+          if (Math.abs(px - mid) > 0.32 * N) continue
+          const d = at(px, py)
+          // An opening: deep, or seen right through - but never the background
+          // round the outline.
+          if (outside[py * N + px]) continue
+          if (!solid(px, py) || (d - near(px, py) >= 0.1 && d - face >= 0.05)) low[py * N + px] = 1
+        }
+      }
+      // Its pieces; the one on the centre line is the mouth.
+      const seenLow = new Uint8Array(N * N)
+      const pieces: number[][] = []
+      for (let start = 0; start < N * N; start += 1) {
+        if (!low[start] || seenLow[start]) continue
+        const region: number[] = []
+        const stack2 = [start]
+        seenLow[start] = 1
+        while (stack2.length) {
+          const i = stack2.pop()!
+          region.push(i)
+          for (const j of [i - 1, i + 1, i - N, i + N]) if (j >= 0 && j < N * N && low[j] && !seenLow[j]) { seenLow[j] = 1; stack2.push(j) }
+        }
+        if (region.length < 150) for (const i of region) low[i] = 0
+        else pieces.push(region)
+      }
+      let best = Infinity
+      for (const region of pieces) {
+        let x0 = N, x1 = 0, y0 = N, y1 = 0, cx = 0
+        for (const i of region) {
+          const x = i % N
+          const y = Math.floor(i / N)
+          x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); cx += x
+        }
+        cx /= region.length
+        const off = Math.abs(cx - mid)
+        if (off < 0.05 * N && off < best && x1 - x0 > 0.03 * N) {
+          best = off
+          mouthBox = { x0, x1, y0, y1 }
+        }
+      }
+      if (mouthBox) {
+        const halfMouth = (mouthBox.x1 - mouthBox.x0) / 2
+        // The plate: over the mouth, from its slot up toward the eyes.
+        const plateTop = mouthBox.y1 + Math.round(0.6 * (clusterBottom - mouthBox.y1))
+        const plateHalf = Math.max(halfMouth * 0.98, 0.1 * N)
+        for (let py = mouthBox.y0 - 2; py <= plateTop; py += 1) {
+          for (let px = Math.round(mid - plateHalf); px <= Math.round(mid + plateHalf); px += 1) {
+            if (solid(px, py) && !low[py * N + px]) plateMask[py * N + px] = 1
+          }
+        }
+        // Gold: a band round the cheek hollows (not the plate's side), and
+        // under the mouth.
+        for (let py = lowBottom; py <= lowTop; py += 1) {
+          for (let px = 0; px < N; px += 1) {
+            const i = py * N + px
+            if (low[i] || plateMask[i] || !solid(px, py)) continue
+            const underMouth = Math.abs(px - mid) <= Math.max(halfMouth * 1.3, 0.12 * N) && py < mouthBox.y0 - 2 && py >= mouthBox.y0 - 7
+            let byHollow = false
+            if (Math.abs(px - mid) > Math.max(halfMouth * 0.98, 0.1 * N)) {
+              for (let dy = -5; dy <= 5 && !byHollow; dy += 1) for (let dx = -5; dx <= 5; dx += 1) {
+                const j = (py + dy) * N + px + dx
+                if (low[j] && Math.abs(px + dx - mid) > halfMouth * 1.05) { byHollow = true; break }
+              }
+            }
+            if (byHollow || underMouth) goldMask[i] = 1
+          }
+        }
+      }
+    }
+
+    // Vision's skin: a sheet behind the lower openings and the plate, set
+    // back from the rims, seen through them (and where the plate was).
+    let skin: THREE.Mesh | null = null
+    {
+      const G2 = 128
+      const step2 = N / G2
+      const covered = (gx: number, gy: number) => {
+        for (let dy = -2; dy <= 2; dy += 1) for (let dx = -2; dx <= 2; dx += 1) {
+          const px = Math.round((gx + dx) * step2)
+          const py = Math.round((gy + dy) * step2)
+          if (px >= 0 && py >= 0 && px < N && py < N && (low[py * N + px] || plateMask[py * N + px])) return true
+        }
+        return false
+      }
+      const v2: number[] = []
+      const ix2: number[] = []
+      const slot2 = new Int32Array((G2 + 1) * (G2 + 1)).fill(-1)
+      for (let gy = 0; gy <= G2; gy += 1) for (let gx = 0; gx <= G2; gx += 1) {
+        if (!covered(gx, gy)) continue
+        const px = Math.min(N - 1, Math.round(gx * step2))
+        const py = Math.min(N - 1, Math.round(gy * step2))
+        slot2[gy * (G2 + 1) + gx] = v2.length / 3
+        // Rounded like a face: further back toward the cheeks.
+        const side = (px - mid) / (0.18 * N)
+        v2.push(box.min.x + (gx / G2) * (box.max.x - box.min.x), box.min.y + (gy / G2) * (box.max.y - box.min.y), box.max.z + 0.1 - near(px, py) * depthRange - 0.13 - 0.12 * side * side)
+      }
+      // Smooth out the steps the depth read leaves, so it shades as skin.
+      for (let pass = 0; pass < 6; pass += 1) {
+        const z = v2.filter((_, k) => k % 3 === 2)
+        for (let gy = 0; gy <= G2; gy += 1) for (let gx = 0; gx <= G2; gx += 1) {
+          const i = slot2[gy * (G2 + 1) + gx]
+          if (i < 0) continue
+          let sum = z[i]
+          let n = 1
+          for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+            const qx = gx + dx
+            const qy = gy + dy
+            if (qx < 0 || qy < 0 || qx > G2 || qy > G2) continue
+            const j = slot2[qy * (G2 + 1) + qx]
+            if (j >= 0) { sum += z[j]; n += 1 }
+          }
+          v2[i * 3 + 2] = sum / n
+        }
+      }
+      for (let gy = 0; gy < G2; gy += 1) for (let gx = 0; gx < G2; gx += 1) {
+        const q = [slot2[gy * (G2 + 1) + gx], slot2[gy * (G2 + 1) + gx + 1], slot2[(gy + 1) * (G2 + 1) + gx], slot2[(gy + 1) * (G2 + 1) + gx + 1]]
+        if (q.some((x) => x < 0)) continue
+        ix2.push(q[0], q[1], q[2], q[2], q[1], q[3])
+      }
+      if (ix2.length) {
+        const sheet = new THREE.BufferGeometry()
+        sheet.setAttribute("position", new THREE.Float32BufferAttribute(v2, 3))
+        sheet.setIndex(ix2)
+        sheet.computeVertexNormals()
+        skin = new THREE.Mesh(sheet, this.skinMaterial)
+        skin.userData.shared = true
+      }
+    }
+
     // The screen: a sheet following the slots' rims, a little behind them,
     // covering the slots (and a margin), seen only through them.
     const G = 128
@@ -1110,7 +1438,29 @@ export class UltronFace {
       const d = (box.max.z + 0.1 - p.z) / depthRange
       return Math.abs(d - depth(px, py)) < 0.01
     }
-    return { screen, eyes, isGem }
+    const onFront = (p: THREE.Vector3, mask: Uint8Array) => {
+      const px = Math.floor(((p.x - box.min.x) / (box.max.x - box.min.x)) * N)
+      const py = Math.floor(((p.y - box.min.y) / (box.max.y - box.min.y)) * N)
+      if (px < 0 || py < 0 || px >= N || py >= N || !mask[py * N + px]) return false
+      return Math.abs((box.max.z + 0.1 - p.z) / depthRange - depth(px, py)) < 0.012
+    }
+    const mouth = mouthBox
+      ? {
+          at: world((mouthBox.x0 + mouthBox.x1) / 2, (mouthBox.y0 + mouthBox.y1) / 2, near(Math.round(mid), Math.round((mouthBox.y0 + mouthBox.y1) / 2))),
+          // The lips span about a fifth of the model's width (fins and all),
+          // as the reference's do the face's - wider than the slot.
+          width: Math.max(((mouthBox.x1 - mouthBox.x0) / N) * (box.max.x - box.min.x) * 1.2, 0.17 * (box.max.x - box.min.x)),
+        }
+      : null
+    return {
+      screen,
+      eyes,
+      isGem,
+      isPlate: (p: THREE.Vector3) => onFront(p, plateMask),
+      isGold: (p: THREE.Vector3) => onFront(p, goldMask),
+      skin,
+      mouth,
+    }
   }
 
   update(dt: number, t: number, input: FaceInput) {
@@ -1142,10 +1492,54 @@ export class UltronFace {
     this.holo.time.value += dt
     if (this.model) {
       const flicker = this.glitch > 0 && Math.random() < 0.4 ? 0.3 : 1
-      this.gemMaterial.emissiveIntensity = (0.7 + hot * 0.35) * flicker
+      const speaking = status === "speaking"
+      const active = speaking || status === "listening" || status === "thinking"
+      if (active) this.lastActive = t
+      // The Mind Stone flares - light, a spreading ring, and its hum - as he
+      // appears (back after being hidden) and each time he starts to speak.
+      const appeared = t - this.lastSeen > 1.5
+      if ((appeared || (speaking && !this.wasSpeaking)) && t - this.lastFlare > 6) {
+        this.flare = 1
+        this.lastFlare = t
+        sfx.stoneHum()
+      }
+      this.lastSeen = t
+      this.wasSpeaking = speaking
+      this.flare = Math.max(0, this.flare - dt / 2.4)
+      const f = this.flare
+      this.gemMaterial.emissiveIntensity = (0.7 + hot * 0.35 + f * 3.5) * flicker
+      if (this.ring) {
+        const life = 1 - f
+        const material = this.ring.material as THREE.MeshBasicMaterial
+        material.opacity = f > 0 ? Math.pow(f, 1.5) * 0.9 : 0
+        this.ring.scale.setScalar(1 + life * 9)
+      }
       for (const child of this.model.children) {
-        if (child.userData.gemGlow) ((child as THREE.Sprite).material as THREE.SpriteMaterial).opacity = Math.min(1, 0.5 + hot * 0.3) * flicker
-        else if (child instanceof THREE.Mesh && (child.material as THREE.MeshBasicMaterial).map) (child.material as THREE.MeshBasicMaterial).color.setScalar(Math.min(1.4, 0.55 + hot * 0.45) * flicker)
+        if (child.userData.gemGlow) {
+          const sprite = child as THREE.Sprite
+          ;(sprite.material as THREE.SpriteMaterial).opacity = Math.min(1, 0.5 + hot * 0.3 + f) * flicker
+          sprite.scale.setScalar(0.45 * (1 + f * 3.2))
+        } else if (child instanceof THREE.Mesh && (child.material as THREE.MeshBasicMaterial).map) {
+          ;(child.material as THREE.MeshBasicMaterial).color.setScalar(Math.min(1.5, 0.6 + hot * 0.45 + f * 0.4) * flicker)
+        }
+      }
+      // The faceplate slides back while he is engaged, and closes again
+      // after a quiet quarter-minute.
+      const openTarget = t - this.lastActive < 15 ? 1 : 0
+      this.plateOpen += (openTarget - this.plateOpen) * Math.min(1, dt * 3)
+      const o = this.plateOpen * this.plateOpen * (3 - 2 * this.plateOpen)
+      if (this.plate) this.plate.position.set(0, o * 0.16, -o * 0.62)
+      // Vision's mouth: the letter being said now, opened by the voice's
+      // loudness; between words, it rests.
+      if (this.mouth) {
+        const shape = mouthShape()
+        const voice = Math.min(1, amp * 2.6)
+        const target = shape
+          ? { ...shape, open: shape.open * (0.45 + 0.75 * voice) }
+          : { open: speaking ? voice * 0.8 : 0, wide: 0.5, round: 0, press: 0, tuck: 0 }
+        const k = Math.min(1, dt * 18)
+        for (const key of ["open", "wide", "round", "press", "tuck"] as const) this.mouthNow[key] += (target[key] - this.mouthNow[key]) * k
+        this.mouth.set(this.mouthNow)
       }
     }
     this.rim.color.copy(tint)

@@ -394,6 +394,60 @@ function toll(base: number, peak: number) {
   }
 }
 
+// The Mind Stone's hum, as the stones sound in What If...?: a deep chord
+// that swells in and rings out through the cathedral reverb - a sub
+// fundamental, its octave and fifth slightly detuned so they beat, and a
+// high overtone that shimmers. Loud by design; it is the stone speaking.
+function stoneHum(seconds = 3.2) {
+  const context = ensure()
+  if (!context || !master || muted) return
+  const now = context.currentTime
+  const out = context.createGain()
+  out.gain.setValueAtTime(0, now)
+  out.gain.linearRampToValueAtTime(0.55, now + 0.35)
+  out.gain.setValueAtTime(0.55, now + seconds * 0.45)
+  out.gain.exponentialRampToValueAtTime(0.0001, now + seconds)
+  out.connect(cathedral(context))
+  const dry = context.createGain()
+  dry.gain.value = 0.5
+  out.connect(dry)
+  dry.connect(mechGain ?? master)
+  // A low-pass that opens as it swells, so it blooms rather than clicks.
+  const tone = context.createBiquadFilter()
+  tone.type = "lowpass"
+  tone.frequency.setValueAtTime(180, now)
+  tone.frequency.exponentialRampToValueAtTime(1400, now + 0.5)
+  tone.frequency.exponentialRampToValueAtTime(300, now + seconds)
+  tone.connect(out)
+  for (const [freq, type, level] of [
+    [55, "sine", 0.9],
+    [110.6, "sawtooth", 0.18],
+    [164.2, "triangle", 0.22],
+    [82.1, "sine", 0.4],
+    [880.4, "sine", 0.05],
+    [1320.9, "sine", 0.03],
+  ] as [number, OscillatorType, number][]) {
+    const osc = context.createOscillator()
+    osc.type = type
+    osc.frequency.value = freq
+    // A slow wobble: the hum breathes.
+    const lfo = context.createOscillator()
+    lfo.frequency.value = 0.7 + Math.random() * 0.6
+    const depth = context.createGain()
+    depth.gain.value = freq * 0.004
+    lfo.connect(depth)
+    depth.connect(osc.frequency)
+    const g = context.createGain()
+    g.gain.value = level
+    osc.connect(g)
+    g.connect(tone)
+    osc.start(now)
+    lfo.start(now)
+    osc.stop(now + seconds + 0.1)
+    lfo.stop(now + seconds + 0.1)
+  }
+}
+
 // A minor, F major, D minor, E major: slow and modal, a chant rather
 // than a song.
 const CHORDS = [
@@ -854,6 +908,10 @@ export const sfx = {
   // The sound of the switch itself, once per toggle.
   modeShift(mode: Ambience): void {
     playModeShift(mode)
+  },
+  // Ultron's Mind Stone flaring (lib/ultron-face.ts).
+  stoneHum(seconds?: number): void {
+    stoneHum(seconds)
   },
 
   // Standby: the whole sound engine goes quiet (and stops decoding the
