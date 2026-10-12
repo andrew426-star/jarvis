@@ -64,6 +64,10 @@ import { onScreenText, useShowcase, type ShowcaseItem } from "@/lib/showcase-sto
 import { SpeechQueue } from "@/lib/speech-queue"
 import { useSpatial } from "@/lib/spatial-store"
 import { clockTime, useJarvis, type AgentStatus, type TabKey } from "@/lib/store"
+import { useBench } from "@/lib/ultron/bench-store"
+import { UltronBay } from "@/components/ultron/ultron-bay"
+import { UltronFrame } from "@/components/ultron/ultron-frame"
+import { useDirective, type DirectiveAction } from "@/lib/ultron/directive-store"
 import { runTurn } from "@/lib/turn"
 import { useBoot } from "@/lib/use-boot"
 import { useHeartbeat } from "@/lib/use-heartbeat"
@@ -108,6 +112,9 @@ const TOOL_PANEL_MAP: Record<string, TabKey> = {
   trade_signals: "markets",
   news_feed: "intel",
   portfolio: "assets",
+  // Ultron's: his plan, and his figures as he runs them.
+  directive: "directive",
+  engineering: "bench",
 }
 
 export function JarvisConsole() {
@@ -402,6 +409,11 @@ function Shell({
           void runConsoleActions(control.actions as ConsoleAction[], { setCamera, setHands, setWatch, snoozeWatch: snooze, closeConsole })
         }
         if (entry.name === "workshop" || entry.name === "project") runWorkshopActions(control.actions as WorkshopAction[])
+        if (entry.name === "directive") useDirective.getState().apply(control.actions as DirectiveAction[])
+      }
+      // Ultron's bench: every calculation, with what it was asked.
+      if (entry.name === "engineering" && entry.result && typeof entry.result === "object") {
+        useBench.getState().add(entry.args ?? {}, entry.result as Record<string, unknown>)
       }
       // Something Jarvis put on screen: it opens in the showcase window.
       const shown = entry.result as { ok?: boolean; showcase?: Omit<ShowcaseItem, "id" | "time"> } | null
@@ -418,7 +430,7 @@ function Shell({
       // A panel Jarvis opened or closed on purpose wins over the automatic
       // "show the data behind that answer" switch.
       if (entry.name === "console" || entry.name === "workshop" || entry.name === "project") {
-        pushLog("OK", `Jarvis ran ${entry.name}`)
+        pushLog("OK", `${useJarvis.getState().mode === "serious" ? "Ultron" : "Jarvis"} ran ${entry.name}`)
         continue
       }
       if (mapped && !firstPanel) firstPanel = mapped
@@ -836,7 +848,10 @@ function Shell({
         />
       </motion.div>
 
-      <DataWindow>
+      {/* Each AI's apps: Ultron's open in his bay, Jarvis's in the data window. */}
+      {serious && <UltronBay token={token} onAuthError={onAuthError} onAsk={(question) => void handleSend(question, false)} />}
+      <UltronFrame />
+      {!serious && <DataWindow>
         <div className={activeTab === "markets" ? "" : "hidden"}>
           {seen("markets") && <MarketsPanel
             token={token}
@@ -868,7 +883,7 @@ function Shell({
             }}
           />}
         </div>
-      </DataWindow>
+      </DataWindow>}
 
       <HologramLayer />
       <ShowcaseWindow />

@@ -4,11 +4,40 @@ import { create } from "zustand"
 
 import type { ConnectionInfo } from "@/lib/jarvis-client"
 import { playModeTransition } from "@/lib/mode-fx"
+import { useSpatial } from "@/lib/spatial-store"
 import { centralTime } from "@/lib/time"
 
 export type Mode = "normal" | "serious"
 export type AgentStatus = "idle" | "listening" | "speaking" | "thinking"
-export type TabKey = "markets" | "intel" | "assets" | "notes" | "inbox"
+/** One console, two AIs, each with his own apps. Jarvis: everything about
+ *  Andrew and Kivaro AI. Ultron (serious mode): the engineering side - his
+ *  directive, the fleet of builds, the bench, and the workshop. Neither
+ *  shows the other's; asking for one hands the console over. */
+export type JarvisTab = "markets" | "intel" | "assets" | "notes" | "inbox"
+export type UltronTab = "directive" | "legion" | "bench"
+export type TabKey = JarvisTab | UltronTab
+
+export const JARVIS_TABS: { key: JarvisTab; label: string }[] = [
+  { key: "markets", label: "Markets" },
+  { key: "intel", label: "Intel" },
+  { key: "assets", label: "Assets" },
+  { key: "notes", label: "Notes" },
+  { key: "inbox", label: "Inbox" },
+]
+export const ULTRON_TABS: { key: UltronTab; label: string; code: string }[] = [
+  { key: "directive", label: "Directive", code: "U-01" },
+  { key: "legion", label: "Legion", code: "U-02" },
+  { key: "bench", label: "Bench", code: "U-03" },
+]
+
+export function tabsFor(mode: Mode): { key: TabKey; label: string; code?: string }[] {
+  return mode === "serious" ? ULTRON_TABS : JARVIS_TABS
+}
+
+/** Whose app a tab is. */
+export function ownerOf(tab: TabKey): Mode {
+  return ULTRON_TABS.some((t) => t.key === tab) ? "serious" : "normal"
+}
 export type LogLevel = "OK" | "WARN" | "ERR" | "NONE"
 
 export interface LogEntry {
@@ -75,6 +104,9 @@ interface JarvisState {
   // null = the comms terminal is showing. A tab selects a data panel
   // into the same region, and clicking the active tab returns to chat.
   activeTab: TabKey | null
+  /** An app asked for while the console was the other AI's: it opens once
+   *  the hand-over finishes. */
+  pendingTab: TabKey | null
   signals: Signals
   logs: LogEntry[]
   notifications: Notification[]
@@ -130,6 +162,7 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   // survives a reload like the mode does.
   gridVisible: typeof window === "undefined" || localStorage.getItem("jarvis_grid") !== "off",
   activeTab: null,
+  pendingTab: null,
   signals: {
     link: "idle",
     latencyMs: null,
@@ -157,7 +190,13 @@ export const useJarvis = create<JarvisState>((set, get) => ({
         // Preference cannot be persisted; it still applies this session.
       }
     }
-    set({ mode })
+    // Each AI's apps are his alone: the other's close as the console
+    // changes hands, and the workshop is Ultron's.
+    const { activeTab, pendingTab } = get()
+    const keep = activeTab && ownerOf(activeTab) === mode ? activeTab : null
+    const next = pendingTab && ownerOf(pendingTab) === mode ? pendingTab : keep
+    if (mode === "normal") useSpatial.getState().setWorkshopOpen(false)
+    set({ mode, activeTab: next, pendingTab: null })
   },
 
   // Delegates to setMode so the DOM class, localStorage and React
@@ -179,7 +218,15 @@ export const useJarvis = create<JarvisState>((set, get) => ({
     }
     set({ gridVisible })
   },
-  setActiveTab: (activeTab) => set({ activeTab }),
+  setActiveTab: (activeTab) => {
+    // The other AI's app: hand the console over, then open it.
+    if (activeTab && ownerOf(activeTab) !== get().mode) {
+      set({ pendingTab: activeTab })
+      get().toggleMode()
+      return
+    }
+    set({ activeTab })
+  },
 
   setLatency: (ms) =>
     set((state) => {

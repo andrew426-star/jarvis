@@ -44,7 +44,12 @@ CONSOLE_ACTIONS = [
     "pop_in",
 ]
 MAX_TIMER_S = 24 * 3600
-PANELS = {"markets", "intel", "assets", "notes", "inbox"}
+# Each AI's own apps (web/src/lib/store.ts): Jarvis's are about Andrew and
+# Kivaro AI; Ultron's (serious mode) are the engineering side, with the
+# workshop. Neither opens the other's - switching mode hands over.
+JARVIS_PANELS = {"markets", "intel", "assets", "notes", "inbox"}
+ULTRON_PANELS = {"directive", "legion", "bench"}
+PANELS = JARVIS_PANELS | ULTRON_PANELS
 WATCH_LEVELS = {"quiet", "normal", "coach"}
 # What can leave the console for a window of its own: the workshop, a data
 # panel (by name), the showcase, the timers.
@@ -134,8 +139,12 @@ CONSOLE_SCHEMA = {
     "function": {
         "name": "console",
         "description": (
-            "Operate Andrew's J.A.R.V.I.S. console in his browser: open or close the data "
-            "panels (markets, intel, assets, notes: his saved notes, inbox: what your rounds left for him), open or close the 3D workshop, turn the camera "
+            "Operate Andrew's console in his browser - one console shared by two AIs, each with his "
+            "own apps: Jarvis's are markets, intel, assets, notes (his saved notes) and inbox (what "
+            "the rounds left for him); Ultron's (serious mode) are directive, legion (every build as "
+            "a fleet) and bench (his engineering calculations), and the 3D workshop. Open or close "
+            "YOUR apps only (open_panel / close_panel; open_workshop, close_workshop: Ultron); "
+            "set_mode hands the console to the other AI when Andrew wants something of his. Turn the camera "
             "or hand tracking on or off, close the showcase window (close_showcase), start or stop watching his whiteboard (watch_on brings "
             "the camera up; target sets how readily you speak up: quiet | normal | coach; watch_snooze keeps you quiet "
             "for 15 minutes without stopping), switch between normal and serious mode, mute or "
@@ -169,8 +178,9 @@ CONSOLE_SCHEMA = {
                             "target": {
                                 "type": "string",
                                 "description": (
-                                    "open_panel: markets | intel | assets | notes | inbox. set_mode: normal | serious. "
-                                    "pop_out / pop_in: workshop | showcase | timers | markets | intel | assets | notes | inbox. "
+                                    "open_panel: Jarvis - markets | intel | assets | notes | inbox; Ultron - directive | legion | bench. "
+                                    "set_mode: normal (Jarvis) | serious (Ultron). "
+                                    "pop_out / pop_in: workshop | showcase | timers | an app of yours. "
                                     "watch_on: quiet | normal | coach (default normal). timer_start: stopwatch for a "
                                     "stopwatch. timer_stop: part of the label to stop (empty: every timer)."
                                 ),
@@ -318,17 +328,25 @@ def _clean_model(model: dict) -> tuple[dict | None, str | None]:
     }, None
 
 
-def console(args: dict) -> dict:
+def console(args: dict, ultron: bool = False) -> dict:
     actions = []
     problems = []
+    own = ULTRON_PANELS if ultron else JARVIS_PANELS
     for raw in args.get("actions") or []:
         action = (raw or {}).get("action")
         target = str((raw or {}).get("target") or "").lower().strip()
         if action not in CONSOLE_ACTIONS:
             problems.append(f"unknown action {action!r}")
             continue
-        if action == "open_panel" and target not in PANELS:
-            problems.append(f"open_panel needs one of {sorted(PANELS)}")
+        if action == "open_panel" and target not in own:
+            other = "Jarvis's (set_mode normal hands the console back to him)" if ultron else "Ultron's (set_mode serious hands the console to him)"
+            problems.append(f"open_panel: {target or '?'} is not yours - yours are {sorted(own)}." + (f" {target} is {other}." if target in PANELS else ""))
+            continue
+        if not ultron and (action in ("open_workshop", "close_workshop") or (action in ("pop_out", "pop_in") and target == "workshop")):
+            problems.append("the workshop is Ultron's: set_mode serious hands him the console, and he opens it.")
+            continue
+        if action in ("pop_out", "pop_in") and target in PANELS and target not in own:
+            problems.append(f"{target} is not yours to move.")
             continue
         if action in ("pop_out", "pop_in") and target not in WINDOWS:
             problems.append(f"{action} needs one of {sorted(WINDOWS)}")

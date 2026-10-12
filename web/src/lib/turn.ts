@@ -120,7 +120,7 @@ export async function runTurn<M extends ChatMessageData>(setup: TurnSetup<M>): P
         voice.push(event.delta)
         updateReply((m) => ({ ...m, spoken: (m.spoken ?? "") + event.delta, said: m.said ?? "" }))
       } else if (event.type === "tool") {
-        const entry = { name: event.name, result: event.result }
+        const entry = { name: event.name, result: event.result, ...(event.args ? { args: event.args } : {}) }
         cards.push(entry)
         setup.onTool?.(entry)
       }

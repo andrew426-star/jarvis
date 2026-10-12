@@ -15,3 +15,18 @@ export function isUltron(): boolean {
 export function currentVoiceId(): string | undefined {
   return isUltron() ? ULTRON_VOICE_ID : undefined
 }
+
+/** Run `then` as Ultron: at once if the console is his, else after it is
+ *  handed over to him (the workshop is his alone). */
+export function asUltron(then: () => void) {
+  const jarvis = useJarvis.getState()
+  if (jarvis.mode === "serious") return then()
+  jarvis.toggleMode()
+  const stop = useJarvis.subscribe((state) => {
+    if (state.mode !== "serious") return
+    stop()
+    then()
+  })
+  // A hand-over that never lands (cancelled) must not leave this waiting.
+  setTimeout(stop, 8000)
+}

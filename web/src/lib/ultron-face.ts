@@ -1552,7 +1552,6 @@ export class UltronFace {
         }
         return false
       }
-      const frontZ = (px: number, py: number) => box.max.z + 0.1 - (solid(px, py) ? depth(px, py) : near(px, py)) * depthRange
       const verts: number[] = []
       const uvs: number[] = []
       const base: number[] = []

@@ -4,7 +4,9 @@ import type { WatchLevel } from "@/lib/jarvis-client"
 import { sfx } from "@/lib/sfx"
 import { showcaseState, useShowcase } from "@/lib/showcase-store"
 import { useSpatial } from "@/lib/spatial-store"
-import { useJarvis, type TabKey } from "@/lib/store"
+import { asUltron } from "@/lib/persona"
+import { directiveState } from "@/lib/ultron/directive-store"
+import { useJarvis, ULTRON_TABS, type TabKey } from "@/lib/store"
 import type { GeneratedModel } from "@/lib/workshop/models"
 import type { ItemMode } from "@/lib/workshop/scene"
 import { useTryOn } from "@/lib/ar/store"
@@ -18,7 +20,7 @@ import type { Anchor, Project, Report } from "@/lib/workshop/project/types"
 import { applyInputs, setSimSpeed, startSim, stopSim } from "@/lib/workshop/sim/controller"
 import { popInWindow, popOutWindow, poppedOutWindows, type WindowTarget } from "@/lib/window-control"
 
-const PANEL_TABS = new Set(["markets", "intel", "assets", "notes", "inbox"])
+const PANEL_TABS = new Set<string>(["markets", "intel", "assets", "notes", "inbox", ...ULTRON_TABS.map((t) => t.key)])
 
 // Jarvis operating the console. His `console` and `workshop` tools return a
 // list of actions (app/tools/console_control.py); this carries them out,
@@ -178,12 +180,15 @@ function runWorkshopAction(step: WorkshopAction) {
 }
 
 export function runWorkshopActions(actions: WorkshopAction[]) {
-  // The workshop opens itself for any of these; its scene loads
-  // asynchronously, so actions wait in `pending` until it registers.
-  if (!useSpatial.getState().workshopOpen) {
-    useJarvis.getState().setActiveTab(null)
-    useSpatial.getState().setWorkshopOpen(true)
-  }
+  // The workshop opens itself for any of these (as Ultron's: the console
+  // is handed to him first); its scene loads asynchronously, so actions
+  // wait in `pending` until it registers.
+  asUltron(() => {
+    if (!useSpatial.getState().workshopOpen) {
+      useJarvis.getState().setActiveTab(null)
+      useSpatial.getState().setWorkshopOpen(true)
+    }
+  })
   actions.forEach(runWorkshopAction)
 }
 
@@ -213,8 +218,10 @@ export async function runConsoleActions(actions: ConsoleAction[], host: ConsoleH
         jarvis.setActiveTab(null)
         break
       case "open_workshop":
-        jarvis.setActiveTab(null)
-        spatial.setWorkshopOpen(true)
+        asUltron(() => {
+          useJarvis.getState().setActiveTab(null)
+          useSpatial.getState().setWorkshopOpen(true)
+        })
         break
       case "close_workshop":
         spatial.setWorkshopOpen(false)
@@ -280,7 +287,7 @@ export async function runConsoleActions(actions: ConsoleAction[], host: ConsoleH
         // One tick, so a window opened just now has registered - or, for
         // the workshop before its chunk has loaded, until it has.
         await new Promise((resolve) => setTimeout(resolve, 0))
-        if (windowTarget === "workshop") spatial.setWorkshopOpen(true)
+        if (windowTarget === "workshop") await new Promise<void>((resolve) => asUltron(() => (spatial.setWorkshopOpen(true), resolve())))
         let outcome = popOutWindow(windowTarget)
         for (let wait = 0; outcome === "unavailable" && wait < 40; wait += 1) {
           await new Promise((resolve) => setTimeout(resolve, 100))
@@ -303,6 +310,8 @@ export function consoleState() {
   return {
     mode: jarvis.mode,
     active_panel: jarvis.activeTab,
+    // Ultron's plan, as it stands (his directive tool changes it).
+    ...(jarvis.mode === "serious" ? { directive: directiveState() } : {}),
     workshop_open: spatial.workshopOpen,
     workshop_items: spatial.workshopOpen && workshop ? workshop.items() : [],
     camera_on: spatial.cameraOn,

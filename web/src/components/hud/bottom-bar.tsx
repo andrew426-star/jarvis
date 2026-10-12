@@ -8,7 +8,10 @@ import {
   MailIcon,
   PaperclipIcon,
   SettingsIcon,
+  CrosshairIcon,
+  ShieldIcon,
   TrendingUpIcon,
+  WrenchIcon,
   XIcon,
 } from "lucide-react"
 
@@ -28,6 +31,28 @@ interface QuickAction {
   prompt: string
   Icon: typeof MailIcon
 }
+
+// Ultron's: his directive, his fleet, the build on the bench.
+const ULTRON_ACTIONS: QuickAction[] = [
+  {
+    key: "directive",
+    label: "Directive status",
+    prompt: "Status of the directive: where does it stand, what is next, and what is blocking it?",
+    Icon: CrosshairIcon,
+  },
+  {
+    key: "legion",
+    label: "Legion audit",
+    prompt: "Audit the Legion: across every build, which is closest to operational, which is in the worst shape, and what should we fix first?",
+    Icon: ShieldIcon,
+  },
+  {
+    key: "stress",
+    label: "Stress the build",
+    prompt: "Take the build on the bench apart with your engineering tool: what fails first, with its numbers, and how do we fix it?",
+    Icon: WrenchIcon,
+  },
+]
 
 const ACTIONS: QuickAction[] = [
   {
@@ -131,6 +156,7 @@ export function BottomBar({
   const [value, setValue] = useState("")
   const [focused, setFocused] = useState(false)
   const setSettingsOpen = useJarvis((state) => state.setSettingsOpen)
+  const serious = useJarvis((state) => state.mode === "serious")
   const setListening = useJarvis((state) => state.setListening)
   const notify = useJarvis((state) => state.notify)
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -243,7 +269,7 @@ export function BottomBar({
           onPaste={handlePaste}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholder={disabled ? "Standby..." : "Enter command or speak..."}
+          placeholder={disabled ? "Standby..." : serious ? "Directive, design, build..." : "Enter command or speak..."}
           disabled={disabled}
           aria-label="Command input"
           className="min-w-0 flex-1"
@@ -308,7 +334,7 @@ export function BottomBar({
       )}
 
       <div className="flex shrink-0 items-center" style={{ gap: "var(--sp-2)" }}>
-        {ACTIONS.map((action) => (
+        {(serious ? ULTRON_ACTIONS : ACTIONS).map((action) => (
           <ActionButton
             key={action.key}
             label={action.label}

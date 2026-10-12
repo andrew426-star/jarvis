@@ -25,6 +25,7 @@ from app.services.situation import situation_note
 from app.services.ultron import ULTRON_PERSONA, is_ultron
 from app.services.workshop_meshes import meshes_line
 from app.tools.camera import CAMERA_LOOK_SCHEMA, CAMERA_ON_NOTE, CHECK_WORK, CHECK_WORK_LOOK, make_camera_look
+from app.tools.directive import DIRECTIVE_SCHEMA, make_directive
 from app.tools.engineering import ENGINEERING_SCHEMA, make_engineering
 from app.tools.console_control import (
     CONSOLE_CONTROL_NOTE,
@@ -303,6 +304,42 @@ def _declaration(schema: dict) -> types.FunctionDeclaration:
 _DECLARATIONS = [_declaration(schema) for schema in TOOL_SCHEMAS if schema["function"]["name"] != "think"]
 _CAMERA_DECLARATION = _declaration(CAMERA_LOOK_SCHEMA)
 _ENGINEERING_DECLARATION = _declaration(ENGINEERING_SCHEMA)
+_DIRECTIVE_DECLARATION = _declaration(DIRECTIVE_SCHEMA)
+# Tools whose arguments go back to the console with their result.
+_ARGS_SHOWN = {"engineering"}
+
+# One console, two AIs. Jarvis has everything about Andrew and Kivaro AI;
+# Ultron (serious mode) the engineering side: the workshop and its builds,
+# the parts, his bench and his directive. A few things both use - research,
+# arithmetic, files, the browser, history, checklists, the console itself,
+# the showcase and the camera.
+JARVIS_ONLY = {
+    "database_agent", "market_analysis", "market_history", "google_titan", "portfolio",
+    "company_financials", "kivaro_pipeline", "launch_tracker", "kiv_tasks", "habits", "italian",
+    "speech_coach", "github", "news_feed", "spotify", "zoho_mail", "notes", "inbox", "trade_signals",
+}
+ULTRON_ONLY = {"parts_catalog", "workshop", "project", "engineering", "directive"}
+
+JARVIS_SIDE = (
+    "YOUR SIDE OF THE CONSOLE: the console is shared with ULTRON, a second AI who takes it in "
+    "serious mode. Everything about Andrew and Kivaro AI is yours - his calendar, mail, notes, "
+    "markets, portfolio, the launch, the pipeline, tasks, habits. Building, design, CAD, "
+    "electronics, robotics, the workshop and its projects, the parts catalogue and engineering "
+    "are Ultron's: you do not have those tools. When Andrew wants to build or engineer "
+    "something, say it is Ultron's bench and, if he wants it now, hand over with the console "
+    "tool (set_mode serious) - do not attempt the work yourself."
+)
+ULTRON_SIDE = (
+    "YOUR SIDE OF THE CONSOLE: this overrides the tool list above. Yours: the workshop and its "
+    "projects (workshop, project), parts_catalog, engineering, and directive - and your apps: "
+    "Directive (your objective and plan), Legion (every build, as your fleet) and Bench (your "
+    "calculations, logged as you run them). Shared with Jarvis: web_research, calculator, files, "
+    "browser, history, checklist, the console, the showcase and the camera. Andrew's calendar, "
+    "mail, notes, markets, portfolio, Kivaro AI and its pipeline are Jarvis's: you do not have "
+    "those tools. When he asks for them, say so in a line and offer to hand the console back "
+    "(console set_mode normal). Plan like an engineer: when he sets you a build or a goal, set "
+    "your directive, and keep it true as the work lands."
+)
 _CONSOLE_DECLARATIONS = [
     _declaration(CONSOLE_SCHEMA),
     _declaration(WORKSHOP_SCHEMA),
@@ -614,9 +651,10 @@ def stream_invoke(
     # no console to drive.
     if channel == "console":
         declarations = [*_DECLARATIONS, *_CONSOLE_DECLARATIONS]
+        ultron = is_ultron(console_state)
         handlers = {
             **DISPATCH,
-            "console": console,
+            "console": lambda args: console(args, ultron),
             "workshop": make_workshop(image, image_type),
             "showcase": make_showcase(image, image_type),
             "project": make_project(console_state),
@@ -637,10 +675,16 @@ def stream_invoke(
             meshes = meshes_line()
             if meshes:
                 system.append(meshes)
-    # Ultron's own bench (app/tools/engineering.py): serious mode only.
+    # Ultron's own bench (app/tools/engineering.py) and directive: serious
+    # mode only. Then each AI keeps his own side's tools and the shared ones.
     if is_ultron(console_state):
-        declarations = [*declarations, _ENGINEERING_DECLARATION]
-        handlers = {**handlers, "engineering": make_engineering(console_state)}
+        declarations = [*declarations, _ENGINEERING_DECLARATION, _DIRECTIVE_DECLARATION]
+        handlers = {**handlers, "engineering": make_engineering(console_state), "directive": make_directive(console_state)}
+    if channel == "console":
+        other = JARVIS_ONLY if is_ultron(console_state) else ULTRON_ONLY
+        declarations = [d for d in declarations if d.name not in other]
+        handlers = {k: v for k, v in handlers.items() if k not in other}
+        system.append(ULTRON_SIDE if is_ultron(console_state) else JARVIS_SIDE)
     if tool_override is not None:
         declarations = [_declaration(schema) for schema in tool_override[0]]
         handlers = tool_override[1]
@@ -832,7 +876,8 @@ def stream_invoke(
             tools_used.append(name)
             # The console gets the whole result; the model, the logs and
             # the done event get it without console-only payloads.
-            yield {"type": "tool", "name": name, "result": result}
+            # What was asked, for the tools whose app shows it (Ultron's bench).
+            yield {"type": "tool", "name": name, "result": result, **({"args": args} if name in _ARGS_SHOWN else {})}
             result = _model_view(result)
             tool_call_trace.append({"name": name, "args": args, "result": result, "ms": ms})
             timings.append({"step": "tool", "name": name, "ms": ms})
@@ -879,7 +924,7 @@ def stream_invoke(
         ", ".join(f"{t.get('model') or t.get('name') or t['step']} {t['ms']}ms" for t in timings[:-1]),
     )
 
-    tool_results = [{"name": t["name"], "result": t["result"]} for t in tool_call_trace]
+    tool_results = [{"name": t["name"], "result": t["result"], **({"args": t["args"]} if t["name"] in _ARGS_SHOWN else {})} for t in tool_call_trace]
 
     # The console's CTX gauge. Read back from Redis rather than counted in
     # the browser, which starts from zero on every reload even though the

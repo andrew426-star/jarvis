@@ -7,17 +7,10 @@ import { sfx } from "@/lib/sfx"
 import { clock, remaining, useTimers } from "@/lib/timer-store"
 import { useSpatial } from "@/lib/spatial-store"
 import { useClock } from "@/lib/use-clock"
-import { useJarvis, type TabKey } from "@/lib/store"
+import { tabsFor, useJarvis } from "@/lib/store"
 import { centralDate, centralTime, centralZoneLabel } from "@/lib/time"
 import { BrandName } from "@/components/hud/brand-name"
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: "markets", label: "Markets" },
-  { key: "intel", label: "Intel" },
-  { key: "assets", label: "Assets" },
-  { key: "notes", label: "Notes" },
-  { key: "inbox", label: "Inbox" },
-]
 
 function Metric({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
@@ -52,6 +45,7 @@ export function TopBar() {
   const { activeTab, setActiveTab, mode, toggleMode, signals } = useJarvis()
   const waiting = useInbox((state) => state.pending.length)
   const setWorkshopOpen = useSpatial((state) => state.setWorkshopOpen)
+  const workshopOpen = useSpatial((state) => state.workshopOpen)
   // 0 until the first client tick - see use-clock.ts for why the clock
   // is an external store rather than state driven by an effect.
   const epoch = useClock()
@@ -93,7 +87,9 @@ export function TopBar() {
           aria-label="Online"
         />
         <nav className="top-bar-tabs flex min-w-0 items-center" style={{ gap: "var(--sp-2)" }}>
-          {TABS.map((tab) => (
+          {/* The console's apps are whoever has it: Jarvis's, or Ultron's
+              and his workshop. */}
+          {tabsFor(mode).map((tab) => (
             <button
               key={tab.key}
               type="button"
@@ -109,16 +105,19 @@ export function TopBar() {
               )}
             </button>
           ))}
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab(null)
-              setWorkshopOpen(true)
-            }}
-            className="btn top-bar-tab"
-          >
-            Workshop
-          </button>
+          {serious && (
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab(null)
+                setWorkshopOpen(true)
+              }}
+              data-active={workshopOpen}
+              className="btn top-bar-tab"
+            >
+              Workshop
+            </button>
+          )}
         </nav>
       </div>
 
@@ -164,7 +163,7 @@ export function TopBar() {
           aria-pressed={serious}
           className="btn top-bar-tab shrink-0"
         >
-          {serious ? "Serious" : "Normal"}
+          {serious ? "Ultron" : "Jarvis"}
         </button>
 
         <div className="top-bar-metrics items-center" style={{ gap: "var(--sp-3)" }}>

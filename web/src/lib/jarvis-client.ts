@@ -105,6 +105,8 @@ export async function verifyToken(token: string): Promise<void> {
 export interface ToolResult {
   name: string
   result: unknown
+  /** What it was asked (only for the tools an app shows: engineering). */
+  args?: Record<string, unknown>
 }
 
 export interface InvokeResult {
@@ -175,7 +177,7 @@ export type StreamEvent =
   | { type: "text"; delta: string }
   | { type: "spoken"; delta: string }
   | { type: "reset" }
-  | { type: "tool"; name: string; result: unknown }
+  | { type: "tool"; name: string; result: unknown; args?: Record<string, unknown> }
   | ({ type: "done" } & InvokeResult)
   | { type: "error"; message: string }
   | { type: "status"; label: string }

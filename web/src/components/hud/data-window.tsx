@@ -7,15 +7,7 @@ import { AppWindowIcon, MinimizeIcon, XIcon } from "lucide-react"
 import { PopOutPortal, usePopOut } from "@/components/ui/pop-out"
 import { registerWindow } from "@/lib/window-control"
 
-import { useJarvis, type TabKey } from "@/lib/store"
-
-const TABS: { key: TabKey; label: string }[] = [
-  { key: "markets", label: "Markets" },
-  { key: "intel", label: "Intel" },
-  { key: "assets", label: "Assets" },
-  { key: "notes", label: "Notes" },
-  { key: "inbox", label: "Inbox" },
-]
+import { JARVIS_TABS as TABS, useJarvis } from "@/lib/store"
 
 // Top bar 48px, bottom bar 56px, plus a gutter — the window floats over
 // everything between them, side panels included, so the data tabs get the

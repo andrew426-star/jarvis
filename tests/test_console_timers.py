@@ -19,18 +19,35 @@ def test_timer_actions():
 
 
 def test_window_actions():
-    r = c.console({"actions": [
+    actions = [
         {"action": "pop_out", "target": "Workshop"},
         {"action": "pop_out", "target": "markets"},
         {"action": "pop_in", "target": "timers"},
         {"action": "pop_out", "target": "fridge"},
-    ]})
+    ]
+    # Jarvis: his own panels; the workshop is Ultron's.
+    r = c.console({"actions": actions})
     assert r["actions"] == [
-        {"action": "pop_out", "target": "workshop"},
         {"action": "pop_out", "target": "markets"},
         {"action": "pop_in", "target": "timers"},
     ]
     assert any("pop_out needs" in p for p in r["skipped"])
+    assert any("Ultron's" in p for p in r["skipped"])
+    # Ultron: the workshop; markets are Jarvis's.
+    r = c.console({"actions": actions}, ultron=True)
+    assert r["actions"] == [
+        {"action": "pop_out", "target": "workshop"},
+        {"action": "pop_in", "target": "timers"},
+    ]
+
+
+def test_each_ai_opens_his_own_apps():
+    r = c.console({"actions": [{"action": "open_panel", "target": "legion"}, {"action": "open_panel", "target": "notes"}, {"action": "open_workshop"}]})
+    assert r["actions"] == [{"action": "open_panel", "target": "notes"}]
+    assert any("set_mode serious" in p for p in r["skipped"])
+    r = c.console({"actions": [{"action": "open_panel", "target": "legion"}, {"action": "open_panel", "target": "notes"}, {"action": "open_workshop"}]}, ultron=True)
+    assert r["actions"] == [{"action": "open_panel", "target": "legion"}, {"action": "open_workshop"}]
+    assert any("set_mode normal" in p for p in r["skipped"])
     assert "In windows of their own: workshop." in c.state_note({"windows_out": ["workshop"]})
 
 
