@@ -19,7 +19,9 @@ export function useAnimatedNumber(target: number, durationMs = 600): number {
     const startedAt = performance.now()
 
     const tick = (now: number) => {
-      const progress = Math.min(1, (now - startedAt) / durationMs)
+      // A frame's timestamp can be a touch before startedAt (it is when the
+      // frame began): clamped, or the first frame swings past the start.
+      const progress = Math.max(0, Math.min(1, (now - startedAt) / durationMs))
       // easeOutCubic - fast start, gentle settle, so a jump to a new
       // reading reads as an instrument moving rather than a value swap.
       const eased = 1 - Math.pow(1 - progress, 3)

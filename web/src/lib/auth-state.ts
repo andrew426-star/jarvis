@@ -24,9 +24,11 @@ export function resolveAuth(): AuthState {
   const failure = params.get("login_error")
 
   if (granted || failure) {
-    // Strip it immediately: a session token in the address bar ends up
-    // in history, bookmarks, and any screenshot of the app.
-    window.history.replaceState({}, "", window.location.pathname)
+    // Strip it at once: a session token in the address bar ends up in
+    // history, bookmarks, and any screenshot of the app. A tick later, not
+    // now: this runs while the console renders, and the router hears of
+    // the address change - updating it mid-render is not allowed.
+    setTimeout(() => window.history.replaceState({}, "", window.location.pathname), 0)
   }
 
   if (granted) {

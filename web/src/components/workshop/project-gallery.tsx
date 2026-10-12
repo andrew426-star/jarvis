@@ -312,7 +312,7 @@ export function ProjectGallery() {
       {error && <p className="relative m-auto" style={{ color: "var(--warning)", fontSize: 13 }}>{error}</p>}
       {projects?.length === 0 && (
         <p className="relative m-auto" style={{ color: "var(--text-secondary)", fontSize: 13, textAlign: "center", maxWidth: 360 }}>
-          No projects yet. Start one above, or tell Jarvis what you want to build and he will draw it up.
+          No projects yet. Start one above, or tell Ultron what you want to build and he will draw it up.
         </p>
       )}
 

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react"
 
 import { getPortfolio, type PortfolioResult } from "@/lib/jarvis-client"
 import { useJarvis } from "@/lib/store"
+import { useBench } from "@/lib/ultron/bench-store"
+import { directiveProgress, useDirective } from "@/lib/ultron/directive-store"
 import { useAnimatedNumber } from "@/lib/use-animated-number"
 
 // Four cards that share the column's height but never go below their own
@@ -325,7 +327,38 @@ function PortfolioCard({ token, onAuthError }: { token: string; onAuthError: () 
   )
 }
 
+/** Ultron's card in place of Jarvis's portfolio: where his directive
+ *  stands, the step under way, and his bench. */
+function DirectiveCard() {
+  const directive = useDirective((s) => s.directive)
+  const runs = useBench((s) => s.runs.length)
+  const { done, total } = directiveProgress(directive)
+  const active = directive?.phases.flatMap((p) => p.steps).find((s) => s.status === "active")
+  const blocked = directive?.phases.flatMap((p) => p.steps).filter((s) => s.status === "blocked").length ?? 0
+  return (
+    <CardShell title="Directive">
+      {directive ? (
+        <>
+          <p className="t-label" style={{ color: "var(--text-primary)", lineHeight: 1.45, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }} title={directive.objective}>
+            {directive.objective}
+          </p>
+          <div className="u-gauge" style={{ "--fill": total ? done / total : 0 } as React.CSSProperties} />
+          <Row label="STEPS" value={`${done}/${total}`} />
+          {blocked > 0 && <Row label="BLOCKED" value={`${blocked}`} color="var(--warning)" />}
+          {active && <Row label="NOW" value={active.text} color="var(--accent)" />}
+        </>
+      ) : (
+        <p className="t-label" style={{ color: "var(--text-secondary)" }}>No directive set.</p>
+      )}
+      <Row label="BENCH RUNS" value={`${runs}`} />
+    </CardShell>
+  )
+}
+
 export function LeftPanel({ token, onAuthError }: { token: string; onAuthError: () => void }) {
+  // The last card is whoever has the console's: Jarvis's portfolio (and
+  // only he fetches it), or Ultron's directive.
+  const ultron = useJarvis((state) => state.mode === "serious")
   return (
     <aside
       className="panel flex min-h-0 flex-1 flex-col overflow-y-auto"
@@ -338,7 +371,7 @@ export function LeftPanel({ token, onAuthError }: { token: string; onAuthError: 
       <SystemCard />
       <SessionCard />
       <LatencyCard />
-      <PortfolioCard token={token} onAuthError={onAuthError} />
+      {ultron ? <DirectiveCard /> : <PortfolioCard token={token} onAuthError={onAuthError} />}
     </aside>
   )
 }

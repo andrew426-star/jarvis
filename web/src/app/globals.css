@@ -1461,6 +1461,14 @@ button {
   font-family: var(--font-orbitron), sans-serif;
   letter-spacing: 0.16em;
   font-size: 10px;
+  /* Red text on his dark red reads poorly: pale steel, the red in the frame. */
+  color: rgba(255, 214, 204, 0.82);
+  border-color: rgba(var(--accent-rgb), 0.55);
+}
+:root.serious .top-bar-tab:hover,
+:root.serious .top-bar-tab[data-active="true"],
+:root.serious .top-bar-tab[aria-pressed="true"] {
+  color: #fff;
 }
 :root.serious .top-bar {
   background:

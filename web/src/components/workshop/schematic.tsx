@@ -117,7 +117,7 @@ export function Schematic({ project, sim }: { project: Project; sim: SimSnapshot
   const glow = new Map((sim?.parts ?? []).map((p) => [p.id, p.glow]))
 
   if (!project.parts.length) {
-    return <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: 8 }}>No parts yet. Ask Jarvis to design the circuit.</p>
+    return <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: 8 }}>No parts yet. Ask Ultron to design the circuit.</p>
   }
 
   return (

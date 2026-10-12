@@ -392,7 +392,7 @@ function PartsTab() {
 
   return (
     <>
-      {groups.length === 0 && <Muted>No parts yet. Tell Jarvis what you want to build.</Muted>}
+      {groups.length === 0 && <Muted>No parts yet. Tell Ultron what you want to build.</Muted>}
       {groups.map((group) => {
         const parts = project.parts.filter((p) => (p.group ?? null) === group)
         const printed = project.printed.filter((p) => (p.group ?? null) === group)
@@ -545,7 +545,7 @@ function CircuitTab() {
     <>
       <Schematic project={project} sim={sim} />
       <Muted>
-        {project.wires.length} wires. Hover a lane to trace its net. To change the wiring, tell Jarvis what to move.
+        {project.wires.length} wires. Hover a lane to trace its net. To change the wiring, tell Ultron what to move.
       </Muted>
     </>
   )
@@ -608,7 +608,7 @@ function CodeEditor() {
             requestAnimationFrame(() => t.setSelectionRange(at + 2, at + 2))
           }
         }}
-        placeholder="// The controller's sketch (UNO or ESP32). Ask Jarvis to write it, or write your own."
+        placeholder="// The controller's sketch (UNO or ESP32). Ask Ultron to write it, or write your own."
         style={{
           flex: 1,
           minHeight: 300,

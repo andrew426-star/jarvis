@@ -153,6 +153,10 @@ export function CameraPreview({
   const sectionRef = useRef<HTMLElement>(null)
   const tryingOn = useTryOn((state) => state.active)
   const hasProject = useProject((state) => !!state.project)
+  // The camera is shared; who it talks to is whoever has the console, and
+  // trying a build on is Ultron's (the workshop is his).
+  const ultron = useJarvis((state) => state.mode === "serious")
+  const ai = ultron ? "Ultron" : "Jarvis"
   // The camera going off ends the try-on; it does not wait to resume.
   useEffect(() => {
     if (!cameraOn) useTryOn.getState().stop()
@@ -495,7 +499,7 @@ export function CameraPreview({
           <div
             className="absolute"
             style={{ right: 4, bottom: 4, width: coreSize, height: coreSize }}
-            title="Talk to Jarvis"
+            title={`Talk to ${ai}`}
           >
             <CoreCipher status={status} onToggle={onCoreToggle} ringsRevealed={3} />
           </div>
@@ -508,7 +512,7 @@ export function CameraPreview({
         className="@container flex shrink-0 items-center"
         style={{ gap: "var(--sp-2)", padding: "var(--sp-2)", display: showBody ? undefined : "none" }}
       >
-        <button
+        {(ultron || tryingOn) && <button
           type="button"
           className="btn flex min-w-0 flex-1 items-center justify-center"
           onClick={() => (tryingOn ? useTryOn.getState().stop() : useTryOn.getState().start())}
@@ -519,7 +523,7 @@ export function CameraPreview({
           title={hasProject ? "Wear the open project: a hologram of it on you, live" : "Open a project in the workshop to try it on"}
         >
           <GlassesIcon size={13} className="shrink-0" /> <span className="hidden truncate @[300px]:inline">TRY ON</span>
-        </button>
+        </button>}
         <button
           type="button"
           className="btn flex min-w-0 flex-1 items-center justify-center"
@@ -539,7 +543,7 @@ export function CameraPreview({
           data-active={Boolean(watching)}
           aria-pressed={Boolean(watching)}
           style={{ gap: 6, height: 30, padding: "0 8px" }}
-          title="Let Jarvis follow your whiteboard and speak up when it helps"
+          title={`Let ${ai} follow your whiteboard and speak up when it helps`}
         >
           <ScanEyeIcon size={13} className="shrink-0" /> <span className="hidden truncate @[300px]:inline">WATCH</span>
         </button>
@@ -550,7 +554,7 @@ export function CameraPreview({
           className="flex shrink-0 items-center"
           style={{ gap: "var(--sp-1)", padding: "0 var(--sp-2) var(--sp-2)" }}
           role="group"
-          aria-label="How readily Jarvis speaks up"
+          aria-label={`How readily ${ai} speaks up`}
         >
           {WATCH_LEVELS.map(({ level, label, title }) => (
             <button

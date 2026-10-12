@@ -125,7 +125,7 @@ export function LibraryDock(props: LibraryDockProps) {
         <Section title={`ON STAGE · ${props.items.length}`}>
           {props.items.length === 0 ? (
             <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: 0 }}>
-              Nothing yet. Open a project from the gallery, pick a part, or ask Jarvis to build one.
+              Nothing yet. Open a project from the gallery, pick a part, or ask Ultron to build one.
             </p>
           ) : (
             <div className="flex flex-col" style={{ gap: 4 }}>

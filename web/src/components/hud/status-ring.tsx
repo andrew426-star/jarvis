@@ -81,7 +81,7 @@ export function StatusRing({ visible }: { visible: boolean }) {
     },
     {
       label: "LAT",
-      readout: signals.latencyMs === null ? "--" : `${Math.round(latency)}ms`,
+      readout: signals.latencyMs === null ? "--" : `${Math.max(0, Math.round(latency))}ms`,
       // Inverted: a full arc means fast, which is what an instrument
       // showing health rather than magnitude should do.
       fraction:

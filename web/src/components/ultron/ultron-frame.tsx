@@ -7,8 +7,8 @@ import { ULTRON_TABS, useJarvis } from "@/lib/store"
 import { useBench } from "@/lib/ultron/bench-store"
 import { directiveProgress, useDirective } from "@/lib/ultron/directive-store"
 
-// The hardware Ultron's console is built into, round the whole screen
-// while it is his: bolted corner brackets with hazard plates, conduits from
+// The hardware Ultron's console is built into, round its centre column
+// (the core and the chat; never over the side panels) while it is his: bolted corner brackets with hazard plates, conduits from
 // each corner toward the core carrying his red, rails of status lights down
 // the sides, and a plate under the top bar reading what he is doing - his
 // directive's progress, the bench, the workshop. Every figure on it is
@@ -76,8 +76,8 @@ export function UltronFrame() {
       {ultron && (
         <motion.div
           key="ultron-frame"
-          className="u-frame pointer-events-none fixed"
-          style={{ top: 48, bottom: 56, left: 0, right: 0, zIndex: 25 }}
+          className="u-frame pointer-events-none absolute"
+          style={{ inset: 0, zIndex: 1 }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -87,8 +87,9 @@ export function UltronFrame() {
           <svg key={routed} className="u-routed absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
             <path className="u-conduit" d="M1 6 L12 6 L22 22 L34 30" vectorEffect="non-scaling-stroke" />
             <path className="u-conduit" d="M99 6 L88 6 L78 22 L66 30" vectorEffect="non-scaling-stroke" />
-            <path className="u-conduit" d="M1 94 L12 94 L22 80 L34 72" vectorEffect="non-scaling-stroke" />
-            <path className="u-conduit" d="M99 94 L88 94 L78 80 L66 72" vectorEffect="non-scaling-stroke" />
+            {/* Below, short runs along the floor: the chat lives there. */}
+            <path className="u-conduit" d="M1 97 L14 97 L19 92" vectorEffect="non-scaling-stroke" />
+            <path className="u-conduit" d="M99 97 L86 97 L81 92" vectorEffect="non-scaling-stroke" />
           </svg>
           <Bracket corner="tl" />
           <Bracket corner="tr" />

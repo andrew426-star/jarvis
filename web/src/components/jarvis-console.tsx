@@ -781,6 +781,7 @@ function Shell({
         className="hud-main relative flex min-h-0 flex-col overflow-hidden"
         style={{ padding: "var(--sp-4) var(--sp-5)", gap: "var(--sp-3)", zIndex: 10 }}
       >
+        <UltronFrame />
         <div className="relative flex min-h-0 flex-1 items-center justify-center">
           <div className="relative aspect-square h-full max-h-full">
             <StatusRing visible={boot.statusRing} />
@@ -850,7 +851,6 @@ function Shell({
 
       {/* Each AI's apps: Ultron's open in his bay, Jarvis's in the data window. */}
       {serious && <UltronBay token={token} onAuthError={onAuthError} onAsk={(question) => void handleSend(question, false)} />}
-      <UltronFrame />
       {!serious && <DataWindow>
         <div className={activeTab === "markets" ? "" : "hidden"}>
           {seen("markets") && <MarketsPanel

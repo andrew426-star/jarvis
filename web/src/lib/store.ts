@@ -195,7 +195,10 @@ export const useJarvis = create<JarvisState>((set, get) => ({
     const { activeTab, pendingTab } = get()
     const keep = activeTab && ownerOf(activeTab) === mode ? activeTab : null
     const next = pendingTab && ownerOf(pendingTab) === mode ? pendingTab : keep
-    if (mode === "normal") useSpatial.getState().setWorkshopOpen(false)
+    if (mode === "normal") {
+      useSpatial.getState().setWorkshopOpen(false)
+      void import("@/lib/ar/store").then(({ useTryOn }) => useTryOn.getState().active && useTryOn.getState().stop())
+    }
     set({ mode, activeTab: next, pendingTab: null })
   },
 
