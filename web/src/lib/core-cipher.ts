@@ -6,14 +6,16 @@ import { audioAmplitude } from "@/lib/audio-amplitude"
 import { accentHex, cssHex, onCore, type CoreEvent } from "@/lib/core-events"
 import { subscribeHands, type HandPointer } from "@/lib/hand-tracking"
 import type { AgentStatus } from "@/lib/store"
+import { JarvisMind } from "@/lib/jarvis-mind"
 import { UltronFace } from "@/lib/ultron-face"
 
-// The console's centre, as a 3D holographic cipher: a geodesic shell of
-// points around nested wireframe polyhedra, three tilted bands of
-// scrolling cipher glyphs, orbiting particles with trails, and shockwave
-// rings. It reads, every frame:
+// The console's centre: Jarvis's mind (lib/jarvis-mind.ts) - a sphere of
+// broken circuitry two shells deep, a debris band, chords, splintering
+// shards, a tunnel of rings at its heart and out-of-focus light, drawn as
+// a hologram - inside an outer tick ring, with shockwave rings on events.
+// It reads, every frame:
 //
-//   status      - spin rate; thinking scrambles the glyphs and runs a scan
+//   status      - spin rate; thinking speeds the data and runs a scan
 //   audio       - mic and narration level swell the shell and the core
 //   core events - send, reply, tool and click fire shockwaves and bursts,
 //                 an error flashes it red and shakes it
@@ -24,10 +26,8 @@ import { UltronFace } from "@/lib/ultron-face"
 // which follows the pointer, a hand and Andrew's typing; the switch cuts
 // between them with a few frames of glitch.
 //
-// One WebGL context, additive line and point materials, no post-processing:
-// it sits in a corner of the layout and has to stay cheap.
-
-const GLYPHS = "0123456789ABCDEF∑∆Ω⌬⏣⟁◬⌖ΞΨΦ#<>/\\"
+// One WebGL context, additive shader materials, no post-processing: it
+// sits in a corner of the layout and has to stay cheap.
 
 const SPIN: Record<AgentStatus, number> = { idle: 1, listening: 1.8, thinking: 3.2, speaking: 1.4 }
 const BASE_ENERGY: Record<AgentStatus, number> = { idle: 0.15, listening: 0.45, thinking: 0.6, speaking: 0.4 }
@@ -57,86 +57,12 @@ function glowTexture(): THREE.Texture {
   return texture
 }
 
-// A ring of glyphs drawn into a canvas and wrapped round an open cylinder.
-// Scrolling is a texture offset; "decryption" is redrawing some or all of
-// the characters.
-class GlyphBand {
-  readonly mesh: THREE.Mesh
-  private readonly canvas = document.createElement("canvas")
-  private readonly ctx: CanvasRenderingContext2D
-  private readonly texture: THREE.CanvasTexture
-  private readonly chars: string[]
-
-  constructor(radius: number, height: number, count: number, color: number) {
-    this.canvas.width = 2048
-    this.canvas.height = 64
-    this.ctx = this.canvas.getContext("2d")!
-    this.chars = Array.from({ length: count }, () => GLYPHS[Math.floor(Math.random() * GLYPHS.length)])
-    this.texture = new THREE.CanvasTexture(this.canvas)
-    this.texture.wrapS = THREE.RepeatWrapping
-    this.texture.colorSpace = THREE.SRGBColorSpace
-    this.draw()
-    this.mesh = new THREE.Mesh(
-      new THREE.CylinderGeometry(radius, radius, height, 128, 1, true),
-      new THREE.MeshBasicMaterial({ ...additive(color, 1), map: this.texture, side: THREE.DoubleSide })
-    )
-  }
-
-  scramble(fraction: number) {
-    for (let i = 0; i < this.chars.length; i += 1) {
-      if (Math.random() < fraction) this.chars[i] = GLYPHS[Math.floor(Math.random() * GLYPHS.length)]
-    }
-    this.draw()
-  }
-
-  scroll(amount: number) {
-    this.texture.offset.x = (this.texture.offset.x + amount) % 1
-  }
-
-  private draw() {
-    const { ctx, canvas, chars } = this
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    ctx.fillStyle = "#fff"
-    ctx.font = "700 44px 'JetBrains Mono', ui-monospace, monospace"
-    ctx.textBaseline = "middle"
-    ctx.textAlign = "center"
-    const step = canvas.width / chars.length
-    chars.forEach((char, i) => {
-      ctx.globalAlpha = 0.7 + ((i * 37) % 7) / 20
-      ctx.fillText(char, step * (i + 0.5), canvas.height / 2)
-    })
-    // Rules above and below, like a data track.
-    ctx.globalAlpha = 0.5
-    ctx.fillRect(0, 2, canvas.width, 2)
-    ctx.fillRect(0, canvas.height - 4, canvas.width, 2)
-    this.texture.needsUpdate = true
-  }
-
-  dispose() {
-    this.texture.dispose()
-    this.mesh.geometry.dispose()
-    ;(this.mesh.material as THREE.Material).dispose()
-  }
-}
-
-interface Electron {
-  axis: THREE.Quaternion
-  radius: number
-  speed: number
-  phase: number
-  head: THREE.Mesh
-  trail: THREE.Line
-  history: THREE.Vector3[]
-}
-
 interface Shockwave {
   line: THREE.LineLoop
   age: number
   life: number
   scale: number
 }
-
-const TRAIL = 36
 
 export class CoreCipher {
   private readonly renderer: THREE.WebGLRenderer
@@ -154,17 +80,8 @@ export class CoreCipher {
   private readonly outerGroup = new THREE.Group()
 
   private readonly glow: THREE.Sprite
-  private readonly heart: THREE.Mesh
-  private readonly ico: THREE.LineSegments
-  private readonly octa: THREE.LineSegments
-  private readonly shell: THREE.Points
-  private readonly shellBase: Float32Array
-  private readonly lattice: THREE.LineSegments
+  private readonly mind: JarvisMind
   private readonly ticks: THREE.LineSegments
-  private readonly scan: THREE.LineLoop
-  private readonly bands: GlyphBand[] = []
-  private readonly bandPivots: THREE.Group[] = []
-  private readonly electrons: Electron[] = []
   private shockwaves: Shockwave[] = []
   private readonly tinted: { material: THREE.Material & { color: THREE.Color }; white?: boolean }[] = []
 
@@ -175,7 +92,6 @@ export class CoreCipher {
   private flash = 0
   private shake = 0
   private burst = 0
-  private scrambleTimer = 0
   private accent = new THREE.Color(0x00d4ff)
   private readonly danger = new THREE.Color(0xff3333)
   private accentCheck = 0
@@ -208,55 +124,22 @@ export class CoreCipher {
     const color = accentHex()
     this.accent.setHex(color)
 
-    // Core: a white-hot point inside a glow.
+    // Core: a glow behind the mind's tunnel.
     const glowMap = glowTexture()
     this.glow = new THREE.Sprite(new THREE.SpriteMaterial({ ...additive(color, 0.9), map: glowMap }))
-    this.glow.scale.setScalar(2.2)
-    this.heart = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.09, 2),
-      new THREE.MeshBasicMaterial({ color: 0xffffff })
-    )
-    this.coreGroup.add(this.glow, this.heart)
+    this.glow.scale.setScalar(1.6)
+    this.coreGroup.add(this.glow)
     this.track(this.glow.material as THREE.SpriteMaterial)
 
-    // Nested polyhedra, counter-rotating.
-    this.ico = this.edges(new THREE.IcosahedronGeometry(0.78, 0), 0.95)
-    this.octa = this.edges(new THREE.OctahedronGeometry(0.5, 0), 0.8)
-    const dodeca = this.edges(new THREE.DodecahedronGeometry(1.05, 0), 0.35)
-    this.innerGroup.add(this.ico, this.octa, dodeca)
+    // The mind: its heart with the core, its shells, its band, and what
+    // flies off it with the outer ring - revealed in that order at boot.
+    this.mind = new JarvisMind(Math.min(window.devicePixelRatio, 2))
+    this.coreGroup.add(this.mind.core)
+    this.innerGroup.add(this.mind.shells)
+    this.bandGroup.add(this.mind.band)
+    this.outerGroup.add(this.mind.outer)
 
-    // Geodesic shell: points that ripple, over a faint lattice.
-    const shellGeometry = new THREE.IcosahedronGeometry(1.5, 4)
-    shellGeometry.deleteAttribute("normal")
-    shellGeometry.deleteAttribute("uv")
-    this.shellBase = Float32Array.from(shellGeometry.getAttribute("position").array)
-    this.shell = new THREE.Points(
-      shellGeometry,
-      new THREE.PointsMaterial({ ...additive(color, 0.75), size: 0.028, sizeAttenuation: true })
-    )
-    this.track(this.shell.material as THREE.PointsMaterial)
-    this.lattice = this.edges(new THREE.IcosahedronGeometry(1.5, 1), 0.16)
-    this.innerGroup.add(this.shell, this.lattice)
-
-    // Cipher bands on three tilts.
-    const tilts: [number, number, number, number][] = [
-      // [tiltX, tiltZ, radius, glyphs]
-      [0.18, 0.05, 1.95, 64],
-      [1.15, 0.4, 2.2, 72],
-      [-0.9, -0.55, 2.45, 80],
-    ]
-    for (const [tx, tz, radius, count] of tilts) {
-      const band = new GlyphBand(radius, 0.17, count, color)
-      this.track(band.mesh.material as THREE.MeshBasicMaterial)
-      const pivot = new THREE.Group()
-      pivot.rotation.set(tx, 0, tz)
-      pivot.add(band.mesh)
-      this.bandGroup.add(pivot)
-      this.bands.push(band)
-      this.bandPivots.push(pivot)
-    }
-
-    // Outer tick ring and the thinking scan.
+    // Outer tick ring.
     const tickPoints: number[] = []
     const TICKS = 144
     for (let i = 0; i < TICKS; i += 1) {
@@ -271,36 +154,6 @@ export class CoreCipher {
     this.ticks = new THREE.LineSegments(tickGeometry, new THREE.LineBasicMaterial(additive(color, 0.55)))
     this.track(this.ticks.material as THREE.LineBasicMaterial)
     this.outerGroup.add(this.ticks)
-
-    this.scan = new THREE.LineLoop(this.circle(1.55, 96), new THREE.LineBasicMaterial(additive(color, 0)))
-    this.scan.rotation.x = Math.PI / 2
-    this.track(this.scan.material as THREE.LineBasicMaterial)
-    this.innerGroup.add(this.scan)
-
-    // Electrons with fading trails.
-    for (let i = 0; i < 4; i += 1) {
-      const axis = new THREE.Quaternion().setFromEuler(
-        new THREE.Euler(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI)
-      )
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }))
-      const trailGeometry = new THREE.BufferGeometry()
-      trailGeometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(TRAIL * 3), 3))
-      trailGeometry.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(TRAIL * 3), 3))
-      const trail = new THREE.Line(
-        trailGeometry,
-        new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
-      )
-      this.outerGroup.add(head, trail)
-      this.electrons.push({
-        axis,
-        radius: 1.75 + Math.random() * 0.6,
-        speed: 0.9 + Math.random() * 0.8,
-        phase: Math.random() * Math.PI * 2,
-        head,
-        trail,
-        history: [],
-      })
-    }
 
     this.glowMap = glowMap
     // Ultron's head takes most of a second to build; do it while the console
@@ -369,7 +222,7 @@ export class CoreCipher {
     this.disposed = true
     cancelAnimationFrame(this.raf)
     this.cleanups.forEach((fn) => fn())
-    this.bands.forEach((band) => band.dispose())
+    this.mind.dispose()
     this.face?.dispose()
     this.scene.traverse((object) => {
       const mesh = object as THREE.Mesh
@@ -383,16 +236,6 @@ export class CoreCipher {
   }
 
   // --- building helpers -------------------------------------------------
-
-  private edges(geometry: THREE.BufferGeometry, opacity: number): THREE.LineSegments {
-    const lines = new THREE.LineSegments(
-      new THREE.EdgesGeometry(geometry),
-      new THREE.LineBasicMaterial(additive(this.accent.getHex(), opacity))
-    )
-    geometry.dispose()
-    this.track(lines.material as THREE.LineBasicMaterial)
-    return lines
-  }
 
   private circle(radius: number, segments: number): THREE.BufferGeometry {
     const points: number[] = []
@@ -417,11 +260,9 @@ export class CoreCipher {
     this.coreGroup.visible = jarvis && this.revealed >= 0
     this.innerGroup.visible = jarvis && this.revealed >= 1
     this.bandGroup.visible = jarvis && this.revealed >= 2
+    // The tick ring frames either; the mind's shards and bokeh are Jarvis's.
     this.outerGroup.visible = this.revealed >= 3
-    for (const electron of this.electrons) {
-      electron.head.visible = jarvis
-      electron.trail.visible = jarvis
-    }
+    this.mind.outer.visible = jarvis
     if (ultron && !this.face) {
       this.face = new UltronFace(this.glowMap, this.accent.getHex(), this.renderer)
       this.root.add(this.face.group)
@@ -433,6 +274,7 @@ export class CoreCipher {
     const { clientWidth: width, clientHeight: height } = this.container
     if (!width || !height) return
     this.renderer.setSize(width, height, false)
+    this.mind?.setViewport(height)
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
   }
@@ -444,7 +286,6 @@ export class CoreCipher {
       case "send":
         this.energy += 0.6
         this.wave(1.2, 1.1)
-        this.bands.forEach((band) => band.scramble(0.6))
         break
       case "reply":
         this.energy += 0.5
@@ -514,83 +355,15 @@ export class CoreCipher {
     const tint = this.accent.clone().lerp(this.danger, this.flash)
     for (const { material } of this.tinted) material.color.copy(tint)
 
-    // Core.
-    this.glow.scale.setScalar(1.8 + e * 1.6 + breath * 0.25 + this.amp * 1.2)
-    ;(this.glow.material as THREE.SpriteMaterial).opacity = 0.55 + Math.min(0.45, e * 0.5)
-    this.heart.scale.setScalar(1 + this.amp * 1.5 + breath * 0.15)
-
-    // Polyhedra.
-    this.ico.rotation.x += dt * 0.35 * spin
-    this.ico.rotation.y += dt * 0.5 * spin
-    this.octa.rotation.x -= dt * 0.6 * spin
-    this.octa.rotation.z += dt * 0.45 * spin
-    this.lattice.rotation.y -= dt * 0.08 * spin
-    this.shell.rotation.y += dt * 0.12 * spin
-    this.shell.rotation.x = Math.sin(t * 0.2) * 0.2
-
-    // Shell ripple: every point pushed out along its own direction by a
-    // travelling wave, harder when energy or audio is up.
-    const positions = this.shell.geometry.getAttribute("position") as THREE.BufferAttribute
-    const array = positions.array as Float32Array
-    const ripple = 0.025 + e * 0.07 + this.amp * 0.25
-    for (let i = 0; i < array.length; i += 3) {
-      const bx = this.shellBase[i]
-      const by = this.shellBase[i + 1]
-      const bz = this.shellBase[i + 2]
-      const wave = Math.sin(t * 3.2 + by * 3.5 + bx * 1.7) * Math.cos(t * 1.7 + bz * 2.6)
-      const k = 1 + wave * ripple
-      array[i] = bx * k
-      array[i + 1] = by * k
-      array[i + 2] = bz * k
-    }
-    positions.needsUpdate = true
-
-    // Cipher bands: always scrolling; a trickle of changed glyphs at rest,
-    // continuous scrambling while he thinks.
-    this.bandPivots.forEach((pivot, i) => {
-      pivot.rotation.y += dt * (i % 2 === 0 ? 0.25 : -0.32) * spin
-    })
-    this.bands.forEach((band, i) => band.scroll(dt * 0.01 * (i + 1) * spin))
-    this.scrambleTimer -= dt
-    if (this.scrambleTimer <= 0) {
-      const thinking = this.status === "thinking"
-      this.scrambleTimer = thinking ? 0.08 : 1.2
-      this.bands.forEach((band) => band.scramble(thinking ? 0.35 : 0.06))
-    }
+    // Core glow, and the mind.
+    this.glow.scale.setScalar(1.3 + e * 1.2 + breath * 0.2 + this.amp * 1.0)
+    ;(this.glow.material as THREE.SpriteMaterial).opacity = 0.35 + Math.min(0.4, e * 0.4)
+    this.burst = Math.max(0, this.burst - dt * 1.2)
+    this.mind.update(dt, t, { energy: e, amp: this.amp, spin, burst: this.burst, thinking: this.status === "thinking", tint })
 
     // Ticks.
     this.ticks.rotation.z -= dt * 0.1 * spin
     ;(this.ticks.material as THREE.LineBasicMaterial).opacity = 0.35 + Math.min(0.5, e * 0.4)
-
-    // Thinking scan: a ring sweeping up and down through the shell.
-    const scanMaterial = this.scan.material as THREE.LineBasicMaterial
-    const scanning = this.status === "thinking"
-    scanMaterial.opacity += ((scanning ? 0.9 : 0) - scanMaterial.opacity) * Math.min(1, dt * 6)
-    const sweep = Math.sin(t * 2.4)
-    this.scan.position.y = sweep * 1.3
-    this.scan.scale.setScalar(Math.sqrt(Math.max(0.05, 1 - sweep * sweep * 0.7)))
-
-    // Electrons: faster with energy; a tool burst flings them wide.
-    this.burst = Math.max(0, this.burst - dt * 1.2)
-    const point = new THREE.Vector3()
-    for (const electron of this.electrons) {
-      electron.phase += dt * electron.speed * (1 + e * 1.5) * spin * 0.8
-      const radius = electron.radius * (1 + this.burst * 0.45)
-      point.set(Math.cos(electron.phase) * radius, 0, Math.sin(electron.phase) * radius).applyQuaternion(electron.axis)
-      electron.head.position.copy(point)
-      electron.history.unshift(point.clone())
-      if (electron.history.length > TRAIL) electron.history.pop()
-      const trailPositions = electron.trail.geometry.getAttribute("position") as THREE.BufferAttribute
-      const trailColors = electron.trail.geometry.getAttribute("color") as THREE.BufferAttribute
-      for (let i = 0; i < TRAIL; i += 1) {
-        const p = electron.history[Math.min(i, electron.history.length - 1)]
-        trailPositions.setXYZ(i, p.x, p.y, p.z)
-        const fade = 1 - i / TRAIL
-        trailColors.setXYZ(i, tint.r * fade, tint.g * fade, tint.b * fade)
-      }
-      trailPositions.needsUpdate = true
-      trailColors.needsUpdate = true
-    }
 
     // Shockwaves.
     this.shockwaves = this.shockwaves.filter((wave) => {
