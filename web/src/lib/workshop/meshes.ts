@@ -2,7 +2,12 @@
 
 import { fetchMeshBytes, uploadMesh, type MeshInfo } from "@/lib/jarvis-client"
 import { simplifyModel, stlSize } from "@/lib/model-simplify"
-import { getStoredToken } from "@/lib/storage"
+import { useLock } from "@/lib/lock-state"
+
+// The unlock token (past the face or PIN scan): the one the API accepts. The
+// Google session token only opens the lock - sent to the API it gets 423,
+// which locks the console.
+const apiToken = () => useLock.getState().unlock?.token ?? null
 
 // Meshes a printed part can import (app/services/workshop_meshes.py): an STL
 // Andrew has - a downloaded helmet, Dum-E's parts - uploaded once, simplified
@@ -73,7 +78,7 @@ export function loadMesh(name: string): Promise<Uint8Array> {
     entry = (async () => {
       const local = await cached(name)
       if (local) return new Uint8Array(local)
-      const token = getStoredToken()
+      const token = apiToken()
       if (!token) throw new Error(`Mesh ${name}: not signed in.`)
       const data = await fetchMeshBytes(name, token).catch(() => {
         throw new Error(`Mesh ${name} is not uploaded (Workshop > Meshes).`)

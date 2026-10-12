@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "react"
 import { Loader2Icon, Trash2Icon, UploadIcon } from "lucide-react"
 
 import { deleteMesh, listMeshes, type MeshInfo } from "@/lib/jarvis-client"
-import { getStoredToken } from "@/lib/storage"
+import { useLock } from "@/lib/lock-state"
+
+// The unlock token (past the face or PIN scan): the one the API accepts. The
+// Google session token only opens the lock - sent to the API it gets 423,
+// which locks the console.
+const apiToken = () => useLock.getState().unlock?.token ?? null
 import { addMesh, forgetMesh, meshName } from "@/lib/workshop/meshes"
 
 // The workshop's meshes (lib/workshop/meshes.ts): STLs or 3MFs Andrew has -
@@ -19,7 +24,7 @@ export function MeshesSection() {
   const input = useRef<HTMLInputElement>(null)
 
   const fetchList = () => {
-    const token = getStoredToken()
+    const token = apiToken()
     return token ? listMeshes(token).catch(() => null) : Promise.resolve(null)
   }
   const show = (result: Awaited<ReturnType<typeof listMeshes>> | null) => {
@@ -37,7 +42,7 @@ export function MeshesSection() {
   }, [])
 
   async function upload(files: FileList | null) {
-    const token = getStoredToken()
+    const token = apiToken()
     if (!files?.length || !token) return
     setError(null)
     try {
@@ -55,7 +60,7 @@ export function MeshesSection() {
   }
 
   async function remove(name: string) {
-    const token = getStoredToken()
+    const token = apiToken()
     if (!token) return
     await deleteMesh(name, token)
     await forgetMesh(name)
