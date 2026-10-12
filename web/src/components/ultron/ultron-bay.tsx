@@ -36,7 +36,9 @@ function App({ tab, ...props }: UltronAppProps & { tab: UltronTab }) {
   return <BenchPanel {...props} />
 }
 
-function Door({ side, label }: { side: "top" | "bottom"; label: string }) {
+/** One of a hatch's two blast doors: shut a beat, then parting (the bay's,
+ *  and the workshop's as it opens). */
+export function Door({ side, label, z = 5 }: { side: "top" | "bottom"; label: string; z?: number }) {
   const top = side === "top"
   return (
     <motion.div
@@ -44,7 +46,7 @@ function Door({ side, label }: { side: "top" | "bottom"; label: string }) {
       style={{
         [side]: 0,
         height: "50.5%",
-        zIndex: 5,
+        zIndex: z,
         background:
           "repeating-linear-gradient(90deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 4px), linear-gradient(180deg, #2a1718, #120809)",
         boxShadow: "inset 0 0 0 1px rgba(var(--accent-rgb), 0.35)",

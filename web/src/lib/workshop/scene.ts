@@ -452,7 +452,8 @@ export class WorkshopScene {
     this.scene.add(this.sectionWidget)
     this.post.configure(visuals())
     this.unsubscribeVisuals = useVisuals.subscribe((flags) => this.post.configure(flags))
-    this.floorRings.traverse((node) => node !== this.floorRings && this.post.glow(node))
+    // The deck's paint and bolts stay matte; its markings glow.
+    this.floorRings.traverse((node) => node !== this.floorRings && !node.userData.matte && this.post.glow(node))
 
     this.observer = new ResizeObserver(() => this.resize())
     this.observer.observe(container)
@@ -1756,7 +1757,68 @@ export class WorkshopScene {
     tickLines.rotation.x = -Math.PI / 2
     tickLines.position.y = 0.01
     this.floorRings.add(tickLines)
+    this.buildDeck()
     this.scene.add(this.floorRings)
+  }
+
+  /** Ultron's deck (the workshop is his bay): a hazard-striped band at the
+   *  pad's rim, the seams between its plates, and bolts along the middle
+   *  ring. Floor marking like the rings, so a studio render hides it too. */
+  private buildDeck() {
+    const canvas = document.createElement("canvas")
+    canvas.width = canvas.height = 256
+    const c = canvas.getContext("2d")!
+    c.fillStyle = "#120607"
+    c.fillRect(0, 0, 256, 256)
+    c.fillStyle = "#c2142c"
+    for (let k = -256; k < 512; k += 32) {
+      c.beginPath()
+      c.moveTo(k, 0)
+      c.lineTo(k + 16, 0)
+      c.lineTo(k + 16 - 256, 256)
+      c.lineTo(k - 256, 256)
+      c.closePath()
+      c.fill()
+    }
+    const hazard = new THREE.CanvasTexture(canvas)
+    hazard.colorSpace = THREE.SRGBColorSpace
+    hazard.wrapS = hazard.wrapT = THREE.RepeatWrapping
+    hazard.repeat.set(9, 9)
+    const band = new THREE.Mesh(
+      new THREE.RingGeometry(7.15, 7.5, 160),
+      new THREE.MeshBasicMaterial({ map: hazard, transparent: true, opacity: 0.55, depthWrite: false })
+    )
+    band.rotation.x = -Math.PI / 2
+    band.position.y = 0.008
+    band.userData.matte = true
+    this.floorRings.add(band)
+    // Plate seams: spokes between the rings, and a ring between them.
+    const seams: number[] = []
+    for (let i = 0; i < 12; i += 1) {
+      const a = (i / 12) * Math.PI * 2 + Math.PI / 12
+      seams.push(Math.cos(a) * 2.3, Math.sin(a) * 2.3, 0, Math.cos(a) * 6.9, Math.sin(a) * 6.9, 0)
+    }
+    const seamGeometry = new THREE.BufferGeometry()
+    seamGeometry.setAttribute("position", new THREE.Float32BufferAttribute(seams, 3))
+    const seamLines = new THREE.LineSegments(seamGeometry, this.accentLine(0.12))
+    seamLines.rotation.x = -Math.PI / 2
+    seamLines.position.y = 0.006
+    this.floorRings.add(seamLines)
+    const mid = new THREE.LineLoop(this.circle(5.6, 128), this.accentLine(0.1))
+    mid.rotation.x = -Math.PI / 2
+    mid.position.y = 0.006
+    this.floorRings.add(mid)
+    // Bolts at each plate's corner on the middle ring.
+    const bolt = new THREE.CircleGeometry(0.055, 12)
+    const boltMaterial = new THREE.MeshBasicMaterial({ color: 0x6d6260 })
+    for (let i = 0; i < 24; i += 1) {
+      const a = (i / 24) * Math.PI * 2
+      const m = new THREE.Mesh(bolt, boltMaterial)
+      m.rotation.x = -Math.PI / 2
+      m.position.set(Math.cos(a) * 4.2, 0.012, Math.sin(a) * 4.2)
+      m.userData.matte = true
+      this.floorRings.add(m)
+    }
   }
 
   private resize() {

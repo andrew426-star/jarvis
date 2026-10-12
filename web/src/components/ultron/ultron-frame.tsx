@@ -1,5 +1,6 @@
 "use client"
 
+import { useId } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 
 import { useSpatial } from "@/lib/spatial-store"
@@ -15,7 +16,9 @@ import { directiveProgress, useDirective } from "@/lib/ultron/directive-store"
 // real (as every gauge on the HUD is). When he opens or moves between his
 // apps the conduits surge, as if the power were being routed to them.
 
-function Bracket({ corner }: { corner: "tl" | "tr" | "bl" | "br" }) {
+export function Bracket({ corner }: { corner: "tl" | "tr" | "bl" | "br" }) {
+  // Its own pattern id: brackets show in the console and the workshop at once.
+  const hazard = `u-haz-${useId().replace(/:/g, "")}`
   const flipX = corner === "tr" || corner === "br"
   const flipY = corner === "bl" || corner === "br"
   return (
@@ -28,13 +31,13 @@ function Bracket({ corner }: { corner: "tl" | "tr" | "bl" | "br" }) {
       aria-hidden
     >
       <defs>
-        <pattern id={`u-haz-${corner}`} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <pattern id={hazard} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <rect width="4" height="8" fill="rgba(255,20,48,0.7)" />
         </pattern>
       </defs>
       <path d="M2 78 V14 L14 2 H118" fill="none" stroke="rgba(255,20,48,0.55)" strokeWidth="2" />
       <path d="M8 78 V18 L18 8 H118" fill="none" stroke="rgba(255,220,210,0.12)" strokeWidth="1" />
-      <rect x="26" y="12" width="44" height="7" fill={`url(#u-haz-${corner})`} />
+      <rect x="26" y="12" width="44" height="7" fill={`url(#${hazard})`} />
       {[[14, 30], [30, 14]].map(([x, y]) => (
         <g key={`${x}${y}`}>
           <circle cx={x} cy={y} r="3.4" fill="#2a1c1c" />

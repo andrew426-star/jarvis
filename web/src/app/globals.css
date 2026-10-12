@@ -1494,3 +1494,135 @@ button {
     animation: none;
   }
 }
+
+/* --- Ultron's fabrication bay: the workshop in his hardware -------------------
+   Everything inside .ultron-ws (components/workshop/workshop.tsx): its
+   panels become bolted plates with chamfered corners, its headers stencil
+   with a hazard strip under them, its controls machined toggles, its fields
+   recessed slots - the same kit as his console (.u-*), applied to the
+   workshop's own classes so every panel in it changes at once. */
+
+.ultron-ws {
+  --ws-plate: linear-gradient(180deg, rgba(36, 20, 22, 0.94), rgba(13, 6, 7, 0.95));
+  --ws-chamfer: polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px), 0 10px);
+}
+
+.ultron-ws .ws-header {
+  background:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.015) 0 1px, transparent 1px 4px),
+    linear-gradient(180deg, rgba(26, 11, 12, 0.97), rgba(10, 4, 5, 0.94)) !important;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.6);
+}
+.ultron-ws .ws-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: repeating-linear-gradient(-45deg, rgba(var(--accent-rgb), 0.55) 0 4px, transparent 4px 8px);
+  pointer-events: none;
+}
+
+.ultron-ws .holo-card {
+  background:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 3px),
+    var(--ws-plate);
+  border: 0;
+  border-radius: 0;
+  clip-path: var(--ws-chamfer);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.3), inset 0 1px 0 rgba(255, 220, 210, 0.06);
+  backdrop-filter: blur(4px);
+}
+.ultron-ws .holo-card::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 6px 6px, #8a7d7b 0 1.6px, #2a1c1c 2px 3px, transparent 3.4px),
+    radial-gradient(circle at calc(100% - 6px) 6px, #8a7d7b 0 1.6px, #2a1c1c 2px 3px, transparent 3.4px),
+    radial-gradient(circle at 6px calc(100% - 6px), #8a7d7b 0 1.6px, #2a1c1c 2px 3px, transparent 3.4px),
+    radial-gradient(circle at calc(100% - 6px) calc(100% - 6px), #8a7d7b 0 1.6px, #2a1c1c 2px 3px, transparent 3.4px);
+}
+.ultron-ws .holo-card[data-lit="true"] {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 22px rgba(var(--accent-rgb), 0.4);
+}
+.ultron-ws .holo-card-header {
+  position: relative;
+  padding: 7px 14px 8px;
+  font-family: var(--font-orbitron), sans-serif;
+  letter-spacing: 0.22em;
+  color: var(--text-primary);
+  border-bottom: 0;
+}
+.ultron-ws .holo-card-header::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 3px;
+  background: repeating-linear-gradient(-45deg, rgba(var(--accent-rgb), 0.45) 0 4px, transparent 4px 8px);
+}
+
+.ultron-ws .btn {
+  color: rgba(255, 214, 204, 0.85);
+  border: 0;
+  border-radius: 0;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, #2c1a1b, #160a0b);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.35), inset 0 -2px 0 rgba(0, 0, 0, 0.5);
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+  letter-spacing: 0.16em;
+  transition: box-shadow 160ms steps(3), color 160ms steps(3), transform 120ms steps(2);
+}
+.ultron-ws .btn:hover:not(:disabled) {
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.8), inset 0 -2px 0 rgba(0, 0, 0, 0.5), 0 0 12px rgba(var(--accent-rgb), 0.35);
+}
+.ultron-ws .btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.ultron-ws .btn[data-active="true"],
+.ultron-ws .btn[aria-pressed="true"] {
+  color: #fff;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.55), rgba(var(--accent-rgb), 0.2));
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 14px rgba(var(--accent-rgb), 0.45);
+}
+
+/* Between the toolbar's groups: a riveted seam, not a hairline. */
+.ultron-ws .ws-group + .ws-group {
+  border-left: 0;
+  background:
+    radial-gradient(circle at 1px 5px, #8a7d7b 0 1.2px, transparent 1.6px),
+    radial-gradient(circle at 1px calc(100% - 5px), #8a7d7b 0 1.2px, transparent 1.6px),
+    linear-gradient(rgba(var(--accent-rgb), 0.35), rgba(var(--accent-rgb), 0.35)) 0 0 / 2px 100% no-repeat;
+}
+
+/* Fields: recessed slots. */
+.ultron-ws input:not([type="range"]):not([type="checkbox"]):not([type="color"]),
+.ultron-ws select,
+.ultron-ws textarea {
+  border-radius: 0 !important;
+  background: #0d0506 !important;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(var(--accent-rgb), 0.28) !important;
+  border-color: transparent !important;
+}
+.ultron-ws input[type="range"] {
+  accent-color: var(--accent);
+}
+
+.ultron-ws ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.ultron-ws ::-webkit-scrollbar-thumb {
+  background: rgba(var(--accent-rgb), 0.45);
+}
+.ultron-ws ::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.4);
+}

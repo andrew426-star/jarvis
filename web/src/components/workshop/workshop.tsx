@@ -71,6 +71,7 @@ import { useTryOn } from "@/lib/ar/store"
 import { stopSim } from "@/lib/workshop/sim/controller"
 import { ScadError, compileScad, compileScadCached, scadItem } from "@/lib/workshop/openscad"
 import { useJarvis } from "@/lib/store"
+import { Door } from "@/components/ultron/ultron-bay"
 
 type Focus = (ItemSpec & { id: string; mode: ItemMode }) | null
 
@@ -150,6 +151,9 @@ export function Workshop({ token }: { token: string }) {
   const [stageHost] = useState(() => {
     if (typeof document === "undefined") return null
     const host = document.createElement("div")
+    // Ultron's fabrication bay: his hardware over every panel in it
+    // (globals.css, .ultron-ws), docked or in its own window.
+    host.className = "ultron-ws"
     host.style.cssText = "display:flex;flex-direction:column;flex:1;min-height:0;width:100%;height:100%;background:#02050a"
     return host
   })
@@ -159,6 +163,10 @@ export function Workshop({ token }: { token: string }) {
   useEffect(() => {
     if (!open && popped) popOut.close()
   }, [open, popped, popOut])
+  // The hatch's sound as it opens.
+  useEffect(() => {
+    if (open && !popped) sfx.helm(true, 0.55)
+  }, [open, popped])
 
   useEffect(
     () =>
@@ -192,11 +200,15 @@ export function Workshop({ token }: { token: string }) {
             ref={overlayRef}
             className="fixed inset-0 flex flex-col"
             style={{ zIndex: 35, background: "#02050a" }}
-            initial={{ opacity: 0, scale: 1.04 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 1.04 }}
-            transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-          />
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0, scaleY: 0.02, transition: { duration: 0.3, ease: [0.7, 0, 1, 0.4] } }}
+            transition={{ duration: 0.12 }}
+          >
+            {/* Ultron's bay: it opens as a hatch does, its doors parting. */}
+            <Door side="top" label="U-00 // FABRICATION BAY" z={60} />
+            <Door side="bottom" label="" z={60} />
+          </motion.div>
         )}
       </AnimatePresence>
       {open &&
@@ -827,7 +839,7 @@ function WorkshopStage({
   return (
     <>
       <header
-        className="relative flex shrink-0 items-center justify-between"
+        className="ws-header relative flex shrink-0 items-center justify-between"
         style={{
           height: 48,
           padding: "0 var(--sp-4)",
@@ -839,8 +851,9 @@ function WorkshopStage({
       >
         <div className="bar-sweep" aria-hidden />
         <div className="relative flex min-w-0 shrink-0 items-center" style={{ gap: "var(--sp-3)" }}>
-          <span className="t-header shrink-0" style={{ color: "var(--accent)" }}>
-            WORKSHOP
+          <span className="u-stencil shrink-0 flex items-center" style={{ gap: 8, fontSize: 12 }}>
+            <span className="u-code">U-00</span>
+            FABRICATION BAY
           </span>
           {handsOn && (
             <span
