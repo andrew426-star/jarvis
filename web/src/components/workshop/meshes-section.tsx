@@ -17,11 +17,23 @@ import { addMesh, forgetMesh, meshName } from "@/lib/workshop/meshes"
 // his private storage, and imported by printed parts with
 // import("mesh/<name>.stl"). Several files at once are fine: each becomes
 // a mesh named after its file.
+//
+// Two meshes are not parts but Ultron himself (lib/ultron-face.ts), and
+// are looked up by name: his helmet and Vision's face inside it. They get
+// slots of their own, which upload whatever file is chosen under the name
+// the face asks for.
+const SLOTS = [
+  { name: "ultron-head", label: "Ultron's helmet", hint: "the helmet model (STL or 3MF)" },
+  { name: "vision-head", label: "Vision's face", hint: "the cleaned vision-head.stl: upright, facing front, no print supports" },
+]
+
 export function MeshesSection() {
   const [meshes, setMeshes] = useState<MeshInfo[] | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
+  const slotInput = useRef<HTMLInputElement>(null)
+  const [slot, setSlot] = useState<string | null>(null)
 
   const fetchList = () => {
     const token = apiToken()
@@ -41,13 +53,13 @@ export function MeshesSection() {
     }
   }, [])
 
-  async function upload(files: FileList | null) {
+  async function upload(files: FileList | null, as: string | null = null) {
     const token = apiToken()
     if (!files?.length || !token) return
     setError(null)
     try {
-      for (const file of Array.from(files)) {
-        const name = meshName(file.name)
+      for (const file of Array.from(files).slice(0, as ? 1 : undefined)) {
+        const name = as ?? meshName(file.name)
         await addMesh(file, name, token, (text) => setBusy(`${name}: ${text}`))
       }
       await refresh()
@@ -56,6 +68,8 @@ export function MeshesSection() {
     } finally {
       setBusy(null)
       if (input.current) input.current.value = ""
+      if (slotInput.current) slotInput.current.value = ""
+      setSlot(null)
     }
   }
 
@@ -78,6 +92,34 @@ export function MeshesSection() {
         </button>
         <input ref={input} type="file" accept=".stl,.3mf" multiple hidden onChange={(event) => void upload(event.target.files)} />
       </div>
+      <input ref={slotInput} type="file" accept=".stl,.3mf" hidden onChange={(event) => void upload(event.target.files, slot)} />
+      {/* Ultron's own: his helmet and Vision's face, by the names the face looks up. */}
+      {SLOTS.map((s) => {
+        const have = meshes?.find((m) => m.name === s.name)
+        return (
+          <div key={s.name} className="flex items-center" style={{ gap: 8, fontSize: 12, padding: "3px 0", borderBottom: "1px solid rgba(var(--accent-rgb), 0.08)" }}>
+            <span className="min-w-0 flex-1">
+              <span style={{ color: "var(--text-primary)" }}>{s.label}</span>
+              <span className="t-time" style={{ display: "block", color: have ? undefined : "var(--warning)" }}>
+                {have ? `${s.name} · ${have.triangles.toLocaleString()} triangles` : meshes ? `Not uploaded - ${s.hint}` : "…"}
+              </span>
+            </span>
+            <button
+              type="button"
+              className="btn shrink-0 flex items-center"
+              style={{ gap: 4, padding: "2px 8px" }}
+              disabled={!!busy}
+              title={`Upload ${s.hint} as ${s.name}`}
+              onClick={() => {
+                setSlot(s.name)
+                slotInput.current?.click()
+              }}
+            >
+              <UploadIcon size={11} /> {have ? "REPLACE" : "UPLOAD"}
+            </button>
+          </div>
+        )
+      })}
       {busy && <p className="t-time" style={{ margin: "2px 0" }}>{busy}...</p>}
       {error && <p className="t-time" style={{ margin: "2px 0", color: "var(--accent)" }}>{error}</p>}
       {meshes?.length === 0 && !busy && (
