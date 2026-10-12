@@ -10,9 +10,12 @@ import { loadUltronModel, onUltronModelChange, type UltronModel } from "@/lib/ul
 import { sfx } from "@/lib/sfx"
 import { mouthShape } from "@/lib/speech-track"
 import { loadMesh } from "@/lib/workshop/meshes"
+import { VisionHead } from "@/lib/vision-head"
 
 /** The workshop mesh that, uploaded, is his head everywhere. */
 const ULTRON_MESH = "ultron-head"
+/** Andrew's sculpt of Vision, for the head inside the helmet (lib/vision-head.ts). */
+const VISION_MESH = "vision-head"
 
 // Ultron's head, for the console's centre in serious mode (lib/core-cipher.ts
 // swaps it in for Jarvis's cipher). Built and checked against two Age of
@@ -755,6 +758,10 @@ class VisionEye {
 const SHARDS = 7
 /** How long the faceplate takes to open or close, s. */
 const HELM_S = 0.9
+/** His head's width inside the helmet, in eye-slot spacings. */
+const VISION_FIT = 1.8
+/** And a little lower than the slots' middle, by that spacing. */
+const VISION_DROP = 0.04
 
 interface Shard {
   mesh: THREE.LineLoop
@@ -803,6 +810,11 @@ export class UltronFace {
   private screen: THREE.Mesh | null = null
   private mouth: VisionMouth | null = null
   private readonly visionEyes: VisionEye[] = []
+  /** His own sculpt, rigged, when the vision-head mesh is there; else the
+   *  built face above (sheet, eyes, lips). */
+  private visionHead: VisionHead | null = null
+  /** The built face's parts, hidden while the sculpt stands in for them. */
+  private builtFace: THREE.Object3D[] = []
   private readonly visionMaterial: THREE.MeshToonMaterial
   private readonly bands: THREE.Texture
   private gemAt: THREE.Vector3 | null = null
@@ -989,6 +1001,9 @@ export class UltronFace {
       this.faceplate = null
       this.screen = null
       this.visionEyes.length = 0
+      this.visionHead?.dispose()
+      this.visionHead = null
+      this.builtFace = []
       this.mouth = null
       this.ring = null
       this.gemAt = null
@@ -1089,10 +1104,12 @@ export class UltronFace {
     // Vision's face inside: the sculpted sheet, his eyes, his lips.
     if (front.vision) {
       this.model.add(front.vision.sheet)
+      this.builtFace.push(front.vision.sheet)
       front.vision.eyes.forEach((at, i) => {
         const eye = new VisionEye(front.vision!.eyeSize, i === 0 ? 1 : -1, this.bands)
         eye.group.position.copy(at)
         this.visionEyes.push(eye)
+        this.builtFace.push(eye.group)
         this.model!.add(eye.group)
       })
     }
@@ -1102,6 +1119,7 @@ export class UltronFace {
       this.mouth = new VisionMouth(w, w * 0.3, this.lipMaterial)
       this.mouth.group.position.copy(front.mouth.at)
       this.model.add(this.mouth.group)
+      this.builtFace.push(this.mouth.group)
     }
     this.gemAt = null
     if (gemTris.length) {
@@ -1121,7 +1139,46 @@ export class UltronFace {
       this.model.add(this.ring)
     }
     this.head.add(this.model)
+    void this.loadVision(this.model, front)
     return front.eyes
+  }
+
+  /** His own Vision sculpt, rigged (lib/vision-head.ts), set inside this
+   *  helmet: as wide as the helmet's inside (about twice its eye slots'
+   *  spacing), his eyes level with the slots, and set back so his nose
+   *  sits just behind the closed faceplate. Without the mesh, the built
+   *  face stays. */
+  private async loadVision(model: THREE.Mesh, front: ReturnType<UltronFace["readFront"]>) {
+    let bytes: Uint8Array
+    try {
+      bytes = await loadMesh(VISION_MESH)
+    } catch {
+      return
+    }
+    if (this.disposed || this.model !== model) return
+    let head: VisionHead
+    try {
+      head = new VisionHead(new STLLoader().parse(bytes.slice().buffer), this.bands, this.renderer)
+    } catch {
+      return
+    }
+    const lm = head.landmarks
+    const slots = front.eyes
+    const spacing = Math.abs(slots[0].x - slots[1].x)
+    const scale = (spacing * VISION_FIT) / Math.max(1e-3, lm.width)
+    const eyeMid = lm.eyes[0].clone().add(lm.eyes[1]).multiplyScalar(0.5)
+    const slotMid = slots[0].clone().add(slots[1]).multiplyScalar(0.5)
+    head.group.scale.setScalar(scale)
+    const noseAt = new THREE.Vector3(slotMid.x, slotMid.y + (lm.nose.y - eyeMid.y) * scale, 0)
+    const shut = front.frontAt(noseAt.x, noseAt.y)
+    head.group.position.set(
+      slotMid.x - eyeMid.x * scale,
+      slotMid.y - eyeMid.y * scale - VISION_DROP * spacing,
+      (Number.isFinite(shut) ? shut : slotMid.z) - 0.07 - lm.nose.z * scale
+    )
+    model.add(head.group)
+    this.visionHead = head
+    for (const part of this.builtFace) part.visible = false
   }
 
   /** The model seen from the front: its depth, the eye slots (holes in the
@@ -1144,6 +1201,8 @@ export class UltronFace {
     vision: { sheet: THREE.Mesh; eyes: THREE.Vector3[]; eyeSize: number } | null
     /** Where Vision's lips go, and how wide. */
     mouth: { at: THREE.Vector3; width: number } | null
+    /** The closed helmet's front surface (z) at a point (x, y). */
+    frontAt: (x: number, y: number) => number
   } {
     const box = geometry.boundingBox!
     const N = 512
@@ -1747,6 +1806,12 @@ export class UltronFace {
       isGold: (p: THREE.Vector3) => onFront(p, goldMask),
       vision,
       mouth: visionMouth,
+      frontAt: (x: number, y: number) => {
+        const px = Math.floor(((x - box.min.x) / (box.max.x - box.min.x)) * N)
+        const py = Math.floor(((y - box.min.y) / (box.max.y - box.min.y)) * N)
+        if (px < 0 || py < 0 || px >= N || py >= N || !solid(px, py)) return -Infinity
+        return box.max.z + 0.1 - near(px, py) * depthRange
+      },
     }
   }
 
@@ -1821,11 +1886,14 @@ export class UltronFace {
       if (this.faceplate) {
         // Out first (the first fifth), then up: the lift eases off as it swings.
         const lift = Math.sin(Math.min(1, this.plateOpen * 2.5) * Math.PI * 0.5) * (1 - o * 0.6)
-        // Swung up, it settles down and back onto the dome, as the films'
-        // plates nest over the forehead.
-        this.faceplate.position.copy(this.hinge).add(new THREE.Vector3(0, lift * 0.04 - o * 0.32, lift * 0.1 - o * 0.18))
+        // Swung up, it slides back into the helmet under the dome and is
+        // gone: open, the face is bare from the brow to the chin, framed by
+        // the helmet's sides (as the What If...? helm is).
+        const tuck = THREE.MathUtils.smoothstep(o, 0.45, 1)
+        this.faceplate.position.copy(this.hinge).add(new THREE.Vector3(0, lift * 0.04 - o * 0.32 - tuck * 0.1, lift * 0.1 - o * 0.18 - tuck * 0.9))
         this.faceplate.rotation.x = -o * 1.62
-        this.faceplate.scale.setScalar(1 - o * 0.1)
+        this.faceplate.scale.setScalar(1 - o * 0.1 - tuck * 0.15)
+        this.faceplate.visible = this.plateOpen < 0.995
       }
       // His own eyes behind it: Vision's, following the same gaze as the
       // slots' light, blinking with it.
@@ -1833,15 +1901,16 @@ export class UltronFace {
       // His face is there only while the plate is off it.
       const bare = !this.faceplate || this.plateOpen > 0.02
       this.model.traverse((node) => {
-        if ((node as THREE.Mesh).material === this.visionMaterial) node.visible = bare
+        if ((node as THREE.Mesh).material === this.visionMaterial) node.visible = bare && !this.visionHead
       })
-      for (const eye of this.visionEyes) eye.group.visible = bare
-      if (this.mouth) this.mouth.group.visible = bare
+      for (const eye of this.visionEyes) eye.group.visible = bare && !this.visionHead
+      if (this.mouth) this.mouth.group.visible = bare && !this.visionHead
+      if (this.visionHead) this.visionHead.group.visible = bare
       // The slots' blooms go with the faceplate.
       for (const bloom of this.eyeGlows) bloom.visible = o < 0.35
       // Vision's mouth: the letter being said now, opened by the voice's
       // loudness; between words, it rests.
-      if (this.mouth) {
+      if (this.mouth || this.visionHead) {
         const shape = mouthShape()
         const voice = Math.min(1, amp * 2.6)
         const target = shape
@@ -1849,7 +1918,8 @@ export class UltronFace {
           : { open: speaking ? voice * 0.8 : 0, wide: 0.5, round: 0, press: 0, tuck: 0 }
         const k = Math.min(1, dt * 18)
         for (const key of ["open", "wide", "round", "press", "tuck"] as const) this.mouthNow[key] += (target[key] - this.mouthNow[key]) * k
-        this.mouth.set(this.mouthNow)
+        this.mouth?.set(this.mouthNow)
+        this.visionHead?.set(this.mouthNow, this.gaze)
       }
     }
     this.rim.color.copy(tint)
