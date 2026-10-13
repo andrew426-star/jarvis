@@ -30,8 +30,9 @@ import { useLock } from "@/lib/lock-state"
 // steps were done, and the server decides (app/services/lock.py). Liveness
 // is a blink and a head turn, in a random order and direction each time,
 // so a still photo or a replayed clip does not pass the steps on screen.
-// The first scan enrols the face, and enrolling takes the PIN. When the
-// camera or the scanner cannot start, the PIN can unlock instead (onUsePin).
+// The first scan enrols the face, and enrolling takes the PIN. The PIN can
+// unlock instead (onUsePin): offered always, and up front when the camera
+// or the scanner cannot start.
 
 type StepId = "detect" | "align" | "blink" | "turn" | "match"
 type StepState = "pending" | "active" | "done" | "failed"
@@ -457,6 +458,13 @@ export function FaceGate({ sessionToken, onSignOut, onUsePin }: { sessionToken: 
           {phase === "error" && onUsePin && (
             <button type="button" className="btn self-start" style={{ height: 32, padding: "0 14px" }} onClick={onUsePin}>
               <KeyRoundIcon size={14} /> USE PIN INSTEAD
+            </button>
+          )}
+          {/* The PIN is always a choice; when the camera has failed it is
+              the button above instead. */}
+          {onUsePin && phase !== "error" && phase !== "granted" && (
+            <button type="button" className="t-label self-start" style={{ color: "var(--accent)" }} onClick={onUsePin}>
+              USE PIN
             </button>
           )}
           <button type="button" className="t-label self-start" style={{ color: "var(--text-secondary)" }} onClick={onSignOut}>

@@ -20,8 +20,8 @@ import { useLock } from "@/lib/lock-state"
 // returns the unlock token the rest of the console runs on; wrong too many
 // times, and the server locks the PIN for a while, longer each time.
 //
-// The desktop shows it too, when its camera cannot be used for the face
-// scan; there the digits can be typed on the keyboard as well.
+// The desktop shows it too, in place of the face scan when Andrew chooses
+// it or the camera cannot be used; there the digits can be typed as well.
 
 const LENGTH = 4
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"] as const

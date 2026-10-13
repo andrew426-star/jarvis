@@ -126,7 +126,8 @@ export function JarvisConsole() {
   // Past the face scan: the short-lived token the API accepts (lock-state.ts).
   const unlock = useLock((state) => state.unlock)
   useAutoRelock(30 * 60_000)
-  // When the camera cannot be used, the PIN instead (as on the phone).
+  // The PIN instead of the face scan (as on the phone): chosen, or when the
+  // camera cannot be used.
   const [pinInstead, setPinInstead] = useState(false)
 
   function handleAuthError() {
@@ -144,8 +145,8 @@ export function JarvisConsole() {
   if (status === "resolving") return <div style={{ height: "100vh" }} />
   if (status === "unauthenticated" || !token) return <LoginGate loginError={loginError} />
   // Signed in with Google, which only opens the lock: the desktop's is a
-  // face scan (components/lock/face-gate.tsx), checked by the server - or,
-  // when there is no camera to scan with, the PIN.
+  // face scan (components/lock/face-gate.tsx), checked by the server - or
+  // the PIN, chosen there or when there is no camera to scan with.
   if (!unlock)
     return pinInstead ? (
       <PinGate sessionToken={token} onSignOut={handleAuthError} alternate={{ label: "USE FACE SCAN", onSelect: () => setPinInstead(false) }} />
