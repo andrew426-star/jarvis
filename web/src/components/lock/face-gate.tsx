@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { motion } from "framer-motion"
-import { CheckIcon, CircleIcon, Loader2Icon, RotateCcwIcon, ScanFaceIcon, XIcon } from "lucide-react"
+import { CheckIcon, CircleIcon, KeyRoundIcon, Loader2Icon, RotateCcwIcon, ScanFaceIcon, XIcon } from "lucide-react"
 
 import { GlobalEffects } from "@/components/hud/global-effects"
 import { HolographicGrid } from "@/components/hud/holographic-grid"
@@ -30,7 +30,8 @@ import { useLock } from "@/lib/lock-state"
 // steps were done, and the server decides (app/services/lock.py). Liveness
 // is a blink and a head turn, in a random order and direction each time,
 // so a still photo or a replayed clip does not pass the steps on screen.
-// The first scan enrols the face, and enrolling takes the PIN.
+// The first scan enrols the face, and enrolling takes the PIN. When the
+// camera or the scanner cannot start, the PIN can unlock instead (onUsePin).
 
 type StepId = "detect" | "align" | "blink" | "turn" | "match"
 type StepState = "pending" | "active" | "done" | "failed"
@@ -84,7 +85,7 @@ function errorText(err: unknown): string {
   return err instanceof JarvisApiError || err instanceof JarvisNetworkError ? err.message : "Something went wrong."
 }
 
-export function FaceGate({ sessionToken, onSignOut }: { sessionToken: string; onSignOut: () => void }) {
+export function FaceGate({ sessionToken, onSignOut, onUsePin }: { sessionToken: string; onSignOut: () => void; onUsePin?: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -451,6 +452,11 @@ export function FaceGate({ sessionToken, onSignOut }: { sessionToken: string; on
               onClick={() => (phase === "error" ? window.location.reload() : begin(modeRef.current))}
             >
               <RotateCcwIcon size={14} /> RETRY
+            </button>
+          )}
+          {phase === "error" && onUsePin && (
+            <button type="button" className="btn self-start" style={{ height: 32, padding: "0 14px" }} onClick={onUsePin}>
+              <KeyRoundIcon size={14} /> USE PIN INSTEAD
             </button>
           )}
           <button type="button" className="t-label self-start" style={{ color: "var(--text-secondary)" }} onClick={onSignOut}>

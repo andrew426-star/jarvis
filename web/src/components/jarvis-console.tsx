@@ -25,6 +25,7 @@ import dynamic from "next/dynamic"
 import { PopOutPrompt } from "@/components/ui/pop-out-prompt"
 import { TopBar } from "@/components/hud/top-bar"
 import { FaceGate } from "@/components/lock/face-gate"
+import { PinGate } from "@/components/lock/pin-gate"
 import { LoginGate } from "@/components/login-gate"
 import type { MicButtonHandle } from "@/components/mic-button"
 import { NewsPanel } from "@/components/panels/news-panel"
@@ -125,6 +126,8 @@ export function JarvisConsole() {
   // Past the face scan: the short-lived token the API accepts (lock-state.ts).
   const unlock = useLock((state) => state.unlock)
   useAutoRelock(30 * 60_000)
+  // When the camera cannot be used, the PIN instead (as on the phone).
+  const [pinInstead, setPinInstead] = useState(false)
 
   function handleAuthError() {
     clearStoredToken()
@@ -141,8 +144,14 @@ export function JarvisConsole() {
   if (status === "resolving") return <div style={{ height: "100vh" }} />
   if (status === "unauthenticated" || !token) return <LoginGate loginError={loginError} />
   // Signed in with Google, which only opens the lock: the desktop's is a
-  // face scan (components/lock/face-gate.tsx), checked by the server.
-  if (!unlock) return <FaceGate sessionToken={token} onSignOut={handleAuthError} />
+  // face scan (components/lock/face-gate.tsx), checked by the server - or,
+  // when there is no camera to scan with, the PIN.
+  if (!unlock)
+    return pinInstead ? (
+      <PinGate sessionToken={token} onSignOut={handleAuthError} alternate={{ label: "USE FACE SCAN", onSelect: () => setPinInstead(false) }} />
+    ) : (
+      <FaceGate sessionToken={token} onSignOut={handleAuthError} onUsePin={() => setPinInstead(true)} />
+    )
 
   // Keyed on the token so signing out and back in remounts the shell and
   // replays the boot sequence rather than snapping to a live HUD.

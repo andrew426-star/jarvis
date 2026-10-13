@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { motion } from "framer-motion"
 import { DeleteIcon, Loader2Icon, LockIcon, UnlockIcon } from "lucide-react"
 
@@ -19,6 +19,9 @@ import { useLock } from "@/lib/lock-state"
 // in this page; only its hash is, on the server). Right, and the server
 // returns the unlock token the rest of the console runs on; wrong too many
 // times, and the server locks the PIN for a while, longer each time.
+//
+// The desktop shows it too, when its camera cannot be used for the face
+// scan; there the digits can be typed on the keyboard as well.
 
 const LENGTH = 4
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"] as const
@@ -33,7 +36,16 @@ function remaining(until: string): string {
   return m > 0 ? `${m}m ${String(s).padStart(2, "0")}s` : `${s}s`
 }
 
-export function PinGate({ sessionToken, onSignOut }: { sessionToken: string; onSignOut: () => void }) {
+export function PinGate({
+  sessionToken,
+  onSignOut,
+  alternate,
+}: {
+  sessionToken: string
+  onSignOut: () => void
+  /** Another way in, offered under the keypad (the desktop's face scan). */
+  alternate?: { label: string; onSelect: () => void }
+}) {
   const [digits, setDigits] = useState("")
   const [phase, setPhase] = useState<Phase>("idle")
   const [message, setMessage] = useState<string | null>(null)
@@ -110,6 +122,20 @@ export function PinGate({ sessionToken, onSignOut }: { sessionToken: string; onS
     if (phase === "wrong") setPhase("idle")
     if (next.length === LENGTH) void submit(next)
   }
+
+  // Typed digits, Backspace to delete.
+  const pressRef = useRef(press)
+  useEffect(() => {
+    pressRef.current = press
+  })
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (/^\d$/.test(event.key)) pressRef.current(event.key as (typeof KEYS)[number])
+      else if (event.key === "Backspace") pressRef.current("del")
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
 
   const tone =
     phase === "granted" ? "var(--success)" : phase === "wrong" || phase === "locked" ? "var(--error)" : "var(--accent)"
@@ -193,9 +219,16 @@ export function PinGate({ sessionToken, onSignOut }: { sessionToken: string; onS
         )}
       </div>
 
-      <button type="button" className="relative t-label" style={{ color: "var(--text-secondary)" }} onClick={onSignOut}>
-        SIGN OUT
-      </button>
+      <div className="relative flex" style={{ gap: 24 }}>
+        {alternate && (
+          <button type="button" className="t-label" style={{ color: "var(--accent)" }} onClick={alternate.onSelect}>
+            {alternate.label}
+          </button>
+        )}
+        <button type="button" className="t-label" style={{ color: "var(--text-secondary)" }} onClick={onSignOut}>
+          SIGN OUT
+        </button>
+      </div>
     </main>
   )
 }
