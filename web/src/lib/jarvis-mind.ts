@@ -4,20 +4,24 @@ import * as THREE from "three"
 
 // Jarvis's mind, at the console's centre (lib/core-cipher.ts): after the
 // consciousness sphere in Avengers: Age of Ultron - not its colour but its
-// make. A sphere that is not a surface but thousands of broken circuit
-// traces and chip pads, two shells deep, densest where you see them
-// edge-on at the rim; a thick tilted band of debris round it; long chords
-// cut straight through; fragments splintering off the rim and drifting
-// away; a tunnel of rings at its heart, receding into depth; and the space
-// in and around it full of out-of-focus specks, like light seen through a
-// lens.
+// make. It is woven, not scattered: every trace sits on one spherical grid
+// whose pole faces you, so its latitudes read as concentric tracks of
+// broken rings and its meridians as radial stitches between them. Seen
+// edge-on at the rim the tracks crowd together and the stitches stand out
+// as a fringe; the middle is kept dark and open, crossed by one crisp ring
+// and a few chip modules on an inner shell; a ribbon of parallel strands
+// sweeps through it on a tilted orbit; and at its heart is a small bright
+// eye over a short tunnel of rings.
 //
 // It is meant to read as light, not geometry: every trace is drawn
 // additively by a shader that dims the sphere's far side and brightens its
 // rim, flickers each trace on its own and now and then drops one out,
 // runs pulses of data along them, and sweeps a scan through while he
-// thinks; the specks are sized by how far they sit from the focal plane
-// (a depth of field), soft discs with a brighter edge, as real bokeh is.
+// thinks; a few out-of-focus specks hang round it, sized by how far they
+// sit from the focal plane (a depth of field).
+//
+// The layout comes from a seeded generator, so it is the same mind on
+// every load.
 
 export interface MindInput {
   /** Overall activity, 0.. (rest about 0.2). */
@@ -32,11 +36,25 @@ export interface MindInput {
   tint: THREE.Color
 }
 
-const rand = (a: number, b: number) => a + Math.random() * (b - a)
+// mulberry32: a small seeded generator.
+let state = 0
+const seed = (s: number) => {
+  state = s >>> 0
+}
+const random = () => {
+  state = (state + 0x6d2b79f5) >>> 0
+  let t = state
+  t = Math.imul(t ^ (t >>> 15), t | 1)
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+}
+const rand = (a: number, b: number) => a + random() * (b - a)
+const randInt = (a: number, b: number) => Math.floor(rand(a, b + 1))
 
-/** A point on the sphere at (theta around y, phi from the pole). */
-function onSphere(r: number, theta: number, phi: number, out = new THREE.Vector3()) {
-  return out.set(r * Math.sin(phi) * Math.cos(theta), r * Math.cos(phi), r * Math.sin(phi) * Math.sin(theta))
+/** A point on a sphere whose pole is +z (toward the camera): theta round
+ *  the pole, phi down from it. */
+function polar(r: number, theta: number, phi: number, out = new THREE.Vector3()) {
+  return out.set(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi))
 }
 
 // --- the trace shader ----------------------------------------------------------
@@ -54,19 +72,20 @@ const TRACE_VERTEX = /* glsl */ `
     // Facing: +1 on the near side of the sphere, -1 on the far side, 0 at the rim.
     vec3 n = normalize(normalMatrix * normalize(position + 1e-5));
     float facing = n.z;
-    float a = mix(0.28, 1.0, smoothstep(-0.7, 0.85, facing));
-    // Seen edge-on at the rim, a shell crowds together: brighter there.
-    a += pow(1.0 - abs(facing), 3.0) * 0.55;
+    // The near cap is lit but held back, so the middle stays dark and the
+    // rim, where the tracks crowd edge-on, carries the light.
+    float a = mix(0.3, 0.8, smoothstep(-0.6, 0.9, facing));
+    a += pow(1.0 - abs(facing), 2.5) * 0.75;
     // Each trace flickers on its own; now and then one drops out.
-    a *= 0.72 + 0.28 * sin(uTime * (2.5 + aSeed * 7.0) + aSeed * 40.0);
-    a *= mix(1.0, 0.15, step(0.975 - uEnergy * 0.02, hash(floor(uTime * 7.0) + aSeed * 91.0)));
+    a *= 0.8 + 0.2 * sin(uTime * (2.0 + aSeed * 6.0) + aSeed * 40.0);
+    a *= mix(1.0, 0.15, step(0.985 - uEnergy * 0.02, hash(floor(uTime * 6.0) + aSeed * 91.0)));
     // Data running along the trace.
-    float p = fract(aAlong - uTime * uFlow * (0.25 + aSeed * 0.6));
-    float head = smoothstep(0.86, 1.0, p);
+    float p = fract(aAlong - uTime * uFlow * (0.2 + aSeed * 0.4));
+    float head = smoothstep(0.9, 1.0, p);
     // The scan sweeping through while he thinks.
-    float scan = exp(-pow((position.y - uScan) * 5.0, 2.0));
-    vHot = head * (0.6 + uEnergy) + scan * 1.4 + uPulse * 0.6;
-    vAlpha = a * aBright * (0.55 + uEnergy * 0.6) + vHot * 0.5;
+    float scan = exp(-pow(((modelMatrix * vec4(position, 1.0)).y - uScan) * 5.0, 2.0));
+    vHot = head * (0.5 + uEnergy) + scan * 1.4 + uPulse * 0.5;
+    vAlpha = a * aBright * (0.6 + uEnergy * 0.55) + vHot * 0.45 * aBright;
     gl_Position = projectionMatrix * mv;
   }
 `
@@ -91,8 +110,8 @@ const GLINT_VERTEX = /* glsl */ `
   void main() {
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     vec3 n = normalize(normalMatrix * normalize(position + 1e-5));
-    float a = mix(0.25, 1.0, smoothstep(-0.6, 0.9, n.z));
-    a *= 0.5 + 0.5 * sin(uTime * (1.5 + aSeed * 5.0) + aSeed * 30.0);
+    float a = mix(0.25, 0.8, smoothstep(-0.6, 0.9, n.z)) + pow(1.0 - abs(n.z), 2.5) * 0.5;
+    a *= 0.4 + 0.6 * pow(0.5 + 0.5 * sin(uTime * (1.2 + aSeed * 4.0) + aSeed * 30.0), 3.0);
     vAlpha = a * (0.5 + uEnergy * 0.7);
     // World size 0.02-0.05, in pixels at its depth.
     gl_PointSize = uScale * 0.02 * (1.0 + aSeed * 1.6) / -mv.z;
@@ -130,7 +149,7 @@ const BOKEH_VERTEX = /* glsl */ `
     float size = aSize + coc * 0.07;
     gl_PointSize = uScale * size / -mv.z;
     vSharp = 1.0 / (1.0 + coc * 2.5);
-    vAlpha = (0.2 + 0.8 * vSharp) * (0.35 + uEnergy * 0.3) * (0.6 + 0.4 * sin(uTime * 0.8 + aSeed * 50.0));
+    vAlpha = (0.2 + 0.8 * vSharp) * (0.25 + uEnergy * 0.25) * (0.6 + 0.4 * sin(uTime * 0.8 + aSeed * 50.0));
     gl_Position = projectionMatrix * mv;
   }
 `
@@ -164,8 +183,8 @@ class TraceBuilder {
   readonly jointSeed: number[] = []
 
   /** A polyline: consecutive points joined. */
-  add(points: THREE.Vector3[], brightness: number, joints = true) {
-    const s = Math.random()
+  add(points: THREE.Vector3[], brightness: number, joints = false) {
+    const s = random()
     for (let i = 0; i < points.length - 1; i += 1) {
       const a = points[i]
       const b = points[i + 1]
@@ -174,12 +193,12 @@ class TraceBuilder {
       this.seed.push(s, s)
       this.along.push(i / (points.length - 1), (i + 1) / (points.length - 1))
     }
-    if (joints) {
-      for (const p of [points[0], points[points.length - 1]]) {
-        this.joints.push(p.x, p.y, p.z)
-        this.jointSeed.push(Math.random())
-      }
-    }
+    if (joints) for (const p of [points[0], points[points.length - 1]]) this.glint(p)
+  }
+
+  glint(p: THREE.Vector3) {
+    this.joints.push(p.x, p.y, p.z)
+    this.jointSeed.push(random())
   }
 
   geometry() {
@@ -199,39 +218,101 @@ class TraceBuilder {
   }
 }
 
-/** A circuit trace across a sphere: steps along a latitude or a meridian,
- *  turning at right angles, as a board's traces do - with a pad at the end
- *  now and then. */
-function circuit(b: TraceBuilder, r: number, brightness: number) {
-  let theta = rand(0, Math.PI * 2)
-  // Fewer at the poles: pick phi by the area it covers.
-  let phi = Math.acos(rand(-0.92, 0.92))
-  const pts = [onSphere(r, theta, phi)]
-  const steps = 2 + Math.floor(Math.random() * 5)
-  let along = Math.random() < 0.5
-  for (let k = 0; k < steps; k += 1) {
-    const len = rand(0.04, 0.22)
-    // A few intermediate points so a long step follows the curve.
-    const n = 3
-    const dTheta = along ? (Math.random() < 0.5 ? -1 : 1) * (len / Math.max(0.2, Math.sin(phi))) / r : 0
-    const dPhi = along ? 0 : (Math.random() < 0.5 ? -1 : 1) * (len / r)
-    for (let j = 1; j <= n; j += 1) pts.push(onSphere(r, theta + (dTheta * j) / n, phi + (dPhi * j) / n))
-    theta += dTheta
-    phi = THREE.MathUtils.clamp(phi + dPhi, 0.2, Math.PI - 0.2)
-    along = !along
+/** An arc of a latitude ring, from cell c0 to c1 of `cells` round it. */
+function latArc(r: number, phi: number, c0: number, c1: number, cells: number, offset = 0) {
+  const pts: THREE.Vector3[] = []
+  // Two points a cell keep a long arc on the sphere.
+  for (let c = c0; c <= c1; c += 0.5) pts.push(polar(r, ((c + offset) / cells) * Math.PI * 2, phi))
+  return pts
+}
+
+interface WeaveOptions {
+  r: number
+  /** Latitude step, radians. */
+  step: number
+  /** Cells round each ring. */
+  cells: number
+  /** 0..1: how much of the grid is drawn. */
+  density: number
+  brightness: number
+  /** Radial spurs off the rim. */
+  fringe: boolean
+  /** Turned by half a cell, so shells nest without lining up. */
+  offset: number
+}
+
+/** A shell of the weave: latitude rings broken into runs on whole cells,
+ *  stitched by meridians on the cell lines - fullest toward the rim
+ *  (phi near 90 degrees), sparse at the pole, so the middle stays open. */
+function weave(b: TraceBuilder, o: WeaveOptions) {
+  const { r, step, cells } = o
+  // Near hemisphere first, then a lighter echo of the far one.
+  const lats: number[] = []
+  for (let phi = step; phi < Math.PI / 2 + 1e-6; phi += step) lats.push(phi)
+  for (let phi = Math.PI / 2 + step; phi < Math.PI - step * 0.5; phi += step) if (random() < 0.45) lats.push(phi)
+  const runs = new Map<number, boolean[]>()
+  for (const phi of lats) {
+    const edge = Math.pow(Math.sin(phi), 2.5)
+    if (random() > (0.35 + 0.65 * edge) * o.density + 0.05) continue
+    const on: boolean[] = new Array(cells).fill(false)
+    let c = randInt(0, cells - 1)
+    const start = c
+    const brightness = o.brightness * rand(0.6, 1) * (0.7 + 0.3 * edge)
+    while (c < start + cells) {
+      const len = randInt(3, Math.round(6 + 14 * edge * o.density))
+      const end = Math.min(c + len, start + cells - 1)
+      if (end > c) {
+        b.add(latArc(r, phi, c, end, cells, o.offset), brightness, random() < 0.2)
+        for (let k = c; k <= end; k += 1) on[k % cells] = true
+      }
+      c = end + randInt(1, Math.round(2 + 4 * (1 - edge)))
+    }
+    runs.set(phi, on)
   }
-  b.add(pts, brightness)
-  // A chip pad: a small square on the sphere, at the trace's end.
-  if (Math.random() < 0.25) {
-    const s = rand(0.015, 0.04)
-    const corners = [
-      [-s, -s],
-      [s, -s],
-      [s, s],
-      [-s, s],
-      [-s, -s],
-    ].map(([u, v]) => onSphere(r, theta + u / Math.max(0.2, Math.sin(phi)) / r, phi + v / r))
-    b.add(corners, brightness * 1.2, false)
+  // Stitches: a meridian between neighbouring rings, on a cell line both
+  // rings reach; near the rim they show as radial strokes.
+  const sorted = [...runs.keys()].sort((a, b) => a - b)
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    const p0 = sorted[i]
+    const p1 = sorted[i + 1]
+    if (p1 - p0 > step * 2.5) continue
+    const a = runs.get(p0)!
+    const z = runs.get(p1)!
+    const edge = Math.pow(Math.sin((p0 + p1) / 2), 3)
+    for (let c = 0; c < cells; c += 1) {
+      if (!a[c] || !z[c] || random() > 0.06 + 0.3 * edge * o.density) continue
+      const theta = ((c + o.offset) / cells) * Math.PI * 2
+      b.add([polar(r, theta, p0), polar(r, theta, (p0 + p1) / 2), polar(r, theta, p1)], o.brightness * 0.8, random() < 0.3)
+      // Now and then a pad: a small square across the stitch's end.
+      if (random() < 0.12) {
+        const h = 0.35
+        b.add(
+          [
+            [c - h, p1 - step * 0.3],
+            [c + h, p1 - step * 0.3],
+            [c + h, p1 + step * 0.3],
+            [c - h, p1 + step * 0.3],
+            [c - h, p1 - step * 0.3],
+          ].map(([cc, pp]) => polar(r, ((cc + o.offset) / cells) * Math.PI * 2, pp)),
+          o.brightness * 1.1
+        )
+      }
+    }
+  }
+  // The fringe: short radial spurs off the rim, on the cell lines, in
+  // combs of a few at a time.
+  if (o.fringe) {
+    for (let c = 0; c < cells; ) {
+      const comb = randInt(2, 6)
+      for (let k = 0; k < comb && c < cells; k += 1, c += 1) {
+        const theta = ((c + o.offset) / cells) * Math.PI * 2
+        const phi = Math.PI / 2 + rand(-0.12, 0.12)
+        const dir = polar(1, theta, phi)
+        const len = k % 3 === 0 ? rand(0.14, 0.26) : rand(0.05, 0.12)
+        b.add([dir.clone().multiplyScalar(r), dir.clone().multiplyScalar(r + len)], o.brightness * 0.9, k === 0)
+      }
+      c += randInt(1, 5)
+    }
   }
 }
 
@@ -254,7 +335,9 @@ export class JarvisMind {
     uScale: { value: 300 },
   }
   private readonly outerShell: THREE.Group
+  private readonly midShell: THREE.Group
   private readonly innerShell: THREE.Group
+  private readonly ribbon: THREE.Group
   private readonly vortex: THREE.Group
   private readonly vortexRings: THREE.LineLoop[] = []
   private readonly shards: { line: THREE.Line; dir: THREE.Vector3; r: number; speed: number }[] = []
@@ -262,11 +345,12 @@ export class JarvisMind {
   private scanPhase = 0
 
   constructor(private readonly pixelRatio: number) {
-    const traceMaterial = () => {
+    seed(0x1a2b3c)
+    const shaderMaterial = (vertexShader: string, fragmentShader: string) => {
       const m = new THREE.ShaderMaterial({
         uniforms: this.uniforms,
-        vertexShader: TRACE_VERTEX,
-        fragmentShader: TRACE_FRAGMENT,
+        vertexShader,
+        fragmentShader,
         transparent: true,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
@@ -277,156 +361,155 @@ export class JarvisMind {
       this.materials.push(m)
       return m
     }
-    const glintMaterial = () => {
-      const m = new THREE.ShaderMaterial({
-        uniforms: this.uniforms,
-        vertexShader: GLINT_VERTEX,
-        fragmentShader: GLINT_FRAGMENT,
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        // Light only adds (ONE, ONE): over the page, a dim speck must not
-        // cover what is behind the canvas.
-        premultipliedAlpha: true,
-      })
-      this.materials.push(m)
-      return m
-    }
-
-    // Two shells of circuitry, a little thickness to each.
-    const shell = (r0: number, r1: number, count: number, brightness: number) => {
-      const b = new TraceBuilder()
-      for (let i = 0; i < count; i += 1) circuit(b, rand(r0, r1), brightness * rand(0.5, 1.2))
+    const traceMaterial = () => shaderMaterial(TRACE_VERTEX, TRACE_FRAGMENT)
+    const draw = (b: TraceBuilder) => {
       const group = new THREE.Group()
       group.add(new THREE.LineSegments(b.geometry(), traceMaterial()))
-      group.add(new THREE.Points(b.jointGeometry(), glintMaterial()))
+      if (b.joints.length) group.add(new THREE.Points(b.jointGeometry(), shaderMaterial(GLINT_VERTEX, GLINT_FRAGMENT)))
       return group
     }
-    this.outerShell = shell(1.5, 1.68, 1500, 0.8)
-    this.innerShell = shell(0.85, 1.0, 520, 0.6)
-    this.innerShell.rotation.set(0.6, 0.3, 0.2)
-    this.shells.add(this.outerShell, this.innerShell)
 
-    // Chords straight through the sphere, rim to rim, near its middle.
+    // The weave: an outer shell with the fringe, and a sparser one just
+    // inside it on a finer grid, turned half a cell, turning the other way.
     {
       const b = new TraceBuilder()
-      for (let i = 0; i < 16; i += 1) {
-        const a = onSphere(1.62, rand(0, Math.PI * 2), Math.acos(rand(-0.9, 0.9)))
-        const offset = new THREE.Vector3(rand(-0.25, 0.25), rand(-0.25, 0.25), rand(-0.25, 0.25))
-        const c = a.clone().negate().add(offset).setLength(1.62)
-        b.add([a, a.clone().lerp(c, 0.5), c], rand(0.45, 0.8), false)
-      }
-      this.shells.add(new THREE.LineSegments(b.geometry(), traceMaterial()))
+      weave(b, { r: 1.62, step: THREE.MathUtils.degToRad(6), cells: 96, density: 1, brightness: 0.9, fringe: true, offset: 0 })
+      this.outerShell = draw(b)
+    }
+    {
+      const b = new TraceBuilder()
+      weave(b, { r: 1.38, step: THREE.MathUtils.degToRad(9), cells: 72, density: 0.65, brightness: 0.7, fringe: false, offset: 0.5 })
+      this.midShell = draw(b)
     }
 
-    // The band: a thick tilted ring of debris - fragments running round it,
-    // at a spread of radii and heights, densest at its middle.
+    // The inner shell: one unbroken ring, the crisp circle round the
+    // heart, with a hairline beside it; and chip modules - small grids of
+    // cells laid on the sphere - spaced round it.
     {
       const b = new TraceBuilder()
-      for (let i = 0; i < 1400; i += 1) {
-        const r = 1.85 + Math.abs(rand(-1, 1) * rand(0, 1)) * 0.65
-        const y = rand(-1, 1) * rand(0, 1) * 0.22
-        const a = rand(0, Math.PI * 2)
-        const len = rand(0.02, 0.16)
-        const pts = [new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r)]
-        // Mostly along the ring; some kinked across it, like broken traces.
-        const a2 = a + len / r
-        pts.push(new THREE.Vector3(Math.cos(a2) * r, y, Math.sin(a2) * r))
-        if (Math.random() < 0.35) {
-          const r2 = r + rand(-0.06, 0.06)
-          pts.push(new THREE.Vector3(Math.cos(a2) * r2, y + rand(-0.04, 0.04), Math.sin(a2) * r2))
+      const r = 0.92
+      weave(b, { r, step: THREE.MathUtils.degToRad(8), cells: 64, density: 0.75, brightness: 0.75, fringe: false, offset: 0.25 })
+      b.add(latArc(r, Math.PI / 2, 0, 128, 128), 1.25)
+      b.add(latArc(r * 0.97, Math.PI / 2, 0, 128, 128), 0.45)
+      const modules = 9
+      for (let m = 0; m < modules; m += 1) {
+        const theta0 = (m / modules) * Math.PI * 2 + rand(-0.15, 0.15)
+        const phi0 = rand(0.55, 1.05) * (m % 2 ? 1 : -1) + Math.PI / 2
+        const cols = randInt(2, 4)
+        const rows = randInt(2, 3)
+        const cw = 0.07
+        const rh = 0.06
+        const brightness = rand(0.5, 0.8)
+        for (let i = 0; i <= rows; i += 1) {
+          const phi = phi0 + i * rh
+          b.add(
+            Array.from({ length: cols * 2 + 1 }, (_, k) => polar(r, theta0 + (k / 2) * cw, phi)),
+            brightness
+          )
         }
-        b.add(pts, rand(0.4, 1.1))
+        for (let k = 0; k <= cols; k += 1) {
+          const theta = theta0 + k * cw
+          b.add([polar(r, theta, phi0), polar(r, theta, phi0 + rows * rh)], brightness * 0.8, k === 0)
+        }
       }
-      const ring = new THREE.Group()
-      ring.add(new THREE.LineSegments(b.geometry(), traceMaterial()))
-      ring.add(new THREE.Points(b.jointGeometry(), glintMaterial()))
-      // Oblique, so it crosses in front of the sphere and behind it, as in the film.
-      ring.rotation.set(0.42, 0, 0.3)
-      this.band.add(ring)
+      this.innerShell = draw(b)
     }
+    this.shells.add(this.outerShell, this.midShell, this.innerShell)
 
-    // The heart: a tunnel of rings going away from you, twisting as it
-    // goes, with spokes; a white-hot point at its end.
+    // The ribbon: four parallel strands on a tilted orbit, sweeping across
+    // the sphere in front and behind it - the one long curve in it.
+    this.ribbon = new THREE.Group()
+    {
+      const b = new TraceBuilder()
+      const strands = 6
+      const cells = 160
+      for (let s = 0; s < strands; s += 1) {
+        const r = 1.22 + s * 0.04
+        // Each strand broken in a few places, at its own points.
+        let c = randInt(0, 12)
+        while (c < cells - 4) {
+          const len = randInt(14, 46)
+          const end = Math.min(c + len, cells)
+          b.add(latArc(r, Math.PI / 2, c, end, cells), s === 2 ? 1.6 : 0.9, true)
+          c = end + randInt(2, 7)
+        }
+      }
+      const orbit = draw(b)
+      // Steeply tilted, so it shows as a long ellipse crossing the face.
+      orbit.rotation.set(0.95, 0.55, 0)
+      this.ribbon.add(orbit)
+    }
+    this.band.add(this.ribbon)
+
+    // The heart: a small bright eye - three rings, the inner two tight -
+    // over a short tunnel of rings going away from you.
     this.vortex = new THREE.Group()
     {
       const ringMaterial = traceMaterial()
-      for (let k = 0; k < 16; k += 1) {
-        const r = 0.56 * Math.pow(0.85, k)
+      const ring = (r: number, z: number, brightness: number, k: number) => {
         const pts: number[] = []
-        const n = 64
+        const n = 72
         for (let i = 0; i < n; i += 1) {
           const a = (i / n) * Math.PI * 2
-          // A little wobble, so the rings read as made, not drawn.
-          const w = 1 + 0.04 * Math.sin(a * 5 + k)
-          pts.push(Math.cos(a) * r * w, Math.sin(a) * r * w, -k * 0.07)
+          pts.push(Math.cos(a) * r, Math.sin(a) * r, z)
         }
         const g = new THREE.BufferGeometry()
         g.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3))
-        const count = pts.length / 3
-        g.setAttribute("aBright", new THREE.Float32BufferAttribute(new Array(count).fill(2.4 - k * 0.1), 1))
-        g.setAttribute("aSeed", new THREE.Float32BufferAttribute(new Array(count).fill(k / 16), 1))
-        g.setAttribute("aAlong", new THREE.Float32BufferAttribute(Array.from({ length: count }, (_, i) => i / count), 1))
-        const ring = new THREE.LineLoop(g, ringMaterial)
-        ring.rotation.z = k * 0.25
-        this.vortexRings.push(ring)
-        this.vortex.add(ring)
+        g.setAttribute("aBright", new THREE.Float32BufferAttribute(new Array(n).fill(brightness), 1))
+        g.setAttribute("aSeed", new THREE.Float32BufferAttribute(new Array(n).fill(k / 10), 1))
+        g.setAttribute("aAlong", new THREE.Float32BufferAttribute(Array.from({ length: n }, (_, i) => i / n), 1))
+        const loop = new THREE.LineLoop(g, ringMaterial)
+        this.vortexRings.push(loop)
+        this.vortex.add(loop)
       }
+      ring(0.2, 0.02, 2.6, 0)
+      ring(0.13, 0.01, 3.0, 1)
+      ring(0.07, 0, 3.4, 2)
+      for (let k = 0; k < 6; k += 1) ring(0.2 * Math.pow(0.8, k + 1), -0.1 - k * 0.09, 1.6 - k * 0.2, k + 3)
+      // Six spokes from the eye's rim back down the tunnel.
       const b = new TraceBuilder()
-      for (let i = 0; i < 24; i += 1) {
-        const a = (i / 24) * Math.PI * 2
-        const r0 = 0.56 * Math.pow(0.85, 12)
-        b.add([new THREE.Vector3(Math.cos(a) * 0.62, Math.sin(a) * 0.62, 0.02), new THREE.Vector3(Math.cos(a) * r0, Math.sin(a) * r0, -0.84)], 0.8, false)
+      for (let i = 0; i < 6; i += 1) {
+        const a = (i / 6) * Math.PI * 2
+        const r1 = 0.2 * Math.pow(0.8, 6)
+        b.add([new THREE.Vector3(Math.cos(a) * 0.2, Math.sin(a) * 0.2, 0.02), new THREE.Vector3(Math.cos(a) * r1, Math.sin(a) * r1, -0.55)], 1, false)
       }
       this.vortex.add(new THREE.LineSegments(b.geometry(), ringMaterial))
     }
     this.core.add(this.vortex)
 
-    // Shards: fragments off the rim, drifting outward and fading, then
-    // reborn at the rim.
-    const shardMaterial = traceMaterial()
-    for (let i = 0; i < 140; i += 1) {
-      const dir = onSphere(1, rand(0, Math.PI * 2), Math.acos(rand(-0.95, 0.95)))
-      const b = new TraceBuilder()
-      const len = rand(0.04, 0.14)
-      const side = new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).cross(dir).normalize()
-      b.add([new THREE.Vector3(), dir.clone().multiplyScalar(len), dir.clone().multiplyScalar(len).addScaledVector(side, len * 0.4)], rand(0.5, 1), false)
-      const line = new THREE.LineSegments(b.geometry(), shardMaterial)
-      const shard = { line, dir, r: rand(1.65, 2.8), speed: rand(0.04, 0.16) }
-      line.position.copy(dir).multiplyScalar(shard.r)
-      this.shards.push(shard)
-      this.outer.add(line)
+    // Shards: splinters off the rim, radial, drifting outward and fading,
+    // then reborn at the rim.
+    {
+      const shardMaterial = traceMaterial()
+      for (let i = 0; i < 48; i += 1) {
+        const dir = polar(1, rand(0, Math.PI * 2), Math.PI / 2 + rand(-0.35, 0.35))
+        const b = new TraceBuilder()
+        b.add([new THREE.Vector3(), dir.clone().multiplyScalar(rand(0.04, 0.12))], rand(0.5, 0.9))
+        const line = new THREE.LineSegments(b.geometry(), shardMaterial)
+        const shard = { line, dir, r: rand(1.8, 2.7), speed: rand(0.04, 0.12) }
+        line.position.copy(dir).multiplyScalar(shard.r)
+        this.shards.push(shard)
+        this.outer.add(line)
+      }
     }
 
-    // Bokeh: specks through and round the sphere.
+    // Bokeh: a few specks round the sphere.
     {
-      const N = 520
+      const N = 140
       const pos: number[] = []
       const size: number[] = []
-      const seed: number[] = []
+      const seeds: number[] = []
       for (let i = 0; i < N; i += 1) {
-        const p = onSphere(Math.cbrt(Math.random()) * 3.4 + 0.2, rand(0, Math.PI * 2), Math.acos(rand(-1, 1)))
+        const p = polar(Math.cbrt(random()) * 3.2 + 0.5, rand(0, Math.PI * 2), Math.acos(rand(-1, 1)))
         pos.push(p.x, p.y, p.z)
-        size.push(rand(0.02, 0.07))
-        seed.push(Math.random())
+        size.push(rand(0.02, 0.06))
+        seeds.push(random())
       }
       const g = new THREE.BufferGeometry()
       g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3))
       g.setAttribute("aSize", new THREE.Float32BufferAttribute(size, 1))
-      g.setAttribute("aSeed", new THREE.Float32BufferAttribute(seed, 1))
-      const m = new THREE.ShaderMaterial({
-        uniforms: this.uniforms,
-        vertexShader: BOKEH_VERTEX,
-        fragmentShader: BOKEH_FRAGMENT,
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        // Light only adds (ONE, ONE): over the page, a dim speck must not
-        // cover what is behind the canvas.
-        premultipliedAlpha: true,
-      })
-      this.materials.push(m)
-      this.outer.add(new THREE.Points(g, m))
+      g.setAttribute("aSeed", new THREE.Float32BufferAttribute(seeds, 1))
+      this.outer.add(new THREE.Points(g, shaderMaterial(BOKEH_VERTEX, BOKEH_FRAGMENT)))
     }
   }
 
@@ -448,27 +531,35 @@ export class JarvisMind {
     this.scanPhase += dt * 2.2
     u.uScan.value = input.thinking ? Math.sin(this.scanPhase) * 1.6 : -10
 
-    this.outerShell.rotation.y += dt * 0.09 * spin
-    this.outerShell.rotation.x = Math.sin(t * 0.15) * 0.15
-    this.innerShell.rotation.y -= dt * 0.16 * spin
-    this.innerShell.rotation.z += dt * 0.05 * spin
-    this.band.children[0].rotation.y += dt * 0.12 * spin
+    // The shells turn about the pole that faces you (so the weave stays
+    // concentric), each leaning a little and slowly, so they never sit
+    // exactly on one another.
+    this.outerShell.rotation.z += dt * 0.05 * spin
+    this.outerShell.rotation.x = Math.sin(t * 0.13) * 0.12
+    this.outerShell.rotation.y = Math.cos(t * 0.11) * 0.1
+    this.midShell.rotation.z -= dt * 0.08 * spin
+    this.midShell.rotation.x = Math.sin(t * 0.17 + 1) * 0.16
+    this.midShell.rotation.y = Math.cos(t * 0.15 + 2) * 0.14
+    this.innerShell.rotation.z += dt * 0.12 * spin
+    this.innerShell.rotation.x = Math.sin(t * 0.21 + 3) * 0.2
+    // The ribbon runs round its own orbit and the orbit precesses.
+    this.ribbon.children[0].rotation.z += dt * 0.2 * spin
+    this.ribbon.rotation.z = t * 0.04 * spin
     // The shells breathe with his voice.
-    this.shells.scale.setScalar(1 + amp * 0.06 + Math.sin(t * 1.4) * 0.008)
+    this.shells.scale.setScalar(1 + amp * 0.05 + Math.sin(t * 1.4) * 0.006)
 
-    // The tunnel: each ring turning, the whole pulled toward you as it
-    // pulses, faster when he is busy.
+    // The eye: its rings turning against each other, the tunnel pulled
+    // toward you as he speaks.
     this.vortexRings.forEach((ring, k) => {
       ring.rotation.z += dt * (0.3 + k * 0.05) * spin * (k % 2 ? -1 : 1)
     })
-    this.vortex.position.z = 0.25 + amp * 0.15
+    this.vortex.position.z = 0.3 + amp * 0.15
     this.vortex.scale.setScalar(1 + amp * 0.35 + e * 0.1)
 
     // Shards drift outward and are reborn at the rim; a burst flings them.
     for (const s of this.shards) {
       s.r += dt * s.speed * (1 + input.burst * 6 + e)
-      // (Each is built along its own direction, so it stays radial.)
-      if (s.r > 3.1) s.r = 1.65
+      if (s.r > 3.0) s.r = 1.75
       s.line.position.copy(s.dir).multiplyScalar(s.r)
     }
   }
