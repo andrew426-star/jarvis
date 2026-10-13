@@ -41,6 +41,9 @@ export interface VisionLandmarks {
   eyes: [THREE.Vector3, THREE.Vector3]
   mouthHalf: number
   eyeRadius: number
+  /** The Mind Stone on his forehead (its front), and its size. */
+  stone: THREE.Vector3
+  stoneRadius: number
   /** The head's height (crown to the cut) and width, for proportions. */
   height: number
   width: number
@@ -48,11 +51,15 @@ export interface VisionLandmarks {
   lipY: (x: number) => number
 }
 
-const SKIN = new THREE.Color(0xa82a5e)
-const SKIN_SHADE = new THREE.Color(0x6e1840)
-const EYE_WHITE = new THREE.Color(0xe8edf1)
-const IRIS = new THREE.Color(0x9fb2c2)
-const PUPIL = new THREE.Color(0x2a2f38)
+// After What If...?'s Infinity Ultron: Vision's face a deep crimson that
+// falls to near-black in shadow and in every crease, his eyes Ultron's
+// (red, white-hot at the middle), the Mind Stone gold in its silver setting.
+const SKIN = new THREE.Color(0xa3243a)
+const SKIN_LIGHT = new THREE.Color(0xc8394f)
+const SKIN_SHADE = new THREE.Color(0x3c0a14)
+const EYE = new THREE.Color(0xff2a2a)
+const STONE = new THREE.Color(0xffd36a)
+const SETTING = new THREE.Color(0xb9b7bd)
 const MOUTH = new THREE.Color(0x14030a)
 /** How far the jaw turns, wide open (radians). */
 const JAW = 0.2
@@ -240,7 +247,44 @@ function findLandmarks(d: Depth): VisionLandmarks {
   // The pit is where the eyeball meets the lids; the eyeball's front is a
   // little above it, and the eye about a fifth of the eyes' spacing wide.
   const spacing = Math.abs(eyes[0].x - eyes[1].x)
-  return { nose, lip, chin, eyes: [eyes[0], eyes[1]], mouthHalf, eyeRadius: spacing * 0.2, height: H, width: W, lipY }
+  // The Mind Stone: on the centre line of his forehead, the point standing
+  // furthest proud of the forehead round it (a ring a little way out).
+  const eyeY = (eyes[0].y + eyes[1].y) / 2
+  const ring = Math.max(3, Math.round(0.035 * W * colPx))
+  let stone = new THREE.Vector3(0, eyeY + 0.17 * H, 0)
+  let proud = -Infinity
+  for (let py = toPy(eyeY + 0.06 * H); py <= toPy(eyeY + 0.36 * H); py += 1) {
+    const f = reach(cx, py)
+    if (!Number.isFinite(f)) continue
+    let sum = 0
+    let n = 0
+    for (let k = 0; k < 16; k += 1) {
+      const a = (k / 16) * Math.PI * 2
+      const g = front(cx + Math.round(Math.cos(a) * ring), py + Math.round(Math.sin(a) * ring))
+      if (Number.isFinite(g)) {
+        sum += g
+        n += 1
+      }
+    }
+    const above = n ? f - sum / n : -Infinity
+    if (above > proud) {
+      proud = above
+      stone = new THREE.Vector3(0, toY(py), f)
+    }
+  }
+  return {
+    nose,
+    lip,
+    chin,
+    eyes: [eyes[0], eyes[1]],
+    mouthHalf,
+    eyeRadius: spacing * 0.2,
+    stone,
+    stoneRadius: 0.022 * H,
+    height: H,
+    width: W,
+    lipY,
+  }
 }
 
 /** A toon material with the rig in its vertex shader. */
@@ -248,6 +292,8 @@ function rigMaterial(bands: THREE.Texture, lm: VisionLandmarks) {
   // Both sides: the reduction flips the odd triangle, which would show as a hole.
   const material = new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true, gradientMap: bands, side: THREE.DoubleSide })
   const uniforms = {
+    uEyeHeat: { value: 1 },
+    uStoneHeat: { value: 1 },
     uOpen: { value: 0 },
     uWide: { value: 0.5 },
     uRound: { value: 0 },
@@ -268,6 +314,8 @@ function rigMaterial(bands: THREE.Texture, lm: VisionLandmarks) {
         `#include <common>
         attribute vec4 aRig;   // jaw, upper lip, lower lip, mouth area
         attribute float aEye;  // +1 his right eyeball, -1 his left, 0 neither
+        attribute vec2 aGlow;  // how much of an eye's light, of the stone's
+        varying vec2 vGlow;
         uniform float uOpen, uWide, uRound, uPress, uTuck, uH;
         uniform vec2 uGaze, uHinge;
         uniform vec3 uLip, uEyeL, uEyeR;
@@ -308,11 +356,26 @@ function rigMaterial(bands: THREE.Texture, lm: VisionLandmarks) {
       .replace(
         "#include <beginnormal_vertex>",
         `#include <beginnormal_vertex>
+        vGlow = aGlow;
         vec3 rigNormal = objectNormal;
         vec3 rigPos = rigMove(position, rigNormal);
         objectNormal = rigNormal;`
       )
       .replace("#include <begin_vertex>", "vec3 transformed = rigPos;")
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+        varying vec2 vGlow;
+        uniform float uEyeHeat, uStoneHeat;`
+      )
+      .replace(
+        "#include <emissivemap_fragment>",
+        `#include <emissivemap_fragment>
+        // Ultron's eyes burn in Vision's face, white at the heart; the stone glows.
+        totalEmissiveRadiance += mix(vec3(1.0, 0.1, 0.12), vec3(1.0, 0.85, 0.85), vGlow.x * vGlow.x) * vGlow.x * uEyeHeat * 1.6;
+        totalEmissiveRadiance += vec3(1.0, 0.82, 0.42) * vGlow.y * uStoneHeat * 1.4;`
+      )
   }
   return { material, uniforms }
 }
@@ -345,6 +408,89 @@ function faceSheet(d: Depth, x0: number, x1: number, yAt: (x: number, t: number)
   return new THREE.Mesh(g, material)
 }
 
+/**
+ * How sunk each corner is below the surface around it (+: a crease or
+ * groove, -: a ridge), from a soup of triangles: corners are welded where
+ * they meet, each vertex's neighbours averaged, and the offset to that
+ * average taken along the normal, in units of the local edge length - then
+ * smoothed once, so it reads as line work rather than noise.
+ */
+function curvature(geometry: THREE.BufferGeometry): Float32Array {
+  const position = geometry.getAttribute("position")
+  const count = position.count
+  const ids = new Int32Array(count)
+  const index = new Map<number, number>()
+  let unique = 0
+  const Q = 40 // per unit: corners within 0.025 are one
+  for (let i = 0; i < count; i += 1) {
+    const key = (Math.round(position.getX(i) * Q) + 4096) * 67108864 + (Math.round(position.getY(i) * Q) + 4096) * 8192 + (Math.round(position.getZ(i) * Q) + 4096)
+    let id = index.get(key)
+    if (id === undefined) {
+      id = unique++
+      index.set(key, id)
+    }
+    ids[i] = id
+  }
+  const pos = new Float32Array(unique * 3)
+  const nrm = new Float32Array(unique * 3)
+  const sum = new Float32Array(unique * 3)
+  const deg = new Float32Array(unique)
+  const edge = new Float32Array(unique)
+  const a = new THREE.Vector3()
+  const b = new THREE.Vector3()
+  const c = new THREE.Vector3()
+  const n = new THREE.Vector3()
+  for (let t = 0; t < count; t += 3) {
+    a.fromBufferAttribute(position, t)
+    b.fromBufferAttribute(position, t + 1)
+    c.fromBufferAttribute(position, t + 2)
+    n.crossVectors(b.clone().sub(a), c.clone().sub(a))
+    const corners = [a, b, c]
+    for (let k = 0; k < 3; k += 1) {
+      const id = ids[t + k]
+      const p = corners[k]
+      pos.set([p.x, p.y, p.z], id * 3)
+      nrm[id * 3] += n.x
+      nrm[id * 3 + 1] += n.y
+      nrm[id * 3 + 2] += n.z
+      for (const q of [corners[(k + 1) % 3], corners[(k + 2) % 3]]) {
+        sum[id * 3] += q.x
+        sum[id * 3 + 1] += q.y
+        sum[id * 3 + 2] += q.z
+        deg[id] += 1
+        edge[id] += p.distanceTo(q)
+      }
+    }
+  }
+  let curv = new Float32Array(unique)
+  for (let id = 0; id < unique; id += 1) {
+    if (!deg[id]) continue
+    const len = Math.hypot(nrm[id * 3], nrm[id * 3 + 1], nrm[id * 3 + 2]) || 1
+    const dx = sum[id * 3] / deg[id] - pos[id * 3]
+    const dy = sum[id * 3 + 1] / deg[id] - pos[id * 3 + 1]
+    const dz = sum[id * 3 + 2] / deg[id] - pos[id * 3 + 2]
+    const along = (dx * nrm[id * 3] + dy * nrm[id * 3 + 1] + dz * nrm[id * 3 + 2]) / len
+    curv[id] = (along / (edge[id] / deg[id] || 1)) * 4
+  }
+  // Smooth once over the same neighbours (by the triangles).
+  const next = new Float32Array(unique)
+  const w = new Float32Array(unique)
+  for (let t = 0; t < count; t += 3) {
+    for (let k = 0; k < 3; k += 1) {
+      const id = ids[t + k]
+      for (let j = 0; j < 3; j += 1) {
+        next[id] += curv[ids[t + j]]
+        w[id] += 1
+      }
+    }
+  }
+  for (let id = 0; id < unique; id += 1) next[id] = w[id] ? next[id] / w[id] : 0
+  curv = next
+  const out = new Float32Array(count)
+  for (let i = 0; i < count; i += 1) out[i] = curv[ids[i]]
+  return out
+}
+
 /** The triangles whose three corners all pass `keep` (y, z). */
 function cropTriangles(geometry: THREE.BufferGeometry, keep: (y: number, z: number) => boolean) {
   const position = geometry.getAttribute("position")
@@ -368,7 +514,9 @@ export class VisionHead {
   private readonly jaw = new THREE.Group()
   private readonly materials: THREE.Material[] = []
 
-  constructor(stl: THREE.BufferGeometry, bands: THREE.Texture, renderer: THREE.WebGLRenderer) {
+  private readonly glows: { sprite: THREE.Sprite; base: number; stone: boolean }[] = []
+
+  constructor(stl: THREE.BufferGeometry, bands: THREE.Texture, renderer: THREE.WebGLRenderer, glowMap?: THREE.Texture) {
     // Upright in the console's frame: y up, the face toward +z.
     const whole = stl.index ? stl.toNonIndexed() : stl
     whole.rotateX(-Math.PI / 2)
@@ -388,7 +536,7 @@ export class VisionHead {
       (y, z) =>
         z > lm.nose.z - 0.5 * lm.height &&
         y > lm.chin.y - 0.04 * lm.height &&
-        y < lm.eyes[0].y + 0.2 * lm.height &&
+        y < lm.stone.y + 0.07 * lm.height &&
         (z > lm.nose.z - 0.28 * lm.height || y > lm.lip.y - 0.02 * lm.height)
     )
     whole.dispose()
@@ -398,6 +546,33 @@ export class VisionHead {
     this.uniforms = rig.uniforms
     this.materials.push(rig.material)
     this.group.add(new THREE.Mesh(geometry, rig.material))
+
+    // The sculpt is hollow and cropped behind the face, so its openings
+    // (nostrils, the parted lips) would show straight through to the
+    // background. A dark backing inside the head fills them with shadow.
+    {
+      const shade = new THREE.MeshBasicMaterial({ color: 0x5e1428, side: THREE.DoubleSide })
+      this.materials.push(shade)
+      const backing = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), shade)
+      backing.scale.set(lm.width * 0.36, lm.height * 0.34, lm.height * 0.08)
+      backing.position.set(0, (lm.chin.y + lm.stone.y) / 2, lm.nose.z - 0.3 * lm.height)
+      this.group.add(backing)
+    }
+
+    // Light off the eyes and the stone.
+    if (glowMap) {
+      const add = (at: THREE.Vector3, color: number, size: number, stone: boolean) => {
+        const m = new THREE.SpriteMaterial({ map: glowMap, color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
+        this.materials.push(m)
+        const sprite = new THREE.Sprite(m)
+        sprite.position.copy(at).add(new THREE.Vector3(0, 0, size * 0.25))
+        sprite.scale.setScalar(size)
+        this.group.add(sprite)
+        this.glows.push({ sprite, base: size, stone })
+      }
+      for (const e of lm.eyes) add(e, 0xff2030, lm.eyeRadius * 4.2, false)
+      add(lm.stone, 0xffd36a, lm.stoneRadius * 7, true)
+    }
 
     // Behind the lips, the teeth: the upper on the skull, the lower on the jaw.
     const h = lm.height
@@ -427,6 +602,8 @@ export class VisionHead {
     const colors = new Float32Array(count * 3)
     const rig = new Float32Array(count * 4)
     const eye = new Float32Array(count)
+    const glow = new Float32Array(count * 2)
+    const cavity = curvature(geometry)
     const h = lm.height
     const mw = lm.mouthHalf
     const er = lm.eyeRadius
@@ -470,19 +647,42 @@ export class VisionHead {
         const surface = depth.at(p.x, p.y)
         // (Deeper than the face's own folds: the groove under the lower
         // lip, the panel lines.)
-        if (Number.isFinite(surface) && p.z < surface - 0.035 * h) {
+        // Only round the mouth: the nostrils are deep too, but not a hole.
+        const nearMouth = Math.abs(p.x) < mw * 1.6 && p.y < lm.lip.y + 0.03 * h && p.y > lm.chin.y - 0.02 * h
+        if (nearMouth && Number.isFinite(surface) && p.z < surface - 0.035 * h) {
           colors.set([MOUTH.r, MOUTH.g, MOUTH.b], i * 3)
           continue
         }
-        c.copy(SKIN).lerp(SKIN_SHADE, Math.max(0, 0.55 - normal.getZ(i)) * 0.4)
+        // The sculpt's detail as ink and light: every crease, wrinkle and
+        // panel seam darkened by how far it is sunk below its surroundings,
+        // every ridge lifted - the cel-shaded film's line work, from the
+        // sculpt itself.
+        // The hollow print's inside (seen up a nostril): all concave, so the
+        // crease shading would make it black. Plain shadowed skin instead.
+        const inside = Number.isFinite(surface) && p.z < surface - 0.012 * h
+        const sunk = inside ? 0.45 : cavity[i]
+        c.copy(SKIN)
+        // (Never all the way to black: a deep nostril is shadow, not a hole.)
+        if (sunk > 0) c.lerp(SKIN_SHADE, Math.min(0.82, sunk * 1.15))
+        else c.lerp(SKIN_LIGHT, Math.min(0.6, -sunk * 0.8))
         for (let e = 0; e < 2; e += 1) {
           const at = lm.eyes[e]
-          const r = Math.hypot(p.x - at.x, (p.y - at.y - er * 0.1) * 1.35)
+          const r = Math.hypot(p.x - at.x, (p.y - at.y - er * 0.1) * 1.5)
           // On the eyeball's front only, not the lids round it.
           if (r < er && p.z > at.z - er * 0.35) {
             eye[i] = e === 0 ? 1 : -1
-            c.copy(r < er * 0.17 ? PUPIL : r < er * 0.45 ? IRIS : EYE_WHITE)
+            c.copy(EYE)
+            glow[i * 2] = Math.max(glow[i * 2], 1 - r / er)
           }
+        }
+        // The stone, and the silver setting round it.
+        const sr = lm.stoneRadius
+        const ds = Math.hypot(p.x - lm.stone.x, (p.y - lm.stone.y) * 0.8)
+        if (ds < sr * 2.1 && p.z > lm.stone.z - sr * 1.6) {
+          if (ds < sr) {
+            c.copy(STONE)
+            glow[i * 2 + 1] = 1 - (ds / sr) * 0.5
+          } else c.copy(SETTING).lerp(SKIN_SHADE, Math.max(0, sunk) * 0.8)
         }
         colors.set([c.r, c.g, c.b], i * 3)
       }
@@ -490,6 +690,18 @@ export class VisionHead {
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3))
     geometry.setAttribute("aRig", new THREE.BufferAttribute(rig, 4))
     geometry.setAttribute("aEye", new THREE.BufferAttribute(eye, 1))
+    geometry.setAttribute("aGlow", new THREE.BufferAttribute(glow, 2))
+  }
+
+  /** How hot his eyes burn (0..), and the stone (its flare on top). */
+  setHeat(eyes: number, stone: number) {
+    this.uniforms.uEyeHeat.value = eyes
+    this.uniforms.uStoneHeat.value = stone
+    for (const g of this.glows) {
+      const heat = g.stone ? stone : eyes
+      ;(g.sprite.material as THREE.SpriteMaterial).opacity = Math.min(1, 0.35 + heat * 0.4)
+      g.sprite.scale.setScalar(g.base * (0.8 + heat * 0.3))
+    }
   }
 
   /** The mouth shape now (lib/speech-track.ts) and where he looks (-1..1). */
