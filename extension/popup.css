@@ -53,4 +53,14 @@ input[type="checkbox"] { accent-color: #00d4ff; width: 16px; height: 16px; curso
 .footer { margin-top: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; }
 .muted { color: #5f8796; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 .error { color: #ff6b6b; margin-top: 8px; }
+.glance { padding-bottom: 10px; margin-bottom: 4px; border-bottom: 1px solid rgba(0, 212, 255, 0.15); }
+.topics { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.topic { font-size: 11px; padding: 3px 7px; border: 1px solid rgba(0, 212, 255, 0.3); border-radius: 10px; color: #a9c6d0; }
+.topic b { color: #00d4ff; font-weight: 600; }
+.topic.calls b, .topic.mail b, .topic.security b { color: #3fe39a; }
+.topics .none { font-size: 12px; color: #5f8796; }
+.next { font-size: 12px; color: #a9c6d0; margin-bottom: 8px; }
+.next b { color: #d8f6ff; font-weight: 600; }
+.hold-text { flex: 1.4; font-size: 12px; color: #a9c6d0; }
+.hold-text.on { color: #ffaa00; }
 [hidden] { display: none !important; }

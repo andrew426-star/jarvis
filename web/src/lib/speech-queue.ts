@@ -34,7 +34,10 @@ interface Handlers {
 
 export class SpeechQueue {
   private buffer = ""
-  private clips: { text: string; blob: Promise<Blob | null> }[] = []
+  private clips: { text: string; blob: Promise<Blob | null>; gen: number }[] = []
+  // Bumped by retract(): clips from before it are skipped unheard.
+  private gen = 0
+  private cut: (() => void) | null = null
   private closed = false
   private stopped = false
   private started = false
@@ -76,6 +79,22 @@ export class SpeechQueue {
     this.poke()
   }
 
+  /** The voice line so far is withdrawn (the server's "retract": a reply
+   *  that claimed an action nothing performed, being rewritten). The clip
+   *  playing is cut, those queued are dropped unheard, and the queue stays
+   *  open for the line that replaces it. */
+  retract() {
+    if (this.stopped || this.closed) return
+    this.buffer = ""
+    this.gen += 1
+    if (this.playing) {
+      this.playing.onerror = null
+      this.playing.pause()
+    }
+    this.cut?.()
+    this.poke()
+  }
+
   stop() {
     if (this.stopped) return
     this.stopped = true
@@ -91,6 +110,7 @@ export class SpeechQueue {
     const sentence = text.trim()
     if (!sentence) return
     this.clips.push({
+      gen: this.gen,
       text: sentence,
       blob: speak(sentence, this.token, currentVoiceId()).catch((err) => {
         if (err instanceof JarvisAuthError) this.handlers.onAuthError()
@@ -117,7 +137,7 @@ export class SpeechQueue {
       const clip = this.clips[index]
       const blob = await clip.blob
       index += 1
-      if (this.stopped) continue
+      if (this.stopped || clip.gen !== this.gen) continue
       // Unspoken (synthesis failed) still counts as said, so the chat
       // never stalls on a sentence that will not come.
       if (!blob) {
@@ -143,12 +163,17 @@ export class SpeechQueue {
       const audio = this.element ?? new Audio()
       audio.src = url
       this.playing = audio
+      let finished = false
       const done = () => {
+        if (finished) return
+        finished = true
         speechStopped()
         URL.revokeObjectURL(url)
         if (this.playing === audio) this.playing = null
+        if (this.cut === done) this.cut = null
         resolve()
       }
+      this.cut = done
       // Said once, whichever way the clip goes: heard, failed, or blocked.
       let said = false
       const say = () => {

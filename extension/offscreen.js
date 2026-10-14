@@ -7,6 +7,11 @@
 let queue = [] // { text, clip: Promise<Blob | null> }
 let playing = null
 let running = false
+// stop() ends the clip playing (a paused clip never fires "ended", which
+// used to leave the queue waiting forever, silent until a reload) and bumps
+// the generation, so a clip still being synthesised is dropped unheard.
+let finishCurrent = null
+let generation = 0
 
 function synthesise(text, api, token) {
   return fetch(api.replace(/\/$/, "") + "/speak", {
@@ -23,11 +28,16 @@ function play(blob) {
     const url = URL.createObjectURL(blob)
     const audio = new Audio(url)
     playing = audio
+    let finished = false
     const done = () => {
+      if (finished) return
+      finished = true
       URL.revokeObjectURL(url)
       if (playing === audio) playing = null
+      if (finishCurrent === done) finishCurrent = null
       resolve()
     }
+    finishCurrent = done
     audio.onended = done
     audio.onerror = done
     audio.play().catch(done)
@@ -41,7 +51,7 @@ async function run() {
   while (queue.length) {
     const next = queue.shift()
     const blob = await next.clip
-    if (blob) await play(blob)
+    if (blob && next.gen === generation) await play(blob)
   }
   running = false
   chrome.runtime.sendMessage({ type: "speaking", on: false }).catch(() => {})
@@ -50,12 +60,14 @@ async function run() {
 chrome.runtime.onMessage.addListener((message) => {
   if (message.target !== "offscreen") return false
   if (message.type === "say") {
-    queue.push({ text: message.text, clip: synthesise(message.text, message.api, message.token) })
+    queue.push({ text: message.text, clip: synthesise(message.text, message.api, message.token), gen: generation })
     void run()
   } else if (message.type === "stop") {
     queue = []
+    generation += 1
     playing?.pause()
     playing = null
+    finishCurrent?.()
   }
   return false
 })

@@ -115,6 +115,12 @@ export async function runTurn<M extends ChatMessageData>(setup: TurnSetup<M>): P
       if (event.type === "status") setup.onStatus?.(event.label)
       else if (event.type === "text") updateReply((m) => ({ ...m, content: m.content + event.delta }))
       else if (event.type === "reset") updateReply((m) => ({ ...m, content: "" }))
+      // A reply withdrawn whole (it claimed an action nothing performed):
+      // what was shown and what was said both go, and the rewrite follows.
+      else if (event.type === "retract") {
+        voice?.retract()
+        updateReply((m) => ({ ...m, content: "", spoken: "", said: m.said === undefined ? undefined : "" }))
+      }
       else if (event.type === "spoken") {
         if (!voice) return
         voice.push(event.delta)

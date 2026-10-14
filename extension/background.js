@@ -546,6 +546,13 @@ async function ask(text, tabId) {
       }
       if (event.type === "text") await toTab(tabId, { type: "answer", delta: event.delta })
       else if (event.type === "reset") await toTab(tabId, { type: "answer", reset: true })
+      // The reply so far is withdrawn (it claimed an action nothing did):
+      // its voice is cut and forgotten, and the rewrite follows.
+      else if (event.type === "retract") {
+        spoken = ""
+        stopSpeaking()
+        await toTab(tabId, { type: "answer", reset: true })
+      }
       else if (event.type === "spoken") {
         spoken += event.delta
         speakReady(false)
@@ -555,6 +562,37 @@ async function ask(text, tabId) {
         await toTab(tabId, { type: "answer", final: event.response })
       } else if (event.type === "error") await toTab(tabId, { type: "answer", error: event.message })
     }
+  }
+}
+
+// --- The popup's glance: inbox, hold, next reminder --------------------------------
+
+/** What waits for Andrew, read with the extension's own token: counts by
+ *  topic (never contents), whether calls are held, the next reminder. */
+async function glance() {
+  const s = await settings()
+  if (!s.token) return { ok: false }
+  try {
+    const res = await fetch(s.api.replace(/\/$/, "") + "/browser/glance", { headers: { Authorization: `Bearer ${s.token}` } })
+    return res.ok ? await res.json() : { ok: false, status: res.status }
+  } catch {
+    return { ok: false }
+  }
+}
+
+/** Hold calls and notifications for `minutes`, or lift the hold (null). */
+async function setHold(minutes) {
+  const s = await settings()
+  if (!s.token) return { ok: false }
+  try {
+    const res = await fetch(s.api.replace(/\/$/, "") + "/browser/hold", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${s.token}` },
+      body: JSON.stringify({ minutes }),
+    })
+    return res.ok ? await res.json() : { ok: false, status: res.status }
+  } catch {
+    return { ok: false }
   }
 }
 
@@ -678,6 +716,12 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       return true
     case "unpair":
       void unpair().then(() => reply({ ok: true }))
+      return true
+    case "glance":
+      void glance().then(reply)
+      return true
+    case "hold":
+      void setHold(message.minutes ?? null).then(reply)
       return true
     case "settings-changed":
       // Pausing, blocking or a new category takes effect at once.

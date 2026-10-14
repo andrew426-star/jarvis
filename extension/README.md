@@ -23,6 +23,30 @@ browser link and Jarvis's voice and chat — not mail, files or anything else.
 Unpair from the popup or from the console's Settings → Browser; either
 revokes every extension token at once.
 
+## The popup
+
+Under the header, **Waiting for you** shows what is in Jarvis's inbox:
+counts by topic (mail, calls, publicity, reminders, intel, security and
+so on, never their contents), your next reminder, and **Hold my calls**.
+Hold for an hour, or lift the hold, without opening the console. Calls go
+straight to messages and notifications pause; security alerts and your
+own reminders still come through.
+
+## What the bubble can do
+
+Everything Jarvis can do except drive the console. From any page you can
+ask him to set reminders, check the weather, hold your calls, run a
+protocol, read your mail or calendar, check who called, look at the house
+or how a Kivaro post is landing, and act in the page. Console timers,
+panels, the camera, the workshop and the showcase need the console; he
+offers a reminder in place of a timer and says when something can't be
+done from here.
+
+He reports only what actually happened. If a reply claims an action
+("Done", "Sent", "Reminder set") with nothing behind it, the server sends
+it back before it reaches you, and the bubble drops the withdrawn reply
+from the screen and the voice.
+
 ## Using it
 
 - **Alt+J** opens the bubble on any page to ask Jarvis about it.

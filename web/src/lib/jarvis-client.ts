@@ -177,6 +177,8 @@ export type StreamEvent =
   | { type: "text"; delta: string }
   | { type: "spoken"; delta: string }
   | { type: "reset" }
+  // The whole reply so far is withdrawn: shown text and spoken line alike.
+  | { type: "retract" }
   | { type: "tool"; name: string; result: unknown; args?: Record<string, unknown> }
   | ({ type: "done" } & InvokeResult)
   | { type: "error"; message: string }

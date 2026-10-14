@@ -22,6 +22,7 @@ from app.memory.interaction_log import fetch_recent_turns, write_interaction
 from app.memory.semantic_recall import get_relevant_context, record_interaction
 from app.memory.session_buffer import append_turn, count_turns, get_recent_turns
 from app.services.browser_link import context_line as browser_context_line
+from app.services.claims import correction, unbacked_claim
 from app.services.persona import PERSONA, VOICE_CUES
 from app.services.situation import situation_note
 from app.services.ultron import ULTRON_PERSONA, is_ultron
@@ -570,7 +571,12 @@ BROWSER_MODE = (
     "page he is working in (the BROWSER line says which). The bubble is small: answer first, in a few "
     "short lines. The SCREEN AND VOICE rules above still apply. When the question is about the page, "
     "read it with the browser tool rather than guessing. The console's panels, workshop and camera are "
-    "not in view here."
+    "not in view here. What you can do from the bubble: everything of yours except the console tool - "
+    "act in the page (browser), reminders, the weather, hold, protocols, the sentinel, notes, the house "
+    "(home), the phone line, his mail, calendar, tasks, markets and the rest. What you cannot: console "
+    "timers (offer a reminder instead), opening or closing panels, the camera, the workshop, the "
+    "showcase; a protocol step that needs the console is skipped here, and you say so. Never say you "
+    "did any of those from the bubble."
 )
 
 MOBILE_MODE = (
@@ -641,6 +647,7 @@ def stream_invoke(
       text    {"delta"}           more of the on-screen reply
       spoken  {"delta"}           more of the voice line (it comes first)
       reset   {}                  text so far was a preamble to tool calls; drop it
+      retract {}                  the reply so far, text and voice, is withdrawn and rewritten
       tool    {"name", "result"}  a tool finished (console actions run on this)
       done    {...}               the finished turn, as /invoke returns it
 
@@ -799,6 +806,7 @@ def stream_invoke(
     used_model = ""
     deadline = started + TURN_DEADLINE_S
     stream_retries = 2
+    claim_checked = False
     for iteration in range(MAX_ITERATIONS):
         step = time.monotonic()
         # Out of rounds or out of patience: answer with what is gathered,
@@ -871,6 +879,20 @@ def stream_invoke(
         timings.append({"step": "model", "model": used_model, "ms": int((time.monotonic() - step) * 1000)})
 
         if not calls:
+            # A reply that claims an action nothing performed goes back once,
+            # to do it with a tool or to say plainly it is not done
+            # (app/services/claims.py). Not on the last round, which cannot
+            # call tools, and not past the deadline.
+            claim = None if claim_checked else unbacked_claim(text, executed)
+            if claim and iteration < MAX_ITERATIONS - 2 and time.monotonic() < deadline - 10:
+                claim_checked = True
+                logger.warning("reply claimed %r with no action behind it; sent back", claim)
+                # Not "reset" (a preamble before tool calls): the voice line
+                # is withdrawn too, so the false claim is not heard.
+                yield {"type": "retract"}
+                contents.append(types.Content(role="model", parts=round_parts))
+                contents.append(types.Content(role="user", parts=[types.Part(text=correction(claim))]))
+                continue
             final_text = text
             if not final_text.strip():
                 final_text = f"I lost the thread of that one, sir ({finish or 'empty reply'}). Would you ask again?"

@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field
 
 from app.core.auth import require_browser_or_full, browser_generation, browser_token_email, bump_browser_generation, has_full_access, require_access_token
 from app.core.gemini import AllModelsExhausted, GeminiNotConfigured
@@ -45,6 +46,49 @@ async def browser_unpair() -> dict:
         except Exception:  # noqa: BLE001 — already gone
             pass
     return {"ok": True}
+
+
+# What the extension's popup shows at a glance, with its own narrow token:
+# how many inbox items wait (by topic, never their contents), whether calls
+# are held, and the next reminder. Mail, calls and the rest stay behind the
+# console's sign-in.
+class HoldRequest(BaseModel):
+    minutes: float | None = Field(default=None, ge=1, le=24 * 60)
+
+
+@router.get("/browser/glance", dependencies=[Depends(require_browser_or_full)])
+def browser_glance() -> dict:
+    from app.services.inbox import list_inbox
+    from app.tools.hold import hold
+    from app.tools.reminders import reminders
+
+    result: dict = {"ok": True}
+    try:
+        pending = list_inbox(include_recent=False)["pending"]
+        topics: dict[str, int] = {}
+        for item in pending:
+            topics[item.get("topic") or "rounds"] = topics.get(item.get("topic") or "rounds", 0) + 1
+        result["inbox"] = {"total": len(pending), "topics": topics}
+    except Exception:  # noqa: BLE001 — each part is shown if it can be
+        logger.warning("glance: inbox unavailable", exc_info=True)
+    state = hold({"operation": "status"})
+    if state.get("ok"):
+        result["hold"] = {"held": state.get("held", False), "until": state.get("until_local"), "reason": state.get("reason")}
+    upcoming = reminders({"operation": "list"})
+    if upcoming.get("ok") and upcoming.get("reminders"):
+        first = upcoming["reminders"][0]
+        result["next_reminder"] = {"text": first["text"], "when": first["when"]}
+    return result
+
+
+@router.post("/browser/hold", dependencies=[Depends(require_browser_or_full)])
+def browser_hold(request: HoldRequest) -> dict:
+    """Hold calls and notifications for `minutes`, or lift the hold (none)."""
+    from app.tools.hold import hold
+
+    if request.minutes is None:
+        return hold({"operation": "off"})
+    return hold({"operation": "on", "minutes": request.minutes, "reason": "From the browser"})
 
 
 @router.get("/browser/status", dependencies=[Depends(require_access_token)])

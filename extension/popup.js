@@ -1,7 +1,7 @@
-// The toolbar popup: pair with the console, and the controls Andrew asked
-// for - follow along or not, how readily Jarvis speaks up, whether he may
-// act, voice, pausing,
-// and which sites are private.
+// The toolbar popup: pair with the console; what is waiting for Andrew
+// (inbox counts by topic, the next reminder) and a "hold my calls" switch;
+// and the controls he asked for - follow along or not, how readily Jarvis
+// speaks up, whether he may act, voice, pausing, and which sites are private.
 
 import { CATEGORIES } from "./blocklist.js"
 
@@ -84,6 +84,52 @@ async function render() {
   $("server").title = s.api
 }
 
+// What waits for him, the hold, the next reminder (background.js glance()).
+const TOPIC_LABEL = {
+  calls: "Calls", mail: "Mail", reminders: "Reminders", publicity: "Publicity", intel: "Intel",
+  security: "Security", signals: "Signals", markets: "Markets", rounds: "Rounds",
+}
+let held = false
+
+async function renderGlance() {
+  const g = await chrome.runtime.sendMessage({ type: "glance" })
+  $("glance").hidden = !g?.ok
+  if (!g?.ok) return
+  const topics = $("topics")
+  topics.replaceChildren()
+  const entries = Object.entries(g.inbox?.topics || {}).sort((a, b) => b[1] - a[1])
+  if (!entries.length) {
+    const none = document.createElement("span")
+    none.className = "none"
+    none.textContent = g.inbox ? "Nothing waiting. The inbox is clear." : "Inbox unavailable."
+    topics.append(none)
+  }
+  for (const [topic, count] of entries) {
+    const chip = document.createElement("span")
+    chip.className = `topic ${topic}`
+    const n = document.createElement("b")
+    n.textContent = String(count)
+    chip.append(n, ` ${TOPIC_LABEL[topic] || topic}`)
+    topics.append(chip)
+  }
+  const next = $("next-reminder")
+  next.hidden = !g.next_reminder
+  if (g.next_reminder) {
+    next.replaceChildren("Next reminder: ", Object.assign(document.createElement("b"), { textContent: g.next_reminder.text }), ` · ${g.next_reminder.when}`)
+  }
+  held = Boolean(g.hold?.held)
+  $("hold-text").textContent = held ? `Calls held until ${g.hold.until}` : "Calls come through"
+  $("hold-text").className = `hold-text${held ? " on" : ""}`
+  $("hold-btn").textContent = held ? "LIFT THE HOLD" : "HOLD MY CALLS · 1 HR"
+}
+
+$("hold-btn").addEventListener("click", async () => {
+  $("hold-btn").disabled = true
+  await chrome.runtime.sendMessage({ type: "hold", minutes: held ? null : 60 })
+  $("hold-btn").disabled = false
+  await renderGlance()
+})
+
 $("pair").addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   $("pair").disabled = true
@@ -120,5 +166,7 @@ $("unpair").addEventListener("click", async () => {
 })
 
 void render()
+void renderGlance()
 // The connection state can change while the popup is open.
 setInterval(() => void render(), 2000)
+setInterval(() => void renderGlance(), 15000)
