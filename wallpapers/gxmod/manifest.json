@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "J.A.R.V.I.S. Blueprint",
+  "description": "Kivaro AI and Jarvis schematics drawing themselves on a holographic drafting sheet, behind your start page.",
+  "version": "1.0.0",
+  "icons": { "512": "icon_512.png" },
+  "developer": { "name": "Andrew Thomas" },
+  "mod": {
+    "schema_version": 1,
+    "payload": {
+      "wallpaper": {
+        "dark": {
+          "image": "wallpaper/blueprint.webm",
+          "first_frame": "wallpaper/blueprint.jpg",
+          "text_color": "#cfefff",
+          "text_shadow": "#5fd4ff"
+        },
+        "light": {
+          "image": "wallpaper/blueprint.webm",
+          "first_frame": "wallpaper/blueprint.jpg",
+          "text_color": "#cfefff",
+          "text_shadow": "#5fd4ff"
+        }
+      },
+      "theme": {
+        "dark": {
+          "gx_accent": { "h": 196, "s": 100, "l": 50 },
+          "gx_secondary_base": { "h": 207, "s": 80, "l": 8 }
+        },
+        "light": {
+          "gx_accent": { "h": 196, "s": 100, "l": 42 },
+          "gx_secondary_base": { "h": 205, "s": 60, "l": 90 }
+        }
+      }
+    }
+  }
+}

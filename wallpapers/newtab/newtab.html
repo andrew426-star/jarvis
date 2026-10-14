@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New Tab</title>
+<link rel="stylesheet" href="newtab.css">
+</head>
+<body>
+<canvas id="sheet" aria-hidden="true"></canvas>
+
+<main>
+  <div class="time" id="time">--:--</div>
+  <div class="date" id="date"></div>
+  <form id="search" role="search" autocomplete="off">
+    <span class="prompt" aria-hidden="true">&gt;</span>
+    <input id="query" type="text" placeholder="Search, sir" aria-label="Search" spellcheck="false" autofocus>
+  </form>
+  <div class="launch" id="launch"></div>
+</main>
+
+<aside class="titleblock" aria-hidden="true">
+  <div class="tb-row"><span>KIVARO AI</span><span id="tb-number">KIV-001</span></div>
+  <div class="tb-title" id="tb-title"></div>
+  <div class="tb-row tb-small"><span>DRAWN: J.A.R.V.I.S.</span><span id="tb-sheet">SHEET 1 OF 3</span></div>
+  <div class="tb-row tb-small"><span>SCALE: NTS</span><span>REV A</span></div>
+</aside>
+
+<script src="newtab.js" type="module"></script>
+</body>
+</html>

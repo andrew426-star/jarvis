@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Signal</title>
+<style>
+  @font-face { font-family: "JetBrains Mono"; src: url("../shared/jetbrains-mono-400.woff") format("woff"); }
+  html, body { margin: 0; height: 100%; background: #080c0a; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas></canvas>
+<script type="module">
+// SIGNAL - the home screen. Icons sit on top of it, so it is dark and slow:
+// Kivaro's mark, large and ghosted, drawn the way the Kivaro site draws it -
+// as scanlines that break into dashes and stream off to the right - with
+// two tide lines low down, Jarvis's cyan and Kivaro's green, like a pair of
+// price series breathing against each other.
+import { COLORS, TAU, insideMark, markPolygons, run, wave } from "../shared/hud.js"
+
+const PERIOD = 10
+
+// A fixed pseudo-random value per screen cell: the dissolve's dropout, held
+// still while the dashes slide under it, so the loop has no seam.
+function hash(a, b) {
+  const s = Math.sin(a * 127.1 + b * 311.7) * 43758.5453
+  return s - Math.floor(s)
+}
+
+const POLYS = markPolygons([0, 0, 0])
+
+function draw(ctx, w, h, t) {
+  const u = w / 1290
+
+  const ground = ctx.createLinearGradient(0, 0, 0, h)
+  ground.addColorStop(0, COLORS.kivaroInk)
+  ground.addColorStop(1, "#04070a")
+  ctx.fillStyle = ground
+  ctx.fillRect(0, 0, w, h)
+
+  // The mark, in scanlines.
+  const cx = w * 0.5
+  const cy = h * 0.43
+  const size = w * 0.7
+  const k = size / 2.9 // screen px per mark unit
+  const rowGap = 8 * u
+  const pitch = 26 * u
+  const dash = 16 * u
+  const flow = ((t / PERIOD) * 3 * pitch) % pitch // three dashes a period
+  const lime = [204, 231, 136], green = [112, 240, 135]
+  const top = cy - size * 0.62, bottom = cy + size * 0.62
+
+  ctx.lineWidth = Math.max(1, 3.2 * u)
+  ctx.lineCap = "round"
+  for (let y = top, row = 0; y < bottom; y += rowGap, row++) {
+    const my = (y - cy) / k
+    // Where the mark ends on this row; the dissolve streams on from there.
+    let edge = null, edgeShade = 0
+    for (let x = cx + size * 0.55; x > cx - size * 0.55; x -= pitch / 3) {
+      const s = insideMark((x - cx) / k, my, POLYS)
+      if (s) { edge = x; edgeShade = s; break }
+    }
+    if (edge === null) continue
+    for (let x = -pitch + flow; x < w + pitch; x += pitch) {
+      const mid = x + dash / 2
+      let shade = insideMark((mid - cx) / k, my, POLYS)
+      let a = 0
+      if (shade) {
+        a = 0.19 * shade
+      } else if (mid > edge) {
+        const keep = hash(row, Math.floor(mid / pitch))
+        const fall = Math.exp(-(mid - edge) / (w * 0.22))
+        if (keep < fall * 0.9) { a = 0.15 * edgeShade * fall; shade = edgeShade }
+      }
+      if (a <= 0.004) continue
+      const g = Math.min(1, Math.max(0, (mid - (cx - size / 2)) / size))
+      const c = lime.map((v, i) => Math.round(v + (green[i] - v) * g))
+      ctx.strokeStyle = `rgba(${c.join(",")}, ${a})`
+      ctx.beginPath()
+      ctx.moveTo(x, y)
+      ctx.lineTo(x + dash, y)
+      ctx.stroke()
+    }
+  }
+
+  // Tide lines, low on the screen: whole-cycle waves, so they loop.
+  const tide = (base, amp, phase, cycles, rgb, alpha) => {
+    const path = []
+    for (let x = 0; x <= w; x += 6 * u) {
+      const p = x / w
+      const y = base
+        + amp * Math.sin(TAU * (1.3 * p) + TAU * cycles * (t / PERIOD) + phase)
+        + amp * 0.45 * Math.sin(TAU * (3.1 * p) - TAU * (t / PERIOD) * 2 + phase * 2)
+        + amp * 0.2 * Math.sin(TAU * (7.3 * p) + TAU * (t / PERIOD) * 3)
+      path.push([x, y])
+    }
+    const fill = ctx.createLinearGradient(0, base - amp * 2, 0, h)
+    fill.addColorStop(0, `rgba(${rgb}, ${alpha * 0.18})`)
+    fill.addColorStop(1, `rgba(${rgb}, 0)`)
+    ctx.beginPath()
+    path.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)))
+    ctx.lineTo(w, h)
+    ctx.lineTo(0, h)
+    ctx.closePath()
+    ctx.fillStyle = fill
+    ctx.fill()
+    ctx.beginPath()
+    path.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)))
+    ctx.strokeStyle = `rgba(${rgb}, ${alpha})`
+    ctx.lineWidth = 2.4 * u
+    ctx.shadowColor = `rgba(${rgb}, ${alpha})`
+    ctx.shadowBlur = 14 * u
+    ctx.stroke()
+    ctx.shadowBlur = 0
+  }
+  tide(h * 0.8, 46 * u, 0, 1, COLORS.cyanRGB, 0.32)
+  tide(h * 0.83, 38 * u, 2.1, -1, COLORS.greenRGB, 0.3)
+
+  // A pulse travelling along the cyan tide, once a period.
+  // Drawn again one screen-width to the left, so as it leaves the right
+  // edge it is already entering the left: no jump when the loop restarts.
+  const px = ((t / PERIOD) % 1) * w
+  for (const x of [px, px - w]) {
+    const pulse = ctx.createRadialGradient(x, h * 0.8, 0, x, h * 0.8, 140 * u)
+    pulse.addColorStop(0, `rgba(${COLORS.cyanRGB}, ${0.08 + 0.05 * wave(t, PERIOD, 2)})`)
+    pulse.addColorStop(1, "rgba(0, 0, 0, 0)")
+    ctx.fillStyle = pulse
+    ctx.fillRect(x - 140 * u, h * 0.8 - 140 * u, 280 * u, 280 * u)
+  }
+
+  // Fine scanlines over everything, and a vignette to sit the icons on.
+  ctx.fillStyle = "rgba(0, 0, 0, 0.18)"
+  for (let y = 0; y < h; y += 4 * u) ctx.fillRect(0, y, w, Math.max(1, u))
+  const vignette = ctx.createRadialGradient(w / 2, h * 0.45, w * 0.35, w / 2, h * 0.45, h * 0.75)
+  vignette.addColorStop(0, "rgba(0, 0, 0, 0)")
+  vignette.addColorStop(1, "rgba(0, 0, 0, 0.55)")
+  ctx.fillStyle = vignette
+  ctx.fillRect(0, 0, w, h)
+}
+
+run(draw, { width: 1290, height: 2796, period: PERIOD })
+</script>
+</body>
+</html>

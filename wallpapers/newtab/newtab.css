@@ -1,0 +1,142 @@
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("jetbrains-mono-400.woff") format("woff");
+}
+
+:root {
+  --paper: #03101c;
+  --line: #5fd4ff;
+  --line-rgb: 95, 212, 255;
+  --kivaro: #3fe39a;
+  --text: #cfefff;
+  --muted: rgba(207, 239, 255, 0.55);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--paper);
+  color: var(--text);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  overflow: hidden;
+}
+
+#sheet {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
+
+main {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 11vh;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.time {
+  font-size: clamp(56px, 9vw, 120px);
+  letter-spacing: 0.06em;
+  line-height: 1;
+  color: var(--text);
+  text-shadow: 0 0 24px rgba(var(--line-rgb), 0.45);
+}
+
+.date {
+  font-size: 13px;
+  letter-spacing: 0.32em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+#search {
+  pointer-events: auto;
+  margin-top: 22px;
+  width: min(560px, 86vw);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid rgba(var(--line-rgb), 0.45);
+  background: rgba(3, 16, 28, 0.72);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 0 0 1px rgba(var(--line-rgb), 0.08), 0 0 30px rgba(var(--line-rgb), 0.08) inset;
+}
+
+#search:focus-within {
+  border-color: var(--line);
+  box-shadow: 0 0 0 1px rgba(var(--line-rgb), 0.3), 0 0 30px rgba(var(--line-rgb), 0.15);
+}
+
+.prompt { color: var(--line); }
+
+#query {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  letter-spacing: 0.04em;
+}
+
+#query::placeholder { color: rgba(207, 239, 255, 0.35); }
+
+.launch {
+  margin-top: 14px;
+  font-size: 12px;
+  letter-spacing: 0.3em;
+  color: var(--kivaro);
+  opacity: 0.85;
+}
+
+.titleblock {
+  position: fixed;
+  z-index: 1;
+  right: 24px;
+  bottom: 24px;
+  width: 300px;
+  border: 1px solid rgba(var(--line-rgb), 0.5);
+  background: rgba(3, 16, 28, 0.6);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--text);
+}
+
+.tb-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(var(--line-rgb), 0.25);
+}
+
+.tb-row:last-child { border-bottom: 0; }
+.tb-small { color: var(--muted); font-size: 10px; }
+
+.tb-title {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(var(--line-rgb), 0.25);
+  font-size: 12px;
+  color: var(--line);
+  min-height: 2.6em;
+}
+
+@media (max-width: 700px) {
+  .titleblock { display: none; }
+}
+
+/* The GX Mod's video capture: the sheet alone. */
+body.capture main,
+body.capture .titleblock { display: none; }
+body.capture { overflow: auto; }

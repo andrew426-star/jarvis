@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Command</title>
+<style>
+  @font-face { font-family: "JetBrains Mono"; src: url("../shared/jetbrains-mono-400.woff") format("woff"); }
+  html, body { margin: 0; height: 100%; background: #050508; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas></canvas>
+<script type="module">
+// COMMAND - the desktop. A HUD for the launch: Jarvis's core with Kivaro's
+// mark at its heart, the clock, the countdown to January 12, 2027, where
+// the plan stands (Discovery, Pilots, Commitments, Launch - the same
+// dates as app/tools/launch_tracker.py), and the six segments Kivaro sells
+// to running along the bottom. Live, it reads the real time; rendered to
+// video, the parts that would go stale (clock, countdown, today's place on
+// the plan) give way to fixed labels.
+import { COLORS, FONT, arcRing, drawMark, hexGrid, orbiters, ringLabels, run, sphere, tickRing, wave } from "../shared/hud.js"
+
+const PERIOD = 12
+const LAUNCH = Date.UTC(2027, 0, 12, 6) // midnight, January 12, Central
+const PHASES = [
+  ["DISCOVERY", "2026-09-28", "2026-10-31", "30 conversations"],
+  ["PILOTS", "2026-11-01", "2026-11-30", "3 pilots"],
+  ["COMMITMENTS", "2026-12-01", "2027-01-11", "3 commitments"],
+  ["LAUNCH", "2027-01-12", "2027-01-12", "public"],
+]
+const SEGMENTS = "HEDGE FUND PARTNERS & PMS  ·  RESEARCH & ANALYTICS  ·  INVESTOR RELATIONS  ·  QUANT & HYBRID FUNDS  ·  VENTURE CAPITAL  ·  PRIVATE EQUITY  ·  "
+
+const day = (iso) => Date.parse(`${iso}T06:00:00Z`)
+const pad = (n) => String(n).padStart(2, "0")
+
+function text(ctx, str, x, y, size, rgb, alpha, { align = "left", spacing = 0 } = {}) {
+  ctx.font = `${size}px ${FONT}`
+  ctx.textAlign = align
+  ctx.textBaseline = "alphabetic"
+  ctx.letterSpacing = `${spacing}px`
+  ctx.fillStyle = `rgba(${rgb}, ${alpha})`
+  ctx.fillText(str, x, y)
+  ctx.letterSpacing = "0px"
+}
+
+function bracket(ctx, x, y, w, h, l, rgb, alpha) {
+  ctx.strokeStyle = `rgba(${rgb}, ${alpha})`
+  ctx.beginPath()
+  for (const [px, py, dx, dy] of [[x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1]]) {
+    ctx.moveTo(px + dx * l, py)
+    ctx.lineTo(px, py)
+    ctx.lineTo(px, py + dy * l)
+  }
+  ctx.stroke()
+}
+
+function draw(ctx, w, h, t, { live }) {
+  const u = h / 1440
+  const now = Date.now()
+  const breath = wave(t, PERIOD, 2) * 0.5 + 0.5
+
+  ctx.fillStyle = COLORS.ink
+  ctx.fillRect(0, 0, w, h)
+  hexGrid(ctx, w, h, 34 * u, t, PERIOD, { base: 0.028, band: 0.08 })
+  const vignette = ctx.createRadialGradient(w / 2, h / 2, h * 0.2, w / 2, h / 2, w * 0.7)
+  vignette.addColorStop(0, `rgba(${COLORS.cyanRGB}, 0.035)`)
+  vignette.addColorStop(1, "rgba(0, 0, 0, 0.6)")
+  ctx.fillStyle = vignette
+  ctx.fillRect(0, 0, w, h)
+
+  // The core.
+  const cx = w / 2, cy = h * 0.47, R = h * 0.22
+  sphere(ctx, cx, cy, R, t, PERIOD, { turns: 1, alpha: 0.4 })
+  tickRing(ctx, cx, cy, R * 1.16, t, PERIOD, { ticks: 120, turns: 1, alpha: 0.5 })
+  arcRing(ctx, cx, cy, R * 1.3, t, PERIOD, { n: 6, fill: 0.62, turns: -1, alpha: 0.5 })
+  arcRing(ctx, cx, cy, R * 1.42, t, PERIOD, { n: 3, fill: 0.2, turns: 1, width: 0.016, rgb: COLORS.greenRGB, alpha: 0.6 })
+  ringLabels(ctx, cx, cy, R * 1.52, t, PERIOD, ["J.A.R.V.I.S.", "KIVARO AI", "DISCOVERY", "PILOTS", "COMMITMENTS", "LAUNCH"], { size: 14 * u, alpha: 0.4 })
+  orbiters(ctx, cx, cy, R * 1.16, t, PERIOD, { count: 2, turns: 1, size: 3.5 * u })
+  const well = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.6)
+  well.addColorStop(0, "rgba(5, 8, 6, 0.95)")
+  well.addColorStop(1, "rgba(5, 8, 6, 0)")
+  ctx.fillStyle = well
+  ctx.beginPath()
+  ctx.arc(cx, cy, R * 0.6, 0, Math.PI * 2)
+  ctx.fill()
+  drawMark(ctx, cx, cy, R * 0.62, t, PERIOD, { glow: 0.5 + 0.5 * breath, waveCycles: 2 })
+
+  // Frame.
+  ctx.lineWidth = 1.5 * u
+  bracket(ctx, 40 * u, 40 * u, w - 80 * u, h - 80 * u, 40 * u, COLORS.cyanRGB, 0.35)
+  text(ctx, "KIVARO AI  //  COMMAND", 70 * u, 84 * u, 15 * u, COLORS.greenRGB, 0.7, { spacing: 4 * u })
+  text(ctx, "J.A.R.V.I.S.", w - 70 * u, 84 * u, 15 * u, COLORS.cyanRGB, 0.7, { align: "right", spacing: 4 * u })
+
+  // Left: the time, or in video the name.
+  const lx = 110 * u, ly = h * 0.4
+  if (live) {
+    const local = new Date(now)
+    text(ctx, `${pad(local.getHours())}:${pad(local.getMinutes())}`, lx, ly, 150 * u, COLORS.cyanRGB, 0.92, { spacing: 4 * u })
+    text(ctx, `:${pad(local.getSeconds())}`, lx + 470 * u, ly, 44 * u, COLORS.cyanRGB, 0.5)
+    const date = local.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", year: "numeric" }).toUpperCase()
+    text(ctx, date, lx + 6 * u, ly + 56 * u, 20 * u, COLORS.cyanRGB, 0.55, { spacing: 3 * u })
+  } else {
+    text(ctx, "J.A.R.V.I.S.", lx, ly, 96 * u, COLORS.cyanRGB, 0.9, { spacing: 6 * u })
+    text(ctx, "JUST A RATHER VERY INTELLIGENT SYSTEM", lx + 6 * u, ly + 56 * u, 17 * u, COLORS.cyanRGB, 0.5, { spacing: 3 * u })
+  }
+  ctx.fillStyle = `rgba(${COLORS.greenRGB}, ${0.4 + 0.6 * breath})`
+  ctx.beginPath()
+  ctx.arc(lx + 12 * u, ly + 110 * u, 6 * u, 0, Math.PI * 2)
+  ctx.fill()
+  text(ctx, "ONLINE  ·  STANDING BY", lx + 32 * u, ly + 117 * u, 17 * u, COLORS.greenRGB, 0.75, { spacing: 3 * u })
+
+  // Right: the launch.
+  const rx = w - 110 * u, ry = h * 0.36
+  text(ctx, "PUBLIC LAUNCH", rx, ry - 70 * u, 17 * u, COLORS.greenRGB, 0.7, { align: "right", spacing: 4 * u })
+  if (live) {
+    const left = Math.max(0, LAUNCH - now) / 1000
+    const d = Math.floor(left / 86400), hh = Math.floor((left % 86400) / 3600), mm = Math.floor((left % 3600) / 60), ss = Math.floor(left % 60)
+    text(ctx, `${d}D ${pad(hh)}:${pad(mm)}:${pad(ss)}`, rx, ry, 72 * u, COLORS.greenRGB, 0.95, { align: "right", spacing: 2 * u })
+  } else {
+    text(ctx, "JAN 12 · 2027", rx, ry, 72 * u, COLORS.greenRGB, 0.95, { align: "right", spacing: 2 * u })
+  }
+
+  // The plan, as four segments with today's place on it.
+  const bw = 560 * u, bx = rx - bw, by = ry + 70 * u
+  const first = day(PHASES[0][1]), last = day(PHASES[3][1])
+  const at = (ms) => bx + ((ms - first) / (last - first)) * bw
+  PHASES.forEach(([name, start, end, goal], i) => {
+    const x0 = at(day(start)), x1 = i === 3 ? bx + bw : at(day(end))
+    const current = live && now >= day(start) && now < day(end) + 86400000
+    ctx.fillStyle = `rgba(${COLORS.greenRGB}, ${current ? 0.85 : 0.22})`
+    ctx.fillRect(x0, by, Math.max(4 * u, x1 - x0 - 6 * u), 8 * u)
+    text(ctx, name, x0, by + 36 * u, 13 * u, current ? COLORS.greenRGB : COLORS.cyanRGB, current ? 0.95 : 0.5, { spacing: 2 * u })
+    text(ctx, goal, x0, by + 58 * u, 12 * u, COLORS.cyanRGB, 0.38)
+  })
+  if (live && now < last) {
+    const mx = at(Math.max(first, now))
+    ctx.fillStyle = COLORS.cyan
+    ctx.shadowColor = COLORS.cyan
+    ctx.shadowBlur = 12 * u
+    ctx.fillRect(mx - 1.5 * u, by - 14 * u, 3 * u, 36 * u)
+    ctx.shadowBlur = 0
+  }
+
+  // The segments, running along the bottom: one full width per period.
+  ctx.font = `${16 * u}px ${FONT}`
+  ctx.letterSpacing = `${3 * u}px`
+  const span = ctx.measureText(SEGMENTS).width
+  const offset = (t / PERIOD) * span
+  const ty = h - 92 * u
+  ctx.strokeStyle = `rgba(${COLORS.cyanRGB}, 0.18)`
+  ctx.beginPath()
+  ctx.moveTo(70 * u, ty - 34 * u)
+  ctx.lineTo(w - 70 * u, ty - 34 * u)
+  ctx.stroke()
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(70 * u, ty - 30 * u, w - 140 * u, 44 * u)
+  ctx.clip()
+  ctx.fillStyle = `rgba(${COLORS.cyanRGB}, 0.5)`
+  ctx.textAlign = "left"
+  for (let x = 70 * u - offset; x < w; x += span) ctx.fillText(SEGMENTS, x, ty)
+  ctx.restore()
+  ctx.letterSpacing = "0px"
+}
+
+run(draw, { width: 2560, height: 1440, period: PERIOD })
+</script>
+</body>
+</html>
