@@ -1,28 +1,35 @@
+from app.tools.browser import BROWSER_SCHEMA, browser
 from app.tools.calculator import calculator
 from app.tools.checklist import CHECKLIST_SCHEMA, checklist
 from app.tools.company_financials import company_financials
 from app.tools.database_agent import database_agent
-from app.tools.browser import BROWSER_SCHEMA, browser
 from app.tools.files import FILES_SCHEMA, files
 from app.tools.github import github
 from app.tools.google_titan import google_titan
-from app.tools.kivaro_pipeline import kivaro_pipeline
 from app.tools.habits import habits
 from app.tools.history import HISTORY_SCHEMA, history
+from app.tools.home import HOME_SCHEMA, home
+from app.tools.hold import HOLD_SCHEMA, hold
 from app.tools.inbox import INBOX_SCHEMA, inbox
 from app.tools.italian import italian
 from app.tools.kiv_tasks import kiv_tasks
-from app.tools.speech_coach import speech_coach
+from app.tools.kivaro_pipeline import kivaro_pipeline
 from app.tools.launch_tracker import launch_tracker
 from app.tools.market_analysis import market_analysis
 from app.tools.market_history import MARKET_HISTORY_SCHEMA, market_history
 from app.tools.news_feed import NEWS_FEED_SCHEMA, news_feed
 from app.tools.notes import NOTES_SCHEMA, notes
 from app.tools.parts_catalog import PARTS_CATALOG_SCHEMA, parts_catalog
+from app.tools.phone import PHONE_SCHEMA, phone
 from app.tools.portfolio import portfolio
+from app.tools.protocols import PROTOCOLS_SCHEMA, protocols
+from app.tools.reminders import REMINDERS_SCHEMA, reminders
+from app.tools.sentinel import SENTINEL_SCHEMA, sentinel
+from app.tools.speech_coach import speech_coach
 from app.tools.spotify import spotify
 from app.tools.think import think
 from app.tools.trade_signals import TRADE_SIGNALS_SCHEMA, trade_signals
+from app.tools.weather import WEATHER_SCHEMA, weather
 from app.tools.web_research import web_research
 from app.tools.zoho_mail import zoho_mail
 
@@ -591,6 +598,13 @@ TOOL_SCHEMAS = [
     INBOX_SCHEMA,
     TRADE_SIGNALS_SCHEMA,
     PARTS_CATALOG_SCHEMA,
+    WEATHER_SCHEMA,
+    REMINDERS_SCHEMA,
+    HOLD_SCHEMA,
+    PROTOCOLS_SCHEMA,
+    SENTINEL_SCHEMA,
+    HOME_SCHEMA,
+    PHONE_SCHEMA,
 ]
 
 DISPATCH = {
@@ -621,4 +635,11 @@ DISPATCH = {
     "inbox": inbox,
     "trade_signals": trade_signals,
     "parts_catalog": parts_catalog,
+    "weather": weather,
+    "reminders": reminders,
+    "hold": hold,
+    "protocols": protocols,
+    "sentinel": sentinel,
+    "home": home,
+    "phone": phone,
 }

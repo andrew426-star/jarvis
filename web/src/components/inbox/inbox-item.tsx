@@ -37,6 +37,11 @@ const TOPIC_LABEL: Record<InboxItem["topic"], string> = {
   markets: "Markets",
   signals: "Signals",
   security: "Security",
+  reminders: "Reminders",
+  intel: "Intel",
+  mail: "Mail",
+  publicity: "Publicity",
+  calls: "Calls",
 }
 
 export function InboxItemCard({

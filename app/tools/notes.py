@@ -25,18 +25,22 @@ NOTES_SCHEMA = {
     "function": {
         "name": "notes",
         "description": (
-            "The notes you have put on Andrew's screen before, saved as .txt files in his Drive "
-            "folder 'Jarvis Notes'. list: the newest notes, or those matching `query` (name or "
-            "text). read: one note's text, by `note_id` from list. Use when he asks for notes "
-            "from an earlier session (\"pull up my notes on X\"); to show one again, read it and "
-            "put it up with showcase."
+            "Andrew's notes, kept as .txt files in his Drive folder 'Jarvis Notes' (notes you put "
+            "on screen are saved there too). list: the newest notes, or those matching `query` "
+            "(name or text). read: one note's text, by `note_id` from list. save: write a new "
+            "note, `title` and `content`, for 'take a note', 'make a note of this', 'log this', "
+            "'start a record' or a dictated entry: keep his words, tidied but not rewritten, "
+            "and say it is saved. Use list/read when he asks for notes from an earlier session "
+            "(\"pull up my notes on X\"); to show one again, read it and put it up with showcase."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "operation": {"type": "string", "enum": ["list", "read"]},
+                "operation": {"type": "string", "enum": ["list", "read", "save"]},
                 "query": {"type": "string", "description": "list: text to match in the name or contents."},
                 "note_id": {"type": "string", "description": "read: the note's id, from list."},
+                "title": {"type": "string", "description": "save: a short title."},
+                "content": {"type": "string", "description": "save: the note's text."},
             },
             "required": ["operation"],
         },
@@ -124,6 +128,12 @@ def notes(args: dict) -> dict:
             if not note_id:
                 return {"ok": False, "error": "note_id is required (from list)"}
             return read_note(note_id)
-        return {"ok": False, "error": "operation must be list or read"}
+        if operation == "save":
+            title = " ".join(str(args.get("title") or "").split())[:100]
+            content = str(args.get("content") or "").strip()
+            if not title or not content:
+                return {"ok": False, "error": "title and content are required"}
+            return {"ok": True, "saved": save_note(title, content)}
+        return {"ok": False, "error": "operation must be list, read or save"}
     except Exception as exc:  # noqa: BLE001 — say why, rather than failing the turn
         return {"ok": False, "error": str(exc)}

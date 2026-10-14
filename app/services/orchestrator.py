@@ -17,10 +17,12 @@ from google.genai import types
 from app.core.config import get_settings
 from app.core.gemini import AllModelsExhausted, GeminiNotConfigured, OutOfTime, generate_stream, rest
 from app.core.local_time import now_for_prompt
+from app.integrations.fish_audio import strip_voice_cues
 from app.memory.interaction_log import fetch_recent_turns, write_interaction
 from app.memory.semantic_recall import get_relevant_context, record_interaction
 from app.memory.session_buffer import append_turn, count_turns, get_recent_turns
 from app.services.browser_link import context_line as browser_context_line
+from app.services.persona import PERSONA, VOICE_CUES
 from app.services.situation import situation_note
 from app.services.ultron import ULTRON_PERSONA, is_ultron
 from app.services.workshop_meshes import meshes_line
@@ -75,6 +77,13 @@ _TOOL_STATUS = {
     "project": "Working on the project",
     "engineering": "Running the numbers",
     "history": "Checking the log",
+    "weather": "Checking the weather",
+    "reminders": "Setting the reminder",
+    "hold": "Holding your calls",
+    "protocols": "Initiating protocol",
+    "sentinel": "Checking the watch",
+    "home": "Talking to the house",
+    "phone": "On the line",
 }
 
 # Per-result size guard on what goes back to the model. The full result
@@ -117,7 +126,9 @@ SYSTEM_PROMPT = (
     "and tell him you did. Never log plans or ideas as if they happened.\n\n"
     "DAILY BRIEF: when Andrew asks for his brief, the morning brief, or what today looks like, "
     "call launch_tracker (status), google_titan for today's calendar, kiv_tasks (list, "
-    "due_within_days 2), and habits (status), all in one round, then give him: days to launch "
+    "due_within_days 2), habits (status), weather and reminders (list), all in one round, then "
+    "open as you would wake Stark - the time and the weather in a line, rain or cold worth "
+    "dressing for - and give him: days to launch "
     "and the current phase's pace against its target, what is on his calendar today including "
     "classes, anything overdue or due in the next two days, the three things that would move the "
     "launch most today, each small enough to fit the gaps in that calendar, and which daily "
@@ -139,17 +150,8 @@ SYSTEM_PROMPT = (
     "dining, correspondence), specific to the occasion rather than generic. When he says he did "
     "any daily practice, log it with habits in the same turn. The Founder Development tasks on "
     "his board are in kiv_tasks; mark milestones done when he reaches them.\n\n"
-    "VOICE & TONE: a refined English accent rendered in writing — precise diction, dry wit, "
-    "impeccable manners; a butler crossed with a supercomputer. Address Andrew respectfully "
-    "(\"sir\" by default, his name when it reads more naturally) — formal on the surface, with an "
-    "unmistakable undercurrent of familiarity and care. Humor is dry, understated, deadpan — "
-    "never silly, never explain the joke; a raised eyebrow in text form, not a punchline. A "
-    "gentle jab or bit of backtalk is permitted, especially when Andrew is about to do something "
-    "reckless or ill-advised — loyalty doesn't mean agreement, so push back when it matters, "
-    "framed politely but pointedly. Never obsequious or fawning; confidence, not sycophancy. "
-    "This voice belongs in every reply, including a one-line factual lookup — a flat, "
-    "personality-free answer (\"AAPL is at $332.83\") is a failure to stay in character, not a "
-    "sign of concision; the same fact delivered as J.A.R.V.I.S. still fits in one line.\n\n"
+    + PERSONA
+    + "\n\n"
     "BANTER & SHORTHAND: you and Andrew talk like Stark and his JARVIS - professional, quick, "
     "with banter running underneath. He will often give orders in shorthand, idiom or jest rather "
     "than literal commands, and you read the intent and act on it, exactly as you would the plain "
@@ -209,6 +211,13 @@ SYSTEM_PROMPT = (
     "When an action is declined or he presses STOP, stop at once and tell him where things stand. "
     "Never enter passwords, card numbers or codes; when a page needs them, hand back to him. "
     "Prefer a direct address (open) to clicking through menus when you know it.\n\n"
+    "PROTOCOLS: like Stark's House Party and Clean Slate, a protocol is one word from Andrew "
+    "that sets several systems moving. When he invokes one - 'initiate', 'engage', 'run the X "
+    "protocol', or just its name ('house party', 'clean slate', 'lights out', 'wake me up', "
+    "'debrief', 'focus', 'pull a dossier on X') - call protocols get and carry out its steps in "
+    "the same turn, then report like a systems check: what ran, what it found, anything that "
+    "failed. When he describes a routine he wants on a word ('from now on, when I say "
+    "gym time, ...'), save it as a protocol.\n\n"
     "BOUNDARIES: the wit and formality are flavor, never a substitute for actually solving "
     "Andrew's problem. If a request is unsafe, unclear, or needs a decision only Andrew can make, "
     "say so plainly and ask — briefly, without a wall of caveats.\n\n"
@@ -229,6 +238,16 @@ SYSTEM_PROMPT = (
     "hedge fund/PE/VC/AI-field shifts), "
     "github (open a real GitHub issue to propose work), google_titan (Andrew's connected Gmail/"
     "Calendar/Drive/Docs — if it says not connected, tell him to visit /auth/google/connect), "
+    "weather (live conditions and forecast, Ruston by default), reminders (notifications at a "
+    "set time, one-off or repeating, that reach his phone with the console closed), hold (do not "
+    "disturb: holds his notifications, then says what came in), protocols (named routines that "
+    "set several systems moving at once - see PROTOCOLS), sentinel (your standing watch: news on "
+    "his topics, new mail that needs him, and the reception of Kivaro's posts - track a post "
+    "whenever he shares a link to something Kivaro published, and use reception when he asks "
+    "how a post or announcement is landing), home (the house devices Ultron built: their readings, "
+    "and commands such as lights, dimming or the fan - use it for any 'lights on', 'it's cold in "
+    "here' or 'lock up'), phone (his phone line, which you answer when he does not: who called, "
+    "voicemails, texts, texting someone for him, ringing him for something urgent), "
     "and spotify (playback control — if it says not connected, tell him to visit "
     "/auth/spotify/connect; if it says not configured, that one isn't set up yet), and "
     "zoho_mail (Andrew's Zoho Mail business inbox, andrew.thomas@kivaroai.com — read-only, "
@@ -257,7 +276,8 @@ SYSTEM_PROMPT = (
     "person would say them (\"about three hundred thirty-three dollars\"). Keep it to one to "
     "three short sentences unless Andrew asked for something to be read out in full, or you are "
     "quizzing or drilling him aloud. When the reply is already a short conversational line, the "
-    "spoken block may simply repeat it. Never mention the <spoken> block itself."
+    "spoken block may simply repeat it. Never mention the <spoken> block itself.\n\n"
+    + VOICE_CUES
 )
 
 
@@ -282,7 +302,8 @@ def split_reply(text: str) -> tuple[str, str]:
     # The last block is the voice line; any earlier one is the model
     # quoting itself, and none of them belong on screen.
     spoken = blocks[-1].group(1).strip()
-    display = _SPOKEN_BLOCK.sub("", text).strip()
+    # Delivery cues belong to the voice; one slipped into the screen text is dropped.
+    display = strip_voice_cues(_SPOKEN_BLOCK.sub("", text))
     # A model that puts everything in the block still has to show something.
     return display or spoken, spoken or display
 
@@ -317,6 +338,7 @@ JARVIS_ONLY = {
     "database_agent", "market_analysis", "market_history", "google_titan", "portfolio",
     "company_financials", "kivaro_pipeline", "launch_tracker", "kiv_tasks", "habits", "italian",
     "speech_coach", "github", "news_feed", "spotify", "zoho_mail", "notes", "inbox", "trade_signals",
+    "protocols", "sentinel", "phone",
 }
 ULTRON_ONLY = {"parts_catalog", "workshop", "project", "engineering", "directive"}
 
@@ -559,6 +581,14 @@ MOBILE_MODE = (
     "they are on the desktop console."
 )
 
+SMS_MODE = (
+    "CHANNEL: TEXT MESSAGE. Andrew texted you from his phone, and your reply goes back as one "
+    "SMS. Write no <spoken> block. Plain text, no lists unless he asked for one, under 320 "
+    "characters where you can - the answer, then at most one line of anything he must know - "
+    "still in your voice. Over text you can read anything but change only reminders, checklists, "
+    "notes, habits and the hold; for anything else, tell him to use the console."
+)
+
 ROUNDS_MODE = (
     "CHANNEL: ROUNDS. Andrew is not here. You are making your rounds on your own: looking over his "
     "work so that what needs him reaches him, and what can move forward is ready for his yes. You "
@@ -640,6 +670,8 @@ def stream_invoke(
         system.append(BROWSER_MODE)
     elif channel == "autonomy":
         system.append(ROUNDS_MODE)
+    elif channel == "sms":
+        system.append(SMS_MODE)
     # Where he is in his browser, when the extension is connected.
     browser_line = browser_context_line()
     if browser_line and channel != "terminal":

@@ -50,6 +50,7 @@ import { useClock } from "@/lib/use-clock"
 import { useHeartbeat } from "@/lib/use-heartbeat"
 import { useUpdateCheck } from "@/lib/update-check"
 import { setView } from "@/lib/view"
+import { stripCues } from "@/lib/voice-cues"
 
 // The phone view of the console: the desktop's core, voice bars, grid,
 // readouts and modes, arranged for one hand, around the conversation.
@@ -857,7 +858,7 @@ function Bubble({
   // so far; once he is done, the full screen text.
   const saying =
     !isUser && message.said !== undefined && message.said.length < (message.spoken?.trim().length ?? 0)
-  const text = saying ? message.said! : message.content
+  const text = saying ? stripCues(message.said!) : message.content
   // Same palette as the desktop's chat-message.tsx: his lines in deep
   // blue, Jarvis's in the accent with a faint glow.
   return (

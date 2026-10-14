@@ -79,6 +79,8 @@ import { loadLinkedFolders, startFolderSync, useLinkedFolders } from "@/lib/link
 import { resolveAuth, subscribeAuth } from "@/lib/auth-state"
 import { clearSession, clearStoredToken } from "@/lib/storage"
 import { useAutoRelock, useLock } from "@/lib/lock-state"
+import { startWakeListener, type WakeListener } from "@/lib/wakeword/listener"
+import { stripCues } from "@/lib/voice-cues"
 
 // The workshop (three.js, its post-processing, the simulator: about 1 MB)
 // is its own chunk, fetched once the console has booted and the browser
@@ -235,6 +237,45 @@ function Shell({
     // room reacts to thinking and ducks under narration for free.
     sfx.setStatus(agentStatus)
   }, [agentStatus, setAgentStatus])
+
+  // "Hey Jarvis": the same as a tap on the core - narration is cut and the
+  // mic opens - and from standby it wakes the console first. The handler
+  // is kept in a ref so the listener (which holds the mic) is not torn
+  // down and reopened on every render.
+  const wakeWord = useJarvis((state) => state.wakeWord)
+  const onWakeRef = useRef<() => void>(() => {})
+  useEffect(() => {
+    onWakeRef.current = () => {
+      if (standby) wake()
+      if (useJarvis.getState().listening) return
+      pushLog("OK", "Heard \"hey Jarvis\"")
+      stopNarration()
+      micRef.current?.startRecording()
+    }
+  })
+  useEffect(() => {
+    if (!wakeWord) return
+    let listener: WakeListener | null = null
+    let cancelled = false
+    startWakeListener(
+      () => onWakeRef.current(),
+      (message) => pushLog("WARN", `Wake word: ${message}`)
+    )
+      .then((started) => {
+        if (cancelled) return started.stop()
+        listener = started
+        pushLog("OK", "Listening for \"hey Jarvis\"")
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err)
+        notify("warning", "Wake word unavailable", message)
+        pushLog("ERR", `Wake word: ${message}`)
+      })
+    return () => {
+      cancelled = true
+      listener?.stop()
+    }
+  }, [wakeWord, notify, pushLog])
 
   // Browsers keep an AudioContext suspended until a real gesture, so the
   // bed cannot start on load however much we would like it to.
@@ -905,7 +946,7 @@ function Shell({
         onSnooze={snooze}
         onClose={toggleCamera}
         onCoreToggle={handleReactorToggle}
-        caption={lastReply ? { id: lastReply.id, text: lastReply.said ?? lastReply.content } : null}
+        caption={lastReply ? { id: lastReply.id, text: stripCues(lastReply.said ?? lastReply.content) } : null}
       />
       <HandCursors />
 

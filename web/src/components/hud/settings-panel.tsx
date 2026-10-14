@@ -46,6 +46,39 @@ const CONNECTIONS: Connection[] = [
   { key: "zoho", label: "Zoho Mail", path: "/auth/zoho/connect", note: "Inbox, read-only" },
 ]
 
+function Switch({ on, label, onChange }: { on: boolean; label: string; onChange: (on: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      onClick={() => onChange(!on)}
+      className="relative cursor-pointer"
+      style={{
+        width: "36px",
+        height: "18px",
+        borderRadius: "var(--radius)",
+        border: `1px solid rgba(var(--accent-rgb), ${on ? 1 : 0.4})`,
+        background: on ? "rgba(var(--accent-rgb), 0.15)" : "transparent",
+        transition: "all 200ms ease",
+      }}
+    >
+      <span
+        className="absolute top-1/2"
+        style={{
+          width: "10px",
+          height: "10px",
+          left: on ? "22px" : "3px",
+          transform: "translateY(-50%)",
+          background: "var(--accent)",
+          transition: "left 200ms ease",
+        }}
+      />
+    </button>
+  )
+}
+
 function Row({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div className="flex min-w-0 items-center justify-between" style={{ gap: "var(--sp-2)" }}>
@@ -195,6 +228,8 @@ function Appearance() {
   const toggleMode = useJarvis((state) => state.toggleMode)
   const gridVisible = useJarvis((state) => state.gridVisible)
   const setGridVisible = useJarvis((state) => state.setGridVisible)
+  const wakeWord = useJarvis((state) => state.wakeWord)
+  const setWakeWord = useJarvis((state) => state.setWakeWord)
 
   return (
     <>
@@ -216,40 +251,20 @@ function Appearance() {
         <span className="t-label truncate-1" style={{ color: "var(--text-secondary)" }}>
           GRID
         </span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={gridVisible}
-          aria-label="Background grid"
-          onClick={() => setGridVisible(!gridVisible)}
-          className="relative cursor-pointer"
-          style={{
-            width: "36px",
-            height: "18px",
-            borderRadius: "var(--radius)",
-            border: `1px solid rgba(var(--accent-rgb), ${gridVisible ? 1 : 0.4})`,
-            background: gridVisible ? "rgba(var(--accent-rgb), 0.15)" : "transparent",
-            transition: "all 200ms ease",
-          }}
-        >
-          <span
-            className="absolute top-1/2"
-            style={{
-              width: "10px",
-              height: "10px",
-              left: gridVisible ? "22px" : "3px",
-              transform: "translateY(-50%)",
-              background: "var(--accent)",
-              transition: "left 200ms ease",
-            }}
-          />
-        </button>
+        <Switch on={gridVisible} label="Background grid" onChange={setGridVisible} />
+      </div>
+      <div className="flex min-w-0 items-center justify-between" style={{ gap: "var(--sp-2)" }}>
+        <span className="t-label truncate-1" style={{ color: "var(--text-secondary)" }}>
+          &quot;HEY JARVIS&quot;
+        </span>
+        <Switch on={wakeWord} label="Listen for hey Jarvis" onChange={setWakeWord} />
       </div>
       <p
         className="wrap-words"
         style={{ fontSize: "11px", color: "var(--text-secondary)", lineHeight: 1.4 }}
       >
-        Serious mode turns the whole console red-hot: palette, grid, scanlines and edges. Both settings persist per browser.
+        &quot;Hey Jarvis&quot; keeps the mic open while the console is, heard only on this device
+        until you say it. Serious mode turns the whole console red-hot: palette, grid, scanlines and edges. Both settings persist per browser.
       </p>
       <UltronModelSettings />
     </>

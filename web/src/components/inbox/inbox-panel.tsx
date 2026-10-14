@@ -42,6 +42,11 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "markets", label: "MARKETS" },
   { id: "signals", label: "SIGNALS" },
   { id: "security", label: "SECURITY" },
+  { id: "reminders", label: "REMINDERS" },
+  { id: "intel", label: "INTEL" },
+  { id: "mail", label: "MAIL" },
+  { id: "publicity", label: "PUBLICITY" },
+  { id: "calls", label: "CALLS" },
 ]
 
 export function InboxPanel({

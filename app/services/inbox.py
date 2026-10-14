@@ -85,6 +85,9 @@ def _duplicate(kind: str, title: str, tool: str | None, args: dict | None) -> bo
     return False
 
 
+TOPICS = ("rounds", "markets", "signals", "security", "reminders", "intel", "mail", "publicity", "calls")
+
+
 def add_item(
     kind: str,
     title: str,
@@ -113,7 +116,7 @@ def add_item(
                 "tool": tool,
                 "args": args,
                 "session_id": session_id,
-                "topic": topic if topic in ("rounds", "markets", "signals", "security") else "rounds",
+                "topic": topic if topic in TOPICS else "rounds",
             }
         )
         .execute()
@@ -206,6 +209,8 @@ def announce(items: list[dict]) -> None:
     title = lead["title"] if len(items) == 1 else f"Jarvis · {', '.join(parts)}"
     body = lead["body"] if len(items) == 1 else "; ".join(i["title"] for i in (proposals + notices)[:4])
     try:
-        send_push(title, body or lead["title"], tag="jarvis-inbox")
+        # Security gets through a hold; so does a reminder he set himself.
+        urgent = any(i.get("topic") in ("security", "reminders") for i in items)
+        send_push(title, body or lead["title"], tag="jarvis-inbox", urgent=urgent)
     except Exception:  # noqa: BLE001 — the items are filed either way
         logger.warning("inbox push failed", exc_info=True)

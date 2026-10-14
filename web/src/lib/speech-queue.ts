@@ -5,6 +5,7 @@ import { JarvisAuthError, speak } from "@/lib/jarvis-client"
 import { clearNarration, registerNarration } from "@/lib/narration"
 import { currentVoiceId } from "@/lib/persona"
 import { speechStarted, speechStopped } from "@/lib/speech-track"
+import { stripCues } from "@/lib/voice-cues"
 
 // Speaking a reply while it is still being written. The voice line streams
 // in first (see stream_invoke on the server); each finished sentence is
@@ -165,7 +166,7 @@ export class SpeechQueue {
         .then(() => {
           say()
           // The transcript and its timing, for a face to speak it.
-          speechStarted(text, audio.duration)
+          speechStarted(stripCues(text), audio.duration)
           if (!this.started) {
             this.started = true
             // Registering makes the core's barge-in (and any other reply's

@@ -179,6 +179,29 @@ class Settings(BaseSettings):
     # credit wallet will serve. Verified returning real audio.
     fish_audio_model: str = "s2.1-pro-free"
 
+    # Publicity reception (app/services/sentinel.py). Hacker News needs
+    # nothing; these platforms need a credential, and posts on them are
+    # tracked without numbers until it is set. Reddit refuses anonymous
+    # reads (403), so it takes a free "script" app's id and secret
+    # (reddit.com/prefs/apps), used app-only, read-only. Optional like the
+    # integrations above.
+    reddit_client_id: str | None = None
+    reddit_client_secret: str | None = None
+    youtube_api_key: str | None = None
+
+    # The phone line (app/services/phone.py): a Twilio number his carrier
+    # forwards unanswered calls to. ANDREW_PHONE is his own cell (E.164),
+    # the one Jarvis rings and the only one whose texts reach Jarvis.
+    # PUBLIC_BASE_URL is this service's address as Twilio sees it; Twilio
+    # signs requests over it, so it must match exactly. All optional: unset,
+    # the /phone routes answer 503.
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = None
+    twilio_number: str | None = None
+    andrew_phone: str | None = None
+    public_base_url: str | None = None
+    x_bearer_token: str | None = None
+
     # JARVIS_ACCESS_TOKEN — the ORIGINAL shared-secret gate. Google
     # sign-in (above) is now the console's way in; this stays as the
     # non-browser path, so curl/scripts/smoke tests keep working without

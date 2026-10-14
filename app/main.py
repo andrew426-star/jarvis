@@ -19,6 +19,7 @@ from app.api.routes.intel import router as intel_router
 from app.api.routes.invoke import router as invoke_router
 from app.api.routes.notes import router as notes_router
 from app.api.routes.panels import router as panels_router
+from app.api.routes.phone import router as phone_router
 from app.api.routes.spotify_auth import router as spotify_auth_router
 from app.api.routes.speak import router as speak_router
 from app.api.routes.status import router as status_router
@@ -67,6 +68,7 @@ app.include_router(speak_router)
 app.include_router(verify_router)
 app.include_router(watch_router)
 app.include_router(panels_router)
+app.include_router(phone_router)
 app.include_router(notes_router)
 app.include_router(status_router)
 app.include_router(transcribe_router)

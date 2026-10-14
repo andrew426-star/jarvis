@@ -1,0 +1,286 @@
+{
+  "id": null,
+  "name": "Room Hub",
+  "goal": "Jarvis's hands in the dorm room: lamp and fan through UL-listed IoT relays, the overhead light by a servo on the wall rocker, a dimmable 12 V desk strip, and temperature, light, door and presence, all reported to Jarvis every 3 s. Nothing touches mains or the walls.",
+  "status": "design",
+  "notes": "Ultron drafted the enclosure, the switch-pusher mount, the door housings and the layout; parts, wiring and firmware were finished outside the workshop and checked here.",
+  "parts": [
+    {
+      "id": "U1",
+      "type": "esp32",
+      "props": {}
+    },
+    {
+      "id": "PS5",
+      "type": "supply_5v4a",
+      "props": {}
+    },
+    {
+      "id": "PS12",
+      "type": "supply_12v",
+      "props": {}
+    },
+    {
+      "id": "SRV1",
+      "type": "servo_std",
+      "props": {
+        "continuous": false
+      }
+    },
+    {
+      "id": "Q1",
+      "type": "mosfet",
+      "props": {}
+    },
+    {
+      "id": "R1",
+      "type": "resistor",
+      "props": {
+        "ohms": 100
+      }
+    },
+    {
+      "id": "R2",
+      "type": "resistor",
+      "props": {
+        "ohms": 10000
+      }
+    },
+    {
+      "id": "R3",
+      "type": "resistor",
+      "props": {
+        "ohms": 10000
+      }
+    },
+    {
+      "id": "R4",
+      "type": "resistor",
+      "props": {
+        "ohms": 10000
+      }
+    },
+    {
+      "id": "PIR1",
+      "type": "pir",
+      "props": {}
+    },
+    {
+      "id": "HALL1",
+      "type": "hall",
+      "props": {
+        "magnet": false
+      }
+    },
+    {
+      "id": "LDR1",
+      "type": "photoresistor",
+      "props": {
+        "light": 0.5,
+        "dark_ohms": 1000000,
+        "bright_ohms": 1000
+      }
+    },
+    {
+      "id": "TH1",
+      "type": "thermistor",
+      "props": {
+        "temp_c": 25,
+        "r25": 10000,
+        "beta": 3950
+      }
+    }
+  ],
+  "wires": [
+    {
+      "a": "PS5.+",
+      "b": "U1.5V",
+      "color": "red"
+    },
+    {
+      "a": "PS5.-",
+      "b": "U1.GND",
+      "color": "black"
+    },
+    {
+      "a": "PS5.+",
+      "b": "SRV1.V+",
+      "color": "red"
+    },
+    {
+      "a": "PS5.-",
+      "b": "SRV1.GND",
+      "color": "black"
+    },
+    {
+      "a": "U1.IO26",
+      "b": "SRV1.SIG",
+      "color": "yellow"
+    },
+    {
+      "a": "PS12.-",
+      "b": "U1.GND",
+      "color": "black"
+    },
+    {
+      "a": "Q1.S",
+      "b": "PS12.-",
+      "color": "black"
+    },
+    {
+      "a": "U1.IO25",
+      "b": "R1.1",
+      "color": "green"
+    },
+    {
+      "a": "R1.2",
+      "b": "Q1.G",
+      "color": "green"
+    },
+    {
+      "a": "Q1.G",
+      "b": "R2.1",
+      "color": "green"
+    },
+    {
+      "a": "R2.2",
+      "b": "U1.GND",
+      "color": "black"
+    },
+    {
+      "a": "U1.5V",
+      "b": "PIR1.VCC",
+      "color": "red"
+    },
+    {
+      "a": "PIR1.GND",
+      "b": "U1.GND",
+      "color": "black"
+    },
+    {
+      "a": "PIR1.AL",
+      "b": "U1.IO32",
+      "color": "white"
+    },
+    {
+      "a": "U1.5V",
+      "b": "HALL1.VCC",
+      "color": "red"
+    },
+    {
+      "a": "HALL1.GND",
+      "b": "U1.GND",
+      "color": "black"
+    },
+    {
+      "a": "HALL1.OUT",
+      "b": "U1.IO33",
+      "color": "blue"
+    },
+    {
+      "a": "U1.3V3",
+      "b": "LDR1.1",
+      "color": "orange"
+    },
+    {
+      "a": "LDR1.2",
+      "b": "U1.IO34",
+      "color": "purple"
+    },
+    {
+      "a": "LDR1.2",
+      "b": "R3.1",
+      "color": "purple"
+    },
+    {
+      "a": "R3.2",
+      "b": "U1.GND",
+      "color": "black"
+    },
+    {
+      "a": "U1.3V3",
+      "b": "TH1.1",
+      "color": "orange"
+    },
+    {
+      "a": "TH1.2",
+      "b": "U1.IO35",
+      "color": "brown"
+    },
+    {
+      "a": "TH1.2",
+      "b": "R4.1",
+      "color": "brown"
+    },
+    {
+      "a": "R4.2",
+      "b": "U1.GND",
+      "color": "black"
+    }
+  ],
+  "code": "// Room Hub - Jarvis's hands in Andrew's dorm room (WEMOS ESP32).\n//\n// Every 3 s it checks in with Jarvis: POST /devices/state with what it\n// senses and what it can do, and gets back the commands queued for it\n// (app/services/home.py, app/tools/home.py). Nothing here touches mains:\n// the lamp and fan plug into Digital Loggers IoT Power Relays, UL-listed\n// outlets switched by a 3.3 V signal; the overhead light's wall rocker is\n// pressed by a servo in a removable printed mount; the desk strip is 12 V\n// through a logic-level MOSFET.\n//\n// Build in the Arduino IDE with the ESP32 core, ESP32Servo and ArduinoJson\n// (v7). Fill in the four settings below.\n\n#include <WiFi.h>\n#include <HTTPClient.h>\n#include <ArduinoJson.h>\n#include <ESP32Servo.h>\n\nconst char* WIFI_SSID = \"your-network\";\nconst char* WIFI_PASS = \"your-password\";\nconst char* BACKEND = \"https://jarvis-u49p.onrender.com\";\nconst char* DEVICE_TOKEN = \"JARVIS_DEVICE_TOKEN value\";\nconst char* DEVICE = \"room-hub\";\n\n// Pins (ADC1 only for the analog inputs: ADC2 stops working with WiFi on).\nconst int PIN_LAMP = 16;      // IoT Power Relay 1, control +\nconst int PIN_FAN = 17;       // IoT Power Relay 2, control +\nconst int PIN_DESK = 25;      // MOSFET gate via 100 ohm (10k pull-down to GND)\nconst int PIN_SERVO = 26;     // wall-switch pusher\nconst int PIN_PIR = 32;       // open collector, LOW on motion\nconst int PIN_DOOR = 33;      // Hall sensor, LOW while the magnet (door) is near\nconst int PIN_LIGHT = 34;     // photoresistor divider\nconst int PIN_TEMP = 35;      // thermistor divider\n\n// The wall rocker: rest clear of it, press the top for on, the bottom for off.\nconst int SERVO_REST = 90, SERVO_ON = 58, SERVO_OFF = 122;\nconst unsigned long CHECKIN_MS = 3000;\nconst unsigned long AWAY_MS = 20UL * 60UL * 1000UL;  // no motion this long = away\n\nServo pusher;\nbool lamp = false, fan = false, overhead = false;\nint desk = 0;  // 0-100 %\nunsigned long lastMotion = 0, lastCheckin = 0;\nbool doorWasOpen = false;\n\nfloat readTempC() {\n  // 3V3 - thermistor - pin - 10k - GND, B = 3950, 10k at 25 C.\n  int raw = analogRead(PIN_TEMP);\n  if (raw <= 0 || raw >= 4095) return NAN;\n  float r = 10000.0 * (4095.0 / raw - 1.0);\n  return 1.0 / (log(r / 10000.0) / 3950.0 + 1.0 / 298.15) - 273.15;\n}\n\nint readLightPct() {\n  return map(analogRead(PIN_LIGHT), 0, 4095, 0, 100);\n}\n\nvoid pressSwitch(bool on) {\n  pusher.attach(PIN_SERVO);\n  pusher.write(on ? SERVO_ON : SERVO_OFF);\n  delay(400);\n  pusher.write(SERVO_REST);\n  delay(400);\n  pusher.detach();  // no holding current, no hum, the switch works by hand\n  overhead = on;\n}\n\nvoid setDesk(int pct) {\n  desk = constrain(pct, 0, 100);\n  analogWrite(PIN_DESK, map(desk, 0, 100, 0, 255));\n}\n\nbool asOnOff(JsonVariant value) {\n  if (value.is<bool>()) return value.as<bool>();\n  String s = value.as<String>();\n  s.toLowerCase();\n  return s == \"on\" || s == \"true\" || s == \"1\";\n}\n\nvoid run(const char* action, JsonVariant value) {\n  if (!strcmp(action, \"lights\")) { lamp = asOnOff(value); digitalWrite(PIN_LAMP, lamp); }\n  else if (!strcmp(action, \"fan\")) { fan = asOnOff(value); digitalWrite(PIN_FAN, fan); }\n  else if (!strcmp(action, \"overhead\")) { pressSwitch(asOnOff(value)); }\n  else if (!strcmp(action, \"desk\")) { setDesk(value.is<int>() ? value.as<int>() : (asOnOff(value) ? 100 : 0)); }\n}\n\nvoid post(const char* path, const String& body, String* reply) {\n  if (WiFi.status() != WL_CONNECTED) return;\n  HTTPClient http;\n  http.begin(String(BACKEND) + path);\n  http.addHeader(\"Content-Type\", \"application/json\");\n  http.addHeader(\"Authorization\", String(\"Bearer \") + DEVICE_TOKEN);\n  http.setTimeout(8000);\n  int code = http.POST(body);\n  if (code == 200 && reply) *reply = http.getString();\n  else if (code != 200) Serial.printf(\"%s -> %d\\n\", path, code);\n  http.end();\n}\n\nvoid checkIn() {\n  bool doorOpen = digitalRead(PIN_DOOR) == HIGH;\n  bool away = millis() - lastMotion > AWAY_MS;\n\n  JsonDocument doc;\n  doc[\"device\"] = DEVICE;\n  JsonObject state = doc[\"state\"].to<JsonObject>();\n  float t = readTempC();\n  if (!isnan(t)) state[\"temp_c\"] = round(t * 10) / 10.0;\n  state[\"light_pct\"] = readLightPct();\n  state[\"door\"] = doorOpen ? \"open\" : \"closed\";\n  state[\"occupied\"] = !away;\n  state[\"lights\"] = lamp ? \"on\" : \"off\";\n  state[\"fan\"] = fan ? \"on\" : \"off\";\n  state[\"overhead\"] = overhead ? \"on\" : \"off\";\n  state[\"desk\"] = desk;\n  JsonArray caps = doc[\"capabilities\"].to<JsonArray>();\n  for (const char* c : {\"lights\", \"fan\", \"overhead\", \"desk\"}) caps.add(c);\n\n  String body, reply;\n  serializeJson(doc, body);\n  post(\"/devices/state\", body, &reply);\n\n  JsonDocument answer;\n  if (reply.length() && !deserializeJson(answer, reply)) {\n    for (JsonObject command : answer[\"commands\"].as<JsonArray>()) run(command[\"action\"], command[\"value\"]);\n  }\n}\n\nvoid alertDoor() {\n  JsonDocument doc;\n  doc[\"device\"] = DEVICE;\n  doc[\"title\"] = \"Door opened\";\n  doc[\"body\"] = \"Your room door opened with no one in for 20 minutes.\";\n  doc[\"priority\"] = \"high\";\n  String body;\n  serializeJson(doc, body);\n  post(\"/devices/event\", body, nullptr);\n}\n\nvoid setup() {\n  Serial.begin(115200);\n  pinMode(PIN_LAMP, OUTPUT);\n  pinMode(PIN_FAN, OUTPUT);\n  pinMode(PIN_DESK, OUTPUT);\n  pinMode(PIN_PIR, INPUT_PULLUP);\n  pinMode(PIN_DOOR, INPUT_PULLUP);\n  analogSetAttenuation(ADC_11db);  // full 0-3.3 V range on the dividers\n  setDesk(0);\n  WiFi.begin(WIFI_SSID, WIFI_PASS);\n  delay(2000);  // the PIR settles at power-on\n  lastMotion = millis();\n}\n\nvoid loop() {\n  if (WiFi.status() != WL_CONNECTED) {\n    WiFi.reconnect();\n    delay(1000);\n  }\n  if (digitalRead(PIN_PIR) == LOW) lastMotion = millis();\n\n  bool doorOpen = digitalRead(PIN_DOOR) == HIGH;\n  if (doorOpen && !doorWasOpen && millis() - lastMotion > AWAY_MS) alertDoor();\n  doorWasOpen = doorOpen;\n\n  if (millis() - lastCheckin >= CHECKIN_MS) {\n    lastCheckin = millis();\n    checkIn();\n  }\n  delay(50);\n}\n",
+  "printed": [
+    {
+      "name": "Hub Enclosure",
+      "code": "module hub_enclosure() {\n  difference() {\n    cube([100, 80, 40], center=true);\n    translate([0, 0, 4]) cube([92, 72, 38], center=true);\n    for (i = [-30:15:30]) {\n      translate([i, 40, 0]) cube([8, 4, 20], center=true);\n      translate([i, -40, 0]) cube([8, 4, 20], center=true);\n    }\n    translate([-40, -40, -15]) cylinder(h=15, r=4, $fn=32);\n  }\n}\nhub_enclosure();",
+      "notes": [
+        "Enclosure for ESP32 and MOSFET with ventilation slots."
+      ],
+      "material": "petg",
+      "color": "#2b2b2b"
+    },
+    {
+      "name": "Switch Pusher Mount",
+      "code": "module switch_pusher_mount() {\n  difference() {\n    union() {\n      cube([50, 40, 30], center=true);\n      translate([0, 0, -17]) cube([60, 50, 4], center=true);\n    }\n    translate([0, 0, 2]) cube([41, 21, 30], center=true);\n    translate([0, -15, 5]) cube([15, 20, 10], center=true);\n    translate([0, 15, -10]) cube([6, 15, 10], center=true);\n  }\n}\nswitch_pusher_mount();",
+      "notes": [
+        "Clamp-on mount for MG996R servo to actuate wall rocker switc"
+      ],
+      "material": "petg",
+      "color": "#2b2b2b"
+    },
+    {
+      "name": "Door Sensor Housing",
+      "code": "module door_sensor_housing() {\n  difference() {\n    cube([30, 20, 15], center=true);\n    translate([0, 0, 3]) cube([24, 14, 12], center=true);\n    translate([-10, -10, -5]) cube([6, 10, 8], center=true);\n  }\n}\ndoor_sensor_housing();",
+      "notes": [
+        "Housing for Hall effect sensor and magnet on door frame."
+      ],
+      "material": "petg",
+      "color": "#2b2b2b"
+    }
+  ],
+  "layout": {},
+  "extras": [
+    {
+      "item": "Digital Loggers IoT Power Relay (UL-listed, 3.3 V control input) - lamp: control + to IO16, - to GND",
+      "qty": 1
+    },
+    {
+      "item": "Digital Loggers IoT Power Relay - fan: control + to IO17, - to GND",
+      "qty": 1
+    },
+    {
+      "item": "12 V LED strip, 1 m (under 1.5 A): + to PS12 +, - to Q1 drain",
+      "qty": 1
+    },
+    {
+      "item": "2.1 mm barrel jack screw-terminal adapters",
+      "qty": 2
+    },
+    {
+      "item": "Neodymium magnet, 6 x 3 mm (for the door)",
+      "qty": 1
+    },
+    {
+      "item": "Command strips (removable), pack",
+      "qty": 1
+    },
+    {
+      "item": "Hookup wire, 22 AWG",
+      "qty": 1
+    }
+  ],
+  "wear": null,
+  "segments": [],
+  "hex": null,
+  "compiled_code": null
+}

@@ -7,3 +7,6 @@ venv/
 .pytest_cache/
 .env.render
 .env.backup-*
+
+# Rendered wallpapers (wallpapers/render.py)
+wallpapers/out/

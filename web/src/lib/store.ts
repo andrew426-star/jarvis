@@ -101,6 +101,9 @@ interface JarvisState {
   listening: boolean
   settingsOpen: boolean
   gridVisible: boolean
+  /** Listening for "hey Jarvis" (lib/wakeword/). Off until he turns it on:
+   *  it keeps the mic open, if only to the models in this tab. */
+  wakeWord: boolean
   // null = the comms terminal is showing. A tab selects a data panel
   // into the same region, and clicking the active tab returns to chat.
   activeTab: TabKey | null
@@ -120,6 +123,7 @@ interface JarvisState {
   setListening: (listening: boolean) => void
   setSettingsOpen: (open: boolean) => void
   setGridVisible: (visible: boolean) => void
+  setWakeWord: (on: boolean) => void
   setActiveTab: (tab: TabKey | null) => void
   setLatency: (ms: number) => void
   setLinkDown: () => void
@@ -161,6 +165,7 @@ export const useJarvis = create<JarvisState>((set, get) => ({
   // Read once at startup rather than defaulting blind, so the choice
   // survives a reload like the mode does.
   gridVisible: typeof window === "undefined" || localStorage.getItem("jarvis_grid") !== "off",
+  wakeWord: typeof window !== "undefined" && localStorage.getItem("jarvis_wake") === "on",
   activeTab: null,
   pendingTab: null,
   signals: {
@@ -220,6 +225,14 @@ export const useJarvis = create<JarvisState>((set, get) => ({
       // Preference cannot be persisted; it still applies this session.
     }
     set({ gridVisible })
+  },
+  setWakeWord: (wakeWord) => {
+    try {
+      localStorage.setItem("jarvis_wake", wakeWord ? "on" : "off")
+    } catch {
+      // Preference cannot be persisted; it still applies this session.
+    }
+    set({ wakeWord })
   },
   setActiveTab: (activeTab) => {
     // The other AI's app: hand the console over, then open it.

@@ -29,7 +29,7 @@ READ_ONLY: dict[str, set[str] | None] = {
     "zoho_mail": None,
     "files": None,
     "browser": {"current_page", "tabs", "read_tab", "elements"},
-    "notes": None,
+    "notes": {"list", "read"},
     "history": None,
     "web_research": None,
     "news_feed": None,
@@ -41,12 +41,18 @@ READ_ONLY: dict[str, set[str] | None] = {
     "calculator": None,
     "trade_signals": None,
     "parts_catalog": None,
+    "weather": None,
+    "reminders": {"list"},
+    "hold": {"status"},
+    "sentinel": {"status", "reception"},
+    "home": {"status"},
+    "phone": {"log", "status"},
 }
 
 # What a proposal may ask to run once approved: any of his ordinary tools
 # but those with no point while he is away. Browser actions act on whatever
 # page is open when he approves, not the one Jarvis saw, so they are out too.
-NOT_PROPOSABLE = {"spotify", "speech_coach", "think", "inbox", "browser"}
+NOT_PROPOSABLE = {"spotify", "speech_coach", "think", "inbox", "browser", "protocols", "hold"}
 
 MAX_PROPOSALS = 3
 MAX_NOTICES = 3

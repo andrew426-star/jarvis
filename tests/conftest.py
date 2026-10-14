@@ -142,6 +142,12 @@ def db(monkeypatch):
         "app.tools.trade_signals",
         "app.tools.workshop_project",
         "app.api.routes.unlock",
+        "app.tools.reminders",
+        "app.tools.hold",
+        "app.tools.protocols",
+        "app.services.sentinel",
+        "app.services.home",
+        "app.services.phone",
     ]:
         mod = importlib.import_module(module)
         if hasattr(mod, "get_supabase_client"):

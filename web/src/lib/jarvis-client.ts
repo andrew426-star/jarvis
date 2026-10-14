@@ -727,7 +727,7 @@ export interface InboxItem {
   decided_at: string | null
   /** rounds: what Jarvis's rounds filed; markets and signals: the 15-minute
    *  market updates (app/services/market_updates.py). */
-  topic: "rounds" | "markets" | "signals" | "security"
+  topic: "rounds" | "markets" | "signals" | "security" | "reminders" | "intel" | "mail" | "publicity" | "calls"
 }
 
 export interface InboxResult {

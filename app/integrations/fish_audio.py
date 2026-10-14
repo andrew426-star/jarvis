@@ -2,6 +2,8 @@ import re
 
 import httpx
 
+from app.services.persona import CUE_PATTERN
+
 FISH_TTS_URL = "https://api.fish.audio/v1/tts"
 
 _BOLD_ITALIC = re.compile(r"[*_]{1,3}(.+?)[*_]{1,3}")
@@ -11,6 +13,13 @@ _NUMBERED = re.compile(r"^[ \t]*\d+[.)][ \t]+", flags=re.MULTILINE)
 _FENCE = re.compile(r"```[\s\S]*?```")
 _INLINE_CODE = re.compile(r"`([^`]*)`")
 _MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_CUE = re.compile(CUE_PATTERN, re.IGNORECASE)
+
+
+def strip_voice_cues(text: str) -> str:
+    """Takes out the delivery cues Jarvis writes for an S2 voice
+    (app/services/persona.py)."""
+    return re.sub(r" {2,}", " ", _CUE.sub("", text)).strip()
 
 
 def strip_markdown_for_speech(text: str) -> str:
@@ -59,7 +68,8 @@ def text_to_speech(text: str, voice_id: str, api_key: str, model: str, pcm_rate:
             "model": model,
         },
         json={
-            "text": strip_markdown_for_speech(text),
+            # Only S2 models perform bracket cues; any other would say them.
+            "text": strip_markdown_for_speech(text if model.startswith("s2") else strip_voice_cues(text)),
             "reference_id": voice_id,
             **audio,
             # "normal" over "low": low latency trades audio quality, and

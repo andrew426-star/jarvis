@@ -133,6 +133,95 @@ Setup, once:
    `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` (a `mailto:`) on the service.
    Without them the inbox works, but devices get no notifications.
 
+## Reminders, holding calls, protocols, weather
+
+Features taken from the films' JARVIS:
+
+- **Reminders** (`app/tools/reminders.py`): "remind me at three to call
+  Dr. Lee", "every weekday at 7:30, Italian". Unlike console timers they
+  fire with the console closed: pg_cron calls `/reminders/run` every
+  minute, which pushes the reminder and files it in the inbox under
+  **Reminders**. Apply `supabase/migrations/0015_jarvis_reminders.sql`
+  after deploying.
+- **Hold** (`app/tools/hold.py`): "hold my calls for an hour". Pushes stop
+  for that long, but the inbox keeps filling. Security alerts and reminders
+  still get through. "I'm back" lifts the hold and Jarvis says what came in.
+- **Protocols** (`app/tools/protocols.py`): one word that sets several
+  systems going. Built in: wake up, house party (every system reports
+  in), focus, clean slate, lights out, debrief, dossier. Andrew can save
+  his own ("when I say gym time, ..."), kept in `jarvis_state`.
+- **Weather** (`app/tools/weather.py`): Open-Meteo, no key, Ruston by
+  default. It is part of the morning brief.
+- **Notes** can now be taken as well as read ("take a note: ...").
+
+## Sentinel, wake word, voice and the house
+
+- **Sentinel** (`app/services/sentinel.py`): every 20 minutes it checks
+  the news on his topics, new mail in all three inboxes (Gemini picks out
+  what needs him), and how Kivaro's posts are being received: numbers,
+  new comments, sentiment and who to reply to, plus new mentions of
+  Kivaro AI. Findings land in the inbox under **Intel**, **Mail** and
+  **Publicity**. Apply `0016_jarvis_sentinel.sql` after deploying. Reddit,
+  YouTube and X numbers need `REDDIT_CLIENT_ID`/`_SECRET`,
+  `YOUTUBE_API_KEY` and `X_BEARER_TOKEN`. LinkedIn has no API for this;
+  Jarvis reads it through the browser instead.
+- **"Hey Jarvis"** (`web/src/lib/wakeword/`): turn it on in Settings. The
+  phrase is detected on the device by openWakeWord's models
+  (`web/public/wakeword/`, CC BY-NC-SA 4.0: fine for personal use, not for
+  Kivaro's product). Nothing is sent until the phrase is heard. It also
+  wakes the console from standby.
+- **Voice** (`app/services/persona.py`): his character, after the films,
+  and delivery cues (`[break]`, `[emphasis]`, `[calm]`, ...) that Fish
+  Audio's S2 model performs. They are stripped from anything shown.
+- **House** (`app/services/home.py`, `hardware/room-hub/`): devices check
+  in at `/devices/state` with the device token, and collect the commands
+  Jarvis queued for them with the `home` tool.
+
+## The phone line
+
+Jarvis answers the calls you don't (`app/services/phone.py`,
+`app/api/routes/phone.py`):
+
+1. He asks who's calling and why, and greets your contacts by name.
+2. Spam gets a polite goodbye.
+3. Otherwise your phone rings from the Jarvis number, and you hear
+   "Sir, Dana from Citadel, about the pilot. Press 1 to take it."
+4. If you don't take it, the caller leaves a message. It's transcribed and
+   lands in the inbox under **Calls**, with a push to your phone.
+
+"Hold my calls" sends everyone straight to messages.
+
+Text the number from your own phone to talk to Jarvis anywhere. Over text
+he can read anything but changes only reminders, checklists, notes, habits
+and the hold, because a text can come from a borrowed phone.
+
+Setup, once:
+
+1. Buy a voice and SMS number in Twilio (about $1.15 a month). Set
+   `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_NUMBER`,
+   `ANDREW_PHONE` (your cell, `+1...`) and `PUBLIC_BASE_URL` (this
+   service's https address, exactly as Twilio calls it) on Render.
+2. On the number in the Twilio console:
+   - A call comes in: Webhook, POST `<PUBLIC_BASE_URL>/phone/voice`
+   - Call status changes: `<PUBLIC_BASE_URL>/phone/status`
+   - A message comes in: Webhook, POST `<PUBLIC_BASE_URL>/phone/sms`
+3. Apply `supabase/migrations/0017_jarvis_calls.sql`.
+4. On your phone, forward unanswered calls to the Twilio number. iPhone's
+   Settings → Phone → Call Forwarding forwards every call, which is not
+   what you want. Use your carrier's conditional forwarding instead:
+   T-Mobile and AT&T dial `**61*<number>#` (no answer) and
+   `**67*<number>#` (busy); Verizon dials `*71<number>`. Undo it with
+   `##61#` / `##67#` or `*73`.
+5. Save the Twilio number as "Jarvis" in your contacts, so you know a ring
+   from it is him putting someone through.
+
+Jarvis rings you for 15 seconds, less than a carrier waits before
+forwarding, so a call can never loop back to him. Twilio's speech
+recognition and recordings are billed per minute, a few cents a call.
+Louisiana needs only one party's consent to record, but callers elsewhere
+may need two; Jarvis says up front that he is an assistant taking a
+message.
+
 ## Locks
 
 Signing in with Google only opens the lock. The phone asks for a PIN, the

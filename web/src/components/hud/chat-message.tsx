@@ -11,6 +11,7 @@ import { clearNarration, registerNarration, stopNarration } from "@/lib/narratio
 import { currentVoiceId } from "@/lib/persona"
 import { useSpatial } from "@/lib/spatial-store"
 import { useTypewriter } from "@/lib/use-typewriter"
+import { stripCues } from "@/lib/voice-cues"
 
 export interface ChatMessageData {
   id: string
@@ -77,7 +78,7 @@ export function ChatMessage({
   // details, shown when it carries something the voice left out.
   const voiced = !isUser && message.said !== undefined
   const details =
-    voiced && !message.streaming && message.content.trim() && message.content.trim() !== message.spoken?.trim()
+    voiced && !message.streaming && message.content.trim() && message.content.trim() !== stripCues(message.spoken ?? "").trim()
       ? message.content
       : null
   const detailWorthy = details !== null && hasDetail(details)
@@ -183,7 +184,7 @@ export function ChatMessage({
             )}
           </div>
         ) : null}
-        {isUser ? message.content : voiced ? message.said : shown}
+        {isUser ? message.content : voiced ? stripCues(message.said ?? "") : shown}
         {!isUser && (!done || message.streaming || stillSaying) && <span className="caret" aria-hidden />}
         {details && (detailWorthy || showFull) && (
           <div
