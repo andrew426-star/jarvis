@@ -11,7 +11,7 @@ export const KICAD = "https://gitlab.com/kicad/libraries/kicad-packages3D/-/raw/
 let cache = null
 
 /** Where downloads are kept between runs. */
-export function useCache(dir) {
+export function setCacheDir(dir) {
   cache = dir
   fs.mkdirSync(dir, { recursive: true })
 }

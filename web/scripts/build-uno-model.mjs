@@ -18,13 +18,13 @@ import zlib from "node:zlib"
 
 import occtimportjs from "occt-import-js"
 
-import { KICAD, bounds, fetchCached, loadStep, materialFor, useCache, writeGlb } from "./lib/kicad-step.mjs"
+import { bounds, fetchCached, loadStep, materialFor, setCacheDir, writeGlb } from "./lib/kicad-step.mjs"
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const web = path.resolve(here, "..")
 const cache = path.join(web, "node_modules", ".cache", "uno-model")
 const out = path.join(web, "public", "models")
-useCache(cache)
+setCacheDir(cache)
 fs.mkdirSync(out, { recursive: true })
 
 const ARDUINO_ZIP = "https://docs.arduino.cc/static/6bb7a3ca51ebee82a252f60c0b418787/A000066-cad-files.zip"

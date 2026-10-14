@@ -19,12 +19,12 @@ import { fileURLToPath } from "node:url"
 
 import occtimportjs from "occt-import-js"
 
-import { loadStep, materialFor, useCache, writeGlb } from "./lib/kicad-step.mjs"
+import { loadStep, materialFor, setCacheDir, writeGlb } from "./lib/kicad-step.mjs"
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const web = path.resolve(here, "..")
 const out = path.join(web, "public", "models", "parts")
-useCache(path.join(web, "node_modules", ".cache", "part-models"))
+setCacheDir(path.join(web, "node_modules", ".cache", "part-models"))
 fs.mkdirSync(out, { recursive: true })
 
 const META = { generator: "jarvis build-part-models", copyright: "KiCad 3D library, CC-BY-SA 4.0 (gitlab.com/kicad/libraries/kicad-packages3D)." }
