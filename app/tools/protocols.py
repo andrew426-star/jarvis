@@ -26,7 +26,7 @@ BUILT_IN: dict[str, dict] = {
     "house party": {
         "summary": "Every system reports in at once: a status board of everything Jarvis watches.",
         "steps": [
-            "In one round: launch_tracker status, kiv_tasks list (due_within_days 2), inbox list, market_analysis for SPY and QQQ, portfolio, company_financials, kivaro_pipeline status, google_titan gmail_list_messages (is:unread newer_than:1d), zoho_mail list_recent, reminders list, hold status.",
+            "In one round: launch_tracker status, kiv_tasks list (due_within_days 2), inbox list, market_analysis for SPY and QQQ, portfolio, company_financials, kivaro_pipeline status, google_titan gmail_list_messages (is:unread newer_than:1d -label:briefs -label:reading -label:receipts), zoho_mail list_recent, reminders list, hold status.",
             "Report as a status board, one line per system, each marked nominal, watch or attention, with the one figure that matters. Anything marked attention first.",
             "Close with the single thing most worth doing now.",
         ],

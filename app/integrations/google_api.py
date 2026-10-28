@@ -40,6 +40,7 @@ def gmail_list_messages(access_token: str, query: str | None, max_results: int) 
     if not res.is_success:
         raise RuntimeError(f"Gmail list failed: {res.text}")
     ids = [m["id"] for m in res.json().get("messages", [])]
+    label_names = gmail_user_labels(access_token) if ids else {}
 
     summaries = []
     for message_id in ids:
@@ -60,9 +61,22 @@ def gmail_list_messages(access_token: str, query: str | None, max_results: int) 
                 "from": _header_value(headers, "From"),
                 "date": _header_value(headers, "Date"),
                 "snippet": data.get("snippet", ""),
+                "labels": [label_names[i] for i in data.get("labelIds", []) if i in label_names],
             }
         )
     return summaries
+
+
+def gmail_user_labels(access_token: str) -> dict[str, str]:
+    """{label id: name} for the account's own labels (e.g. 'School/Billing').
+
+    Mail filed by the account's filters carries these; a failure just
+    means messages come back unlabeled.
+    """
+    res = httpx.get(f"{GMAIL_BASE}/labels", headers=_headers(access_token))
+    if not res.is_success:
+        return {}
+    return {lb["id"]: lb["name"] for lb in res.json().get("labels", []) if lb.get("type") == "user"}
 
 
 def _decode_body_data(data: str) -> str:

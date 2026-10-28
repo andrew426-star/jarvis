@@ -147,7 +147,13 @@ TOOL_SCHEMAS = [
                         "type": "string",
                         "description": "Gmail search syntax for gmail_list_messages (e.g. "
                         "'from:x newer_than:7d'), or free-text file/content search for "
-                        "drive_search_files.",
+                        "drive_search_files. The Kivaro account files mail under labels, "
+                        "returned on each message: School (with School/Billing, School/Classes, "
+                        "School/Careers, School/Announcements, School/Campus Life, School/Clubs & "
+                        "Events, School/Top Dog) and Kivaro stay in the inbox; Jobs, Reading, "
+                        "Receipts and Briefs (Jarvis's own emailed briefs) skip it, so reach them "
+                        "with label:jobs, label:reading, label:receipts (label:school-billing for "
+                        "a sublabel), not in:inbox.",
                     },
                     "max_results": {
                         "type": "integer",
